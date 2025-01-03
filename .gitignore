@@ -1,0 +1,9 @@
+build/
+CMakeFiles/
+CMakeCache.txt
+Testing/
+*.user
+*.vcxproj*
+*.sln
+compile_commands.json
+.github/
