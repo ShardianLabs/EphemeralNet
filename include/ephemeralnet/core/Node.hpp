@@ -2,6 +2,7 @@
 
 #include "ephemeralnet/Config.hpp"
 #include "ephemeralnet/Types.hpp"
+#include "ephemeralnet/crypto/CryptoManager.hpp"
 #include "ephemeralnet/dht/KademliaTable.hpp"
 #include "ephemeralnet/network/SessionManager.hpp"
 #include "ephemeralnet/storage/ChunkStore.hpp"
@@ -33,6 +34,7 @@ private:
     ChunkStore chunk_store_;
     KademliaTable dht_;
     SessionManager sessions_;
+    crypto::CryptoManager crypto_;
     std::chrono::steady_clock::time_point last_cleanup_{};
 };
 

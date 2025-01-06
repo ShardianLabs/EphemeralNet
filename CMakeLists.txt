@@ -19,6 +19,8 @@ add_library(ephemeralnet_core
     src/core/Types.cpp
     src/dht/KademliaTable.cpp
     src/network/SessionManager.cpp
+    src/crypto/ChaCha20.cpp
+    src/crypto/CryptoManager.cpp
 )
 
 add_library(ephemeralnet::core ALIAS ephemeralnet_core)
