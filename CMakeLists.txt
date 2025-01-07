@@ -21,6 +21,7 @@ add_library(ephemeralnet_core
     src/network/SessionManager.cpp
     src/crypto/ChaCha20.cpp
     src/crypto/CryptoManager.cpp
+    src/protocol/Message.cpp
 )
 
 add_library(ephemeralnet::core ALIAS ephemeralnet_core)
@@ -87,4 +88,21 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.Smoke COMMAND ephemeralnet_smoke)
+
+    add_executable(ephemeralnet_protocol_tests
+        tests/protocol_message.cpp
+    )
+
+    target_link_libraries(ephemeralnet_protocol_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_protocol_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_protocol_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.ProtocolMessages COMMAND ephemeralnet_protocol_tests)
 endif()
