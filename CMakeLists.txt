@@ -105,4 +105,21 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.ProtocolMessages COMMAND ephemeralnet_protocol_tests)
+
+    add_executable(ephemeralnet_dht_tests
+        tests/dht_buckets.cpp
+    )
+
+    target_link_libraries(ephemeralnet_dht_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_dht_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_dht_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.DhtBuckets COMMAND ephemeralnet_dht_tests)
 endif()

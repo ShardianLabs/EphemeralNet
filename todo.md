@@ -6,11 +6,11 @@
 - Cifrado simétrico ChaCha20 integrado en `Node` y `ChunkStore` con gestión de claves efímeras.
 - Prueba de humo que valida la expiración local de chunks y la recuperación tras descifrar.
 - Capas de protocolo con mensajes Announce/Request/Chunk/Acknowledge y serialización binaria testeada.
+- Tabla Kademlia con buckets LRU, cálculo de distancia XOR y consultas de vecinos cercanos.
 - Compilación y `ctest` funcionando con MinGW-w64.
 
 ## Próximos hitos
 - Sustituir `SessionManager` simulado por transporte real (TCP/UDP/QUIC) con cifrado extremo a extremo.
-- Implementar en `KademliaTable` buckets, ruteo y refresco acorde a Kademlia.
 - Añadir autenticación/integridad (AEAD o firmas) y rotación de claves compartidas.
 - Añadir verificación de cumplimiento del TTL: auditorías cruzadas y pruebas automáticas.
 - Crear gestor de limpieza que coordine expiraciones locales y notificaciones DHT.

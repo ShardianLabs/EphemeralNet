@@ -12,7 +12,7 @@ Node::Node(PeerId id, Config config)
     : id_(id),
       config_(config),
       chunk_store_(config),
-      dht_(config),
+    dht_(id, config),
     sessions_(),
     crypto_(),
       last_cleanup_(std::chrono::steady_clock::now()) {}
