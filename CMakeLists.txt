@@ -21,6 +21,8 @@ add_library(ephemeralnet_core
     src/network/SessionManager.cpp
     src/crypto/ChaCha20.cpp
     src/crypto/CryptoManager.cpp
+    src/crypto/Sha256.cpp
+    src/crypto/HmacSha256.cpp
     src/protocol/Message.cpp
 )
 
@@ -105,6 +107,23 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.ProtocolMessages COMMAND ephemeralnet_protocol_tests)
+
+    add_executable(ephemeralnet_protocol_auth_tests
+        tests/protocol_auth.cpp
+    )
+
+    target_link_libraries(ephemeralnet_protocol_auth_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_protocol_auth_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_protocol_auth_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.ProtocolAuth COMMAND ephemeralnet_protocol_auth_tests)
 
     add_executable(ephemeralnet_dht_tests
         tests/dht_buckets.cpp

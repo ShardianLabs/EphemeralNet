@@ -2,6 +2,8 @@
 
 #include "ephemeralnet/Types.hpp"
 
+#include <array>
+
 #include <chrono>
 #include <cstdint>
 #include <optional>
@@ -53,5 +55,10 @@ struct Message {
 
 std::vector<std::uint8_t> encode(const Message& message);
 std::optional<Message> decode(std::span<const std::uint8_t> buffer);
+
+std::vector<std::uint8_t> encode_signed(const Message& message,
+                                        std::span<const std::uint8_t> shared_key);
+std::optional<Message> decode_signed(std::span<const std::uint8_t> buffer,
+                                     std::span<const std::uint8_t> shared_key);
 
 }  // namespace ephemeralnet::protocol

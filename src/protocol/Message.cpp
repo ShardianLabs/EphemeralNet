@@ -1,5 +1,7 @@
 #include "ephemeralnet/protocol/Message.hpp"
 
+#include "ephemeralnet/crypto/HmacSha256.hpp"
+
 #include <array>
 #include <cstring>
 #include <span>
@@ -167,6 +169,31 @@ std::optional<Message> decode(std::span<const std::uint8_t> buffer) {
     }
 
     return message;
+}
+
+std::vector<std::uint8_t> encode_signed(const Message& message,
+                                        std::span<const std::uint8_t> shared_key) {
+    auto encoded = encode(message);
+    const auto mac = crypto::HmacSha256::compute(shared_key, encoded);
+    encoded.insert(encoded.end(), mac.begin(), mac.end());
+    return encoded;
+}
+
+std::optional<Message> decode_signed(std::span<const std::uint8_t> buffer,
+                                     std::span<const std::uint8_t> shared_key) {
+    if (buffer.size() < crypto::HmacSha256::kDigestSize) {
+        return std::nullopt;
+    }
+
+    const auto message_size = buffer.size() - crypto::HmacSha256::kDigestSize;
+    const auto message_span = buffer.first(message_size);
+    const auto mac_span = buffer.last(crypto::HmacSha256::kDigestSize);
+
+    if (!crypto::HmacSha256::verify(shared_key, message_span, mac_span)) {
+        return std::nullopt;
+    }
+
+    return decode(message_span);
 }
 
 }  // namespace ephemeralnet::protocol

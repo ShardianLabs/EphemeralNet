@@ -7,11 +7,12 @@
 - Prueba de humo que valida la expiración local de chunks y la recuperación tras descifrar.
 - Capas de protocolo con mensajes Announce/Request/Chunk/Acknowledge y serialización binaria testeada.
 - Tabla Kademlia con buckets LRU, cálculo de distancia XOR y consultas de vecinos cercanos.
+- Autenticación de mensajes mediante HMAC-SHA256 y helpers de firma/validación.
 - Compilación y `ctest` funcionando con MinGW-w64.
 
 ## Próximos hitos
 - Sustituir `SessionManager` simulado por transporte real (TCP/UDP/QUIC) con cifrado extremo a extremo.
-- Añadir autenticación/integridad (AEAD o firmas) y rotación de claves compartidas.
+- Diseñar intercambio/rotación de claves compartidas y mecanismos de reputación.
 - Añadir verificación de cumplimiento del TTL: auditorías cruzadas y pruebas automáticas.
 - Crear gestor de limpieza que coordine expiraciones locales y notificaciones DHT.
 - Incorporar almacenamiento persistente opcional con borrado seguro (wipe) por TTL.
