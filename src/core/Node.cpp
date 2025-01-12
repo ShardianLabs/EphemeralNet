@@ -9,13 +9,14 @@
 namespace ephemeralnet {
 
 Node::Node(PeerId id, Config config)
-    : id_(id),
-      config_(config),
-      chunk_store_(config),
-    dht_(id, config),
-    sessions_(),
-    crypto_(),
-      last_cleanup_(std::chrono::steady_clock::now()) {}
+        : id_(id),
+            config_(config),
+            chunk_store_(config),
+            dht_(id, config),
+            key_manager_(config.announce_interval),
+            sessions_(),
+            crypto_(),
+            last_cleanup_(std::chrono::steady_clock::now()) {}
 
 void Node::announce_chunk(const ChunkId& chunk_id, std::chrono::seconds ttl) {
     PeerContact self_contact{.id = id_, .address = peer_id_to_string(id_), .expires_at = std::chrono::steady_clock::now() + ttl};
@@ -51,6 +52,18 @@ std::optional<ChunkData> Node::fetch_chunk(const ChunkId& chunk_id) {
 
     std::cout << "[Node] Providers known for chunk " << chunk_id_to_string(chunk_id) << ": " << providers.size() << "\n";
     return std::nullopt;
+}
+
+void Node::register_shared_secret(const PeerId& peer_id, const crypto::Key& shared_secret) {
+    key_manager_.register_session(peer_id, shared_secret);
+}
+
+std::optional<std::array<std::uint8_t, 32>> Node::session_key(const PeerId& peer_id) const {
+    return key_manager_.current_key(peer_id);
+}
+
+std::optional<std::array<std::uint8_t, 32>> Node::rotate_session_key(const PeerId& peer_id) {
+    return key_manager_.rotate_if_needed(peer_id);
 }
 
 void Node::tick() {

@@ -19,6 +19,7 @@ add_library(ephemeralnet_core
     src/core/Types.cpp
     src/dht/KademliaTable.cpp
     src/network/SessionManager.cpp
+    src/network/KeyManager.cpp
     src/crypto/ChaCha20.cpp
     src/crypto/CryptoManager.cpp
     src/crypto/Sha256.cpp
@@ -141,4 +142,21 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.DhtBuckets COMMAND ephemeralnet_dht_tests)
+
+    add_executable(ephemeralnet_key_schedule_tests
+        tests/key_schedule.cpp
+    )
+
+    target_link_libraries(ephemeralnet_key_schedule_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_key_schedule_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_key_schedule_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.KeySchedule COMMAND ephemeralnet_key_schedule_tests)
 endif()

@@ -8,11 +8,12 @@
 - Capas de protocolo con mensajes Announce/Request/Chunk/Acknowledge y serialización binaria testeada.
 - Tabla Kademlia con buckets LRU, cálculo de distancia XOR y consultas de vecinos cercanos.
 - Autenticación de mensajes mediante HMAC-SHA256 y helpers de firma/validación.
+- Rotación automática de claves de sesión derivadas mediante HMAC-SHA256 (KeyManager).
 - Compilación y `ctest` funcionando con MinGW-w64.
 
 ## Próximos hitos
 - Sustituir `SessionManager` simulado por transporte real (TCP/UDP/QUIC) con cifrado extremo a extremo.
-- Diseñar intercambio/rotación de claves compartidas y mecanismos de reputación.
+- Implementar intercambio inicial de claves compartidas y mecanismos de reputación.
 - Añadir verificación de cumplimiento del TTL: auditorías cruzadas y pruebas automáticas.
 - Crear gestor de limpieza que coordine expiraciones locales y notificaciones DHT.
 - Incorporar almacenamiento persistente opcional con borrado seguro (wipe) por TTL.
