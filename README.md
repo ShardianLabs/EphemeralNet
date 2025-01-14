@@ -12,6 +12,7 @@ EphemeralNet es un proyecto de sistema de ficheros P2P efímero escrito en C++ c
 - **Buckets Kademlia**: gestión LRU por distancia XOR y consultas de vecinos más cercanos.
 - **Integridad de mensajes**: firma HMAC-SHA256 en los mensajes del protocolo.
 - **Rotación de claves**: gestor de sesiones que renueva claves derivadas mediante HMAC-SHA256.
+- **Intercambio de claves y reputación**: handshake Diffie-Hellman simplificado con seguimiento de reputación por par.
 - **Prueba de humo**: verificación básica del borrado tras el TTL.
 
 ## Requisitos
@@ -38,6 +39,6 @@ ctest --test-dir build
 
 1. Implementar una capa de red real para intercambio de chunks (UDP/TCP o QUIC).
 2. Diseñar reemplazo del `SessionManager` con transporte real y cifrado extremo a extremo.
-3. Implementar intercambio inicial de claves y reputación entre pares.
+3. Añadir auditorías de TTL y coordinación de limpieza distribuida.
 4. Construir un CLI interactivo para anunciar y recuperar ficheros.
 5. Integrar almacenamiento persistente cifrado opcional en disco con borrado seguro.

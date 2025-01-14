@@ -2,10 +2,11 @@
 
 #include "ephemeralnet/Config.hpp"
 #include "ephemeralnet/Types.hpp"
+#include "ephemeralnet/network/KeyManager.hpp"
+#include "ephemeralnet/network/ReputationManager.hpp"
+#include "ephemeralnet/network/SessionManager.hpp"
 #include "ephemeralnet/crypto/CryptoManager.hpp"
 #include "ephemeralnet/dht/KademliaTable.hpp"
-#include "ephemeralnet/network/SessionManager.hpp"
-#include "ephemeralnet/network/KeyManager.hpp"
 #include "ephemeralnet/storage/ChunkStore.hpp"
 
 #include <array>
@@ -13,6 +14,7 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include <unordered_map>
 
 namespace ephemeralnet {
 
@@ -28,6 +30,11 @@ public:
     std::optional<std::array<std::uint8_t, 32>> session_key(const PeerId& peer_id) const;
     std::optional<std::array<std::uint8_t, 32>> rotate_session_key(const PeerId& peer_id);
 
+    std::uint32_t public_identity() const noexcept { return identity_public_; }
+    bool perform_handshake(const PeerId& peer_id, std::uint32_t remote_public_key);
+    int reputation_score(const PeerId& peer_id) const;
+    std::optional<bool> last_handshake_success(const PeerId& peer_id) const;
+
 
     void tick();
 
@@ -41,8 +48,17 @@ private:
     ChunkStore chunk_store_;
     KademliaTable dht_;
     network::KeyManager key_manager_;
+    network::ReputationManager reputation_;
     SessionManager sessions_;
     crypto::CryptoManager crypto_;
+    std::uint32_t identity_scalar_{0};
+    std::uint32_t identity_public_{0};
+    struct HandshakeRecord {
+        std::chrono::steady_clock::time_point last_attempt{};
+        bool success{false};
+        std::uint32_t remote_public{0};
+    };
+    std::unordered_map<std::string, HandshakeRecord> handshake_state_;
     std::chrono::steady_clock::time_point last_cleanup_{};
 };
 

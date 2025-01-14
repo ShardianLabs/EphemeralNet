@@ -4,6 +4,7 @@
 #include "ephemeralnet/crypto/HmacSha256.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 
 namespace ephemeralnet::network {
@@ -12,10 +13,34 @@ KeyManager::KeyManager(std::chrono::seconds rotation_interval)
     : rotation_interval_(rotation_interval) {}
 
 void KeyManager::register_session(const PeerId& peer_id, const crypto::Key& shared_secret) {
+    const auto now = std::chrono::steady_clock::now();
+    std::array<std::uint8_t, 16> material{};
+
+    const std::uint64_t counter = 0;
+    for (int i = 0; i < 8; ++i) {
+        material[7 - i] = static_cast<std::uint8_t>((counter >> (i * 8)) & 0xFFu);
+    }
+
+    const auto ticks = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+    for (int i = 0; i < 8; ++i) {
+        material[15 - i] = static_cast<std::uint8_t>((ticks >> (i * 8)) & 0xFFu);
+    }
+
+    register_session_with_material(peer_id, shared_secret, material, now);
+}
+
+void KeyManager::register_session_with_material(const PeerId& peer_id,
+                                                const crypto::Key& shared_secret,
+                                                std::span<const std::uint8_t> material,
+                                                std::chrono::steady_clock::time_point reference_time) {
     SessionKeyContext context{};
     context.shared_secret = shared_secret;
-    context.last_rotation = std::chrono::steady_clock::now();
-    context.current_key = derive_key(shared_secret, context.counter, context.last_rotation);
+    context.last_rotation = reference_time;
+    context.counter = 0;
+
+    const auto key_span = std::span<const std::uint8_t>(shared_secret.bytes);
+    const auto mac = crypto::HmacSha256::compute(key_span, material);
+    context.current_key = mac;
 
     contexts_[peer_id_to_string(peer_id)] = context;
 }

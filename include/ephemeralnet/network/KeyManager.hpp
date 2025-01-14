@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 
@@ -24,6 +25,10 @@ public:
     explicit KeyManager(std::chrono::seconds rotation_interval = std::chrono::minutes(15));
 
     void register_session(const PeerId& peer_id, const crypto::Key& shared_secret);
+    void register_session_with_material(const PeerId& peer_id,
+                                        const crypto::Key& shared_secret,
+                                        std::span<const std::uint8_t> material,
+                                        std::chrono::steady_clock::time_point reference_time);
     std::optional<std::array<std::uint8_t, 32>> current_key(const PeerId& peer_id) const;
     std::optional<std::array<std::uint8_t, 32>> rotate_if_needed(const PeerId& peer_id,
                                                                  std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());

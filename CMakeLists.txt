@@ -20,6 +20,8 @@ add_library(ephemeralnet_core
     src/dht/KademliaTable.cpp
     src/network/SessionManager.cpp
     src/network/KeyManager.cpp
+    src/network/KeyExchange.cpp
+    src/network/ReputationManager.cpp
     src/crypto/ChaCha20.cpp
     src/crypto/CryptoManager.cpp
     src/crypto/Sha256.cpp
@@ -159,4 +161,21 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.KeySchedule COMMAND ephemeralnet_key_schedule_tests)
+
+    add_executable(ephemeralnet_handshake_tests
+        tests/handshake.cpp
+    )
+
+    target_link_libraries(ephemeralnet_handshake_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_handshake_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_handshake_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.Handshake COMMAND ephemeralnet_handshake_tests)
 endif()
