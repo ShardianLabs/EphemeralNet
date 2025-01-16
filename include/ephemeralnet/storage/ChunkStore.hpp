@@ -7,7 +7,9 @@
 #include <chrono>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace ephemeralnet {
 
@@ -22,6 +24,13 @@ class ChunkStore {
 public:
     explicit ChunkStore(Config config = {});
 
+    struct SnapshotEntry {
+        std::string key;
+        std::chrono::steady_clock::time_point expires_at{};
+        bool encrypted{false};
+        std::size_t size{0};
+    };
+
     void put(const ChunkId& id,
              ChunkData data,
              std::chrono::seconds ttl,
@@ -31,6 +40,7 @@ public:
     std::optional<ChunkRecord> get_record(const ChunkId& id);
     void sweep_expired();
     std::size_t size() const noexcept;
+    std::vector<SnapshotEntry> snapshot() const;
 
 private:
     Config config_;

@@ -8,6 +8,7 @@
 #include <chrono>
 #include <deque>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -33,6 +34,7 @@ public:
     std::vector<PeerContact> find_providers(const ChunkId& chunk_id);
     std::vector<PeerContact> closest_peers(const PeerId& target, std::size_t limit) const;
     void sweep_expired();
+    std::vector<ChunkLocator> snapshot_locators() const;
 
 private:
     static constexpr std::size_t kBucketSize = 16;

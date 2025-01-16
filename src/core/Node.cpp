@@ -8,7 +8,10 @@
 #include <iostream>
 #include <random>
 #include <span>
+#include <string>
 #include <utility>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace ephemeralnet {
 
@@ -150,6 +153,59 @@ std::optional<bool> Node::last_handshake_success(const PeerId& peer_id) const {
         return std::nullopt;
     }
     return it->second.success;
+}
+
+Node::TtlAuditReport Node::audit_ttl() const {
+    TtlAuditReport report{};
+    const auto now = std::chrono::steady_clock::now();
+
+    const auto local_entries = chunk_store_.snapshot();
+    std::unordered_set<std::string> local_keys;
+    local_keys.reserve(local_entries.size());
+    for (const auto& entry : local_entries) {
+        local_keys.insert(entry.key);
+        if (now >= entry.expires_at) {
+            report.expired_local_chunks.push_back(entry.key);
+        }
+    }
+
+    const auto locators = dht_.snapshot_locators();
+    std::unordered_map<std::string, bool> locator_has_self;
+    locator_has_self.reserve(locators.size());
+
+    for (const auto& locator : locators) {
+        const auto key = chunk_id_to_string(locator.id);
+        bool has_self = false;
+
+        if (now >= locator.expires_at) {
+            report.expired_locator_chunks.push_back(key);
+        }
+
+        for (const auto& holder : locator.holders) {
+            if (now >= holder.expires_at) {
+                report.expired_contacts.push_back(key + "/" + peer_id_to_string(holder.id));
+            }
+            if (holder.id == id_) {
+                has_self = true;
+            }
+        }
+
+        locator_has_self[key] = has_self;
+
+        if (has_self && !local_keys.contains(key)) {
+            report.orphan_announcements.push_back(key);
+        }
+    }
+
+    for (const auto& key : local_keys) {
+        const auto it = locator_has_self.find(key);
+        const bool has_self = it != locator_has_self.end() && it->second;
+        if (!has_self) {
+            report.missing_announcements.push_back(key);
+        }
+    }
+
+    return report;
 }
 
 void Node::tick() {

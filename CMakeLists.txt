@@ -178,4 +178,21 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.Handshake COMMAND ephemeralnet_handshake_tests)
+
+    add_executable(ephemeralnet_ttl_audit_tests
+        tests/ttl_audit.cpp
+    )
+
+    target_link_libraries(ephemeralnet_ttl_audit_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_ttl_audit_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_ttl_audit_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.TtlAudit COMMAND ephemeralnet_ttl_audit_tests)
 endif()

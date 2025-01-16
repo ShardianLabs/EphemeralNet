@@ -123,6 +123,15 @@ void KademliaTable::sweep_expired() {
     }
 }
 
+std::vector<ChunkLocator> KademliaTable::snapshot_locators() const {
+    std::vector<ChunkLocator> result;
+    result.reserve(table_.size());
+    for (const auto& [_, locator] : table_) {
+        result.push_back(locator);
+    }
+    return result;
+}
+
 void KademliaTable::upsert_bucket(PeerContact contact) {
     const auto index = bucket_index_for(contact.id);
     if (!index.has_value()) {

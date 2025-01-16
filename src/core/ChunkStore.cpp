@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <utility>
+#include <vector>
 
 namespace ephemeralnet {
 
@@ -73,6 +74,22 @@ std::size_t ChunkStore::size() const noexcept {
 
 std::chrono::steady_clock::time_point ChunkStore::compute_expiry(std::chrono::seconds ttl) {
     return std::chrono::steady_clock::now() + ttl;
+}
+
+std::vector<ChunkStore::SnapshotEntry> ChunkStore::snapshot() const {
+    std::vector<SnapshotEntry> result;
+    result.reserve(chunks_.size());
+
+    for (const auto& [key, record] : chunks_) {
+        SnapshotEntry entry{};
+        entry.key = key;
+        entry.expires_at = record.expires_at;
+        entry.encrypted = record.encrypted;
+        entry.size = record.data.size();
+        result.push_back(entry);
+    }
+
+    return result;
 }
 
 }  

@@ -10,6 +10,7 @@
 - Autenticación de mensajes mediante HMAC-SHA256 y helpers de firma/validación.
 - Rotación automática de claves de sesión derivadas mediante HMAC-SHA256 (KeyManager).
 - Intercambio inicial de claves basado en Diffie-Hellman y reputación básica por par.
+- Auditoría de TTL con informes de caducidad cruzados entre almacenamiento y DHT.
 - Compilación y `ctest` funcionando con MinGW-w64.
 
 ## Próximos hitos
@@ -23,3 +24,6 @@
 - Desarrollar suite de pruebas unitarias y de integración (simulaciones multi-nodo).
 - Documentar protocolo, arquitectura y guías operativas en `docs/`.
 - Preparar scripts de despliegue (Docker, empaquetado) y CI para Windows/Linux/macOS.
+- libephemeralnet (lib.so y dll)
+- ephemeralnet-cli
+- ephemeralnet-GUI

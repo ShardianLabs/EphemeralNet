@@ -35,6 +35,21 @@ public:
     int reputation_score(const PeerId& peer_id) const;
     std::optional<bool> last_handshake_success(const PeerId& peer_id) const;
 
+    struct TtlAuditReport {
+        std::vector<std::string> expired_local_chunks;
+        std::vector<std::string> expired_locator_chunks;
+        std::vector<std::string> expired_contacts;
+        std::vector<std::string> missing_announcements;
+        std::vector<std::string> orphan_announcements;
+
+        bool healthy() const {
+            return expired_local_chunks.empty() && expired_locator_chunks.empty() && expired_contacts.empty()
+                && missing_announcements.empty() && orphan_announcements.empty();
+        }
+    };
+
+    [[nodiscard]] TtlAuditReport audit_ttl() const;
+
 
     void tick();
 
