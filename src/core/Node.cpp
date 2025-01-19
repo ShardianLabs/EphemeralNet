@@ -60,6 +60,7 @@ Node::Node(PeerId id, Config config)
             identity_scalar_(generate_identity_scalar(config)),
             identity_public_(network::KeyExchange::compute_public(identity_scalar_)),
             handshake_state_(),
+            cleanup_notifications_(),
             last_cleanup_(std::chrono::steady_clock::now()) {}
 
 void Node::announce_chunk(const ChunkId& chunk_id, std::chrono::seconds ttl) {
@@ -155,6 +156,12 @@ std::optional<bool> Node::last_handshake_success(const PeerId& peer_id) const {
     return it->second.success;
 }
 
+std::vector<std::string> Node::drain_cleanup_notifications() {
+    std::vector<std::string> notifications;
+    notifications.swap(cleanup_notifications_);
+    return notifications;
+}
+
 Node::TtlAuditReport Node::audit_ttl() const {
     TtlAuditReport report{};
     const auto now = std::chrono::steady_clock::now();
@@ -212,7 +219,12 @@ void Node::tick() {
     const auto now = std::chrono::steady_clock::now();
     const auto elapsed = now - last_cleanup_;
     if (elapsed >= config_.cleanup_interval) {
-        chunk_store_.sweep_expired();
+        const auto expired_chunks = chunk_store_.sweep_expired();
+        for (const auto& chunk_id : expired_chunks) {
+            const auto key = chunk_id_to_string(chunk_id);
+            cleanup_notifications_.push_back(key);
+            dht_.withdraw_contact(chunk_id, id_);
+        }
         dht_.sweep_expired();
         last_cleanup_ = now;
     }

@@ -35,6 +35,7 @@ public:
     std::vector<PeerContact> closest_peers(const PeerId& target, std::size_t limit) const;
     void sweep_expired();
     std::vector<ChunkLocator> snapshot_locators() const;
+    void withdraw_contact(const ChunkId& chunk_id, const PeerId& provider_id);
 
 private:
     static constexpr std::size_t kBucketSize = 16;

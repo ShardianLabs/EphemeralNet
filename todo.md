@@ -11,12 +11,11 @@
 - Rotación automática de claves de sesión derivadas mediante HMAC-SHA256 (KeyManager).
 - Intercambio inicial de claves basado en Diffie-Hellman y reputación básica por par.
 - Auditoría de TTL con informes de caducidad cruzados entre almacenamiento y DHT.
+- Gestor de limpieza que coordina expiraciones locales y retirada de anuncios en la DHT.
 - Compilación y `ctest` funcionando con MinGW-w64.
 
 ## Próximos hitos
 - Sustituir `SessionManager` simulado por transporte real (TCP/UDP/QUIC) con cifrado extremo a extremo.
-- Añadir verificación de cumplimiento del TTL: auditorías cruzadas y pruebas automáticas.
-- Crear gestor de limpieza que coordine expiraciones locales y notificaciones DHT.
 - Incorporar almacenamiento persistente opcional con borrado seguro (wipe) por TTL.
 - Construir CLI/daemon: comandos para anunciar, recuperar, listar y configurar TTLs.
 - Integrar configuración en YAML/JSON + perfiles de red.

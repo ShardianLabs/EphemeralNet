@@ -25,12 +25,12 @@ void ChunkStore::put(const ChunkId& id,
     const auto effective_ttl = ttl.count() > 0 ? ttl : config_.default_chunk_ttl;
     const auto sanitized_ttl = std::max(effective_ttl, kMinimumTtl);
 
-    ChunkRecord record{
-        .data = std::move(data),
-        .expires_at = compute_expiry(sanitized_ttl),
-        .encrypted = encrypted,
-        .nonce = nonce,
-    };
+    ChunkRecord record{};
+    record.id = id;
+    record.data = std::move(data);
+    record.expires_at = compute_expiry(sanitized_ttl);
+    record.encrypted = encrypted;
+    record.nonce = nonce;
     chunks_.insert_or_assign(key, std::move(record));
 }
 
@@ -57,15 +57,18 @@ std::optional<ChunkRecord> ChunkStore::get_record(const ChunkId& id) {
     return it->second;
 }
 
-void ChunkStore::sweep_expired() {
+std::vector<ChunkId> ChunkStore::sweep_expired() {
     const auto now = std::chrono::steady_clock::now();
+    std::vector<ChunkId> removed;
     for (auto it = chunks_.begin(); it != chunks_.end();) {
         if (now >= it->second.expires_at) {
+            removed.push_back(it->second.id);
             it = chunks_.erase(it);
         } else {
             ++it;
         }
     }
+    return removed;
 }
 
 std::size_t ChunkStore::size() const noexcept {
@@ -82,6 +85,7 @@ std::vector<ChunkStore::SnapshotEntry> ChunkStore::snapshot() const {
 
     for (const auto& [key, record] : chunks_) {
         SnapshotEntry entry{};
+        entry.id = record.id;
         entry.key = key;
         entry.expires_at = record.expires_at;
         entry.encrypted = record.encrypted;

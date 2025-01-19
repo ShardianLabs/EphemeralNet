@@ -132,6 +132,24 @@ std::vector<ChunkLocator> KademliaTable::snapshot_locators() const {
     return result;
 }
 
+void KademliaTable::withdraw_contact(const ChunkId& chunk_id, const PeerId& provider_id) {
+    const auto key = chunk_id_to_string(chunk_id);
+    const auto it = table_.find(key);
+    if (it == table_.end()) {
+        return;
+    }
+
+    auto& holders = it->second.holders;
+    holders.erase(std::remove_if(holders.begin(), holders.end(), [&](const PeerContact& contact) {
+                          return contact.id == provider_id;
+                      }),
+        holders.end());
+
+    if (holders.empty()) {
+        table_.erase(it);
+    }
+}
+
 void KademliaTable::upsert_bucket(PeerContact contact) {
     const auto index = bucket_index_for(contact.id);
     if (!index.has_value()) {

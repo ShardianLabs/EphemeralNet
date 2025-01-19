@@ -49,6 +49,7 @@ public:
     };
 
     [[nodiscard]] TtlAuditReport audit_ttl() const;
+    std::vector<std::string> drain_cleanup_notifications();
 
 
     void tick();
@@ -74,6 +75,7 @@ private:
         std::uint32_t remote_public{0};
     };
     std::unordered_map<std::string, HandshakeRecord> handshake_state_;
+    std::vector<std::string> cleanup_notifications_;
     std::chrono::steady_clock::time_point last_cleanup_{};
 };
 

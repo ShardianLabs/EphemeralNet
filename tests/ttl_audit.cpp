@@ -1,4 +1,5 @@
 #include "ephemeralnet/core/Node.hpp"
+#include "ephemeralnet/Types.hpp"
 
 #include <cassert>
 #include <chrono>
@@ -60,6 +61,10 @@ int main() {
 
     const auto post_cleanup = node.audit_ttl();
     assert(post_cleanup.healthy());
+
+    const auto notifications = node.drain_cleanup_notifications();
+    assert(notifications.size() == 1);
+    assert(notifications.front() == ephemeralnet::chunk_id_to_string(chunk_id));
 
     return 0;
 }

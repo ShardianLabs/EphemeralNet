@@ -14,6 +14,7 @@
 namespace ephemeralnet {
 
 struct ChunkRecord {
+    ChunkId id{};
     ChunkData data;
     std::chrono::steady_clock::time_point expires_at{};
     bool encrypted{false};
@@ -25,6 +26,7 @@ public:
     explicit ChunkStore(Config config = {});
 
     struct SnapshotEntry {
+        ChunkId id{};
         std::string key;
         std::chrono::steady_clock::time_point expires_at{};
         bool encrypted{false};
@@ -38,7 +40,7 @@ public:
              bool encrypted = false);
     std::optional<ChunkData> get(const ChunkId& id);
     std::optional<ChunkRecord> get_record(const ChunkId& id);
-    void sweep_expired();
+    std::vector<ChunkId> sweep_expired();
     std::size_t size() const noexcept;
     std::vector<SnapshotEntry> snapshot() const;
 

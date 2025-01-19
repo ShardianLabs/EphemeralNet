@@ -14,6 +14,7 @@ EphemeralNet es un proyecto de sistema de ficheros P2P efímero escrito en C++ c
 - **Rotación de claves**: gestor de sesiones que renueva claves derivadas mediante HMAC-SHA256.
 - **Intercambio de claves y reputación**: handshake Diffie-Hellman simplificado con seguimiento de reputación por par.
 - **Auditoría de TTL**: informes consistentes que detectan expiraciones pendientes en almacenamiento local y anuncios DHT.
+- **Coordinación de limpieza**: sincroniza expiraciones locales con retirada automática de anuncios en la DHT y emite eventos de notificación.
 - **Prueba de humo**: verificación básica del borrado tras el TTL.
 
 ## Requisitos
