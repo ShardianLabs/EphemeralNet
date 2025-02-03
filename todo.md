@@ -2,7 +2,7 @@
 
 ## Estado actual
 - Estructura CMake creada con bibliotecas y ejecutables base.
-- Implementación en memoria de `ChunkStore`, `Node`, `KademliaTable` y `SessionManager` simulados.
+- Implementación en memoria de `ChunkStore`, `Node` y `KademliaTable` con transporte seguro real.
 - Cifrado simétrico ChaCha20 integrado en `Node` y `ChunkStore` con gestión de claves efímeras.
 - Prueba de humo que valida la expiración local de chunks y la recuperación tras descifrar.
 - Capas de protocolo con mensajes Announce/Request/Chunk/Acknowledge y serialización binaria testeada.
@@ -12,10 +12,10 @@
 - Intercambio inicial de claves basado en Diffie-Hellman y reputación básica por par.
 - Auditoría de TTL con informes de caducidad cruzados entre almacenamiento y DHT.
 - Gestor de limpieza que coordina expiraciones locales y retirada de anuncios en la DHT.
+- Transporte TCP cifrado extremo a extremo que sustituye el `SessionManager` simulado.
 - Compilación y `ctest` funcionando con MinGW-w64.
 
 ## Próximos hitos
-- Sustituir `SessionManager` simulado por transporte real (TCP/UDP/QUIC) con cifrado extremo a extremo.
 - Incorporar almacenamiento persistente opcional con borrado seguro (wipe) por TTL.
 - Construir CLI/daemon: comandos para anunciar, recuperar, listar y configurar TTLs.
 - Integrar configuración en YAML/JSON + perfiles de red.

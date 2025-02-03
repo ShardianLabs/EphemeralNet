@@ -54,6 +54,13 @@ target_link_libraries(ephemeralnet_core
         Threads::Threads
 )
 
+if(WIN32)
+    target_link_libraries(ephemeralnet_core
+        PUBLIC
+            ws2_32
+    )
+endif()
+
 add_executable(ephemeralnet
     src/main.cpp
 )
@@ -195,4 +202,21 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.TtlAudit COMMAND ephemeralnet_ttl_audit_tests)
+
+    add_executable(ephemeralnet_secure_transport_tests
+        tests/secure_transport.cpp
+    )
+
+    target_link_libraries(ephemeralnet_secure_transport_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_secure_transport_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_secure_transport_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.SecureTransport COMMAND ephemeralnet_secure_transport_tests)
 endif()

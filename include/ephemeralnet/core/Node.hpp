@@ -3,10 +3,11 @@
 #include "ephemeralnet/Config.hpp"
 #include "ephemeralnet/Types.hpp"
 #include "ephemeralnet/network/KeyManager.hpp"
-#include "ephemeralnet/network/ReputationManager.hpp"
-#include "ephemeralnet/network/SessionManager.hpp"
 #include "ephemeralnet/crypto/CryptoManager.hpp"
 #include "ephemeralnet/dht/KademliaTable.hpp"
+#include "ephemeralnet/network/KeyManager.hpp"
+#include "ephemeralnet/network/ReputationManager.hpp"
+#include "ephemeralnet/network/SessionManager.hpp"
 #include "ephemeralnet/storage/ChunkStore.hpp"
 
 #include <array>
@@ -15,12 +16,14 @@
 #include <vector>
 #include <optional>
 #include <unordered_map>
+#include <span>
 
 namespace ephemeralnet {
 
 class Node {
 public:
     Node(PeerId id, Config config = {});
+    ~Node();
 
     void announce_chunk(const ChunkId& chunk_id, std::chrono::seconds ttl);
     void store_chunk(const ChunkId& chunk_id, ChunkData data, std::chrono::seconds ttl);
@@ -51,6 +54,13 @@ public:
     [[nodiscard]] TtlAuditReport audit_ttl() const;
     std::vector<std::string> drain_cleanup_notifications();
 
+    void start_transport(std::uint16_t port = 0);
+    void stop_transport();
+    std::uint16_t transport_port() const;
+    void set_message_handler(network::SessionManager::MessageHandler handler);
+    bool connect_peer(const PeerId& peer_id, const std::string& host, std::uint16_t port);
+    bool send_secure(const PeerId& peer_id, std::span<const std::uint8_t> payload);
+
 
     void tick();
 
@@ -65,7 +75,7 @@ private:
     KademliaTable dht_;
     network::KeyManager key_manager_;
     network::ReputationManager reputation_;
-    SessionManager sessions_;
+    network::SessionManager sessions_;
     crypto::CryptoManager crypto_;
     std::uint32_t identity_scalar_{0};
     std::uint32_t identity_public_{0};

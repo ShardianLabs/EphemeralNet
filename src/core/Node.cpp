@@ -55,13 +55,17 @@ Node::Node(PeerId id, Config config)
             dht_(id, config),
             key_manager_(config.announce_interval),
             reputation_(),
-            sessions_(),
+            sessions_(id),
             crypto_(),
             identity_scalar_(generate_identity_scalar(config)),
             identity_public_(network::KeyExchange::compute_public(identity_scalar_)),
             handshake_state_(),
             cleanup_notifications_(),
             last_cleanup_(std::chrono::steady_clock::now()) {}
+
+Node::~Node() {
+        stop_transport();
+}
 
 void Node::announce_chunk(const ChunkId& chunk_id, std::chrono::seconds ttl) {
     PeerContact self_contact{.id = id_, .address = peer_id_to_string(id_), .expires_at = std::chrono::steady_clock::now() + ttl};
@@ -101,6 +105,9 @@ std::optional<ChunkData> Node::fetch_chunk(const ChunkId& chunk_id) {
 
 void Node::register_shared_secret(const PeerId& peer_id, const crypto::Key& shared_secret) {
     key_manager_.register_session(peer_id, shared_secret);
+    if (const auto key = key_manager_.current_key(peer_id)) {
+        sessions_.register_peer_key(peer_id, *key);
+    }
 }
 
 std::optional<std::array<std::uint8_t, 32>> Node::session_key(const PeerId& peer_id) const {
@@ -108,7 +115,11 @@ std::optional<std::array<std::uint8_t, 32>> Node::session_key(const PeerId& peer
 }
 
 std::optional<std::array<std::uint8_t, 32>> Node::rotate_session_key(const PeerId& peer_id) {
-    return key_manager_.rotate_if_needed(peer_id);
+    if (const auto rotated = key_manager_.rotate_if_needed(peer_id)) {
+        sessions_.register_peer_key(peer_id, *rotated);
+        return rotated;
+    }
+    return std::nullopt;
 }
 
 bool Node::perform_handshake(const PeerId& peer_id, std::uint32_t remote_public_key) {
@@ -137,6 +148,9 @@ bool Node::perform_handshake(const PeerId& peer_id, std::uint32_t remote_public_
     const auto shared_secret = network::KeyExchange::derive_shared_secret(identity_scalar_, remote_public_key);
     const auto material = make_handshake_material(identity_public_, remote_public_key);
     key_manager_.register_session_with_material(peer_id, shared_secret, material, now);
+    if (const auto key = key_manager_.current_key(peer_id)) {
+        sessions_.register_peer_key(peer_id, *key);
+    }
 
     reputation_.record_success(peer_id);
     record.success = true;
@@ -228,6 +242,35 @@ void Node::tick() {
         dht_.sweep_expired();
         last_cleanup_ = now;
     }
+}
+
+void Node::start_transport(std::uint16_t port) {
+    sessions_.start(port);
+}
+
+void Node::stop_transport() {
+    sessions_.stop();
+}
+
+std::uint16_t Node::transport_port() const {
+    return sessions_.listening_port();
+}
+
+void Node::set_message_handler(network::SessionManager::MessageHandler handler) {
+    sessions_.set_message_handler(std::move(handler));
+}
+
+bool Node::connect_peer(const PeerId& peer_id, const std::string& host, std::uint16_t port) {
+    return sessions_.connect(peer_id, host, port);
+}
+
+bool Node::send_secure(const PeerId& peer_id, std::span<const std::uint8_t> payload) {
+    const auto key = key_manager_.current_key(peer_id);
+    if (!key.has_value()) {
+        return false;
+    }
+    sessions_.register_peer_key(peer_id, *key);
+    return sessions_.send(peer_id, payload);
 }
 
 }  
