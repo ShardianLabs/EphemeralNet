@@ -25,6 +25,16 @@ public:
                                      std::span<const std::uint8_t> ciphertext,
                                      const Nonce& nonce) const;
 
+    static Key generate_key();
+    static void random_bytes(std::span<std::uint8_t> buffer);
+    static CipherText encrypt_with_key(const Key& key,
+                                       const ChunkId& chunk_id,
+                                       const ChunkData& plaintext);
+    static std::optional<ChunkData> decrypt_with_key(const Key& key,
+                                                     const ChunkId& chunk_id,
+                                                     std::span<const std::uint8_t> ciphertext,
+                                                     const Nonce& nonce);
+
     const Key& key() const noexcept { return key_; }
 
 private:

@@ -13,14 +13,25 @@ namespace {
 }
 }
 
+namespace {
+
+void fill_random_bytes(std::span<std::uint8_t> buffer) {
+    std::random_device rd;
+    for (auto& byte : buffer) {
+        byte = static_cast<std::uint8_t>(rd());
+    }
+}
+
+}
+
 CryptoManager::CryptoManager()
     : CryptoManager(Key{}) {}
 
 CryptoManager::CryptoManager(Key key)
-    : key_(key),
-      prng_(std::random_device{}()) {
-    if (std::all_of(key_.bytes.begin(), key_.bytes.end(), [](auto value) { return value == 0U; })) {
-        fill_random(key_.bytes);
+        : key_(key),
+            prng_(std::random_device{}()) {
+        if (std::all_of(key_.bytes.begin(), key_.bytes.end(), [](auto value) { return value == 0U; })) {
+                fill_random(key_.bytes);
     }
 }
 
@@ -51,6 +62,31 @@ void CryptoManager::fill_random(std::span<std::uint8_t> buffer) const {
     for (auto& byte : buffer) {
         byte = static_cast<std::uint8_t>(dist(prng_));
     }
+}
+
+Key CryptoManager::generate_key() {
+    Key key{};
+    fill_random_bytes(key.bytes);
+    return key;
+}
+
+void CryptoManager::random_bytes(std::span<std::uint8_t> buffer) {
+    fill_random_bytes(buffer);
+}
+
+CipherText CryptoManager::encrypt_with_key(const Key& key,
+                                           const ChunkId& chunk_id,
+                                           const ChunkData& plaintext) {
+    CryptoManager manager{key};
+    return manager.encrypt(chunk_id, plaintext);
+}
+
+std::optional<ChunkData> CryptoManager::decrypt_with_key(const Key& key,
+                                                         const ChunkId& chunk_id,
+                                                         std::span<const std::uint8_t> ciphertext,
+                                                         const Nonce& nonce) {
+    CryptoManager manager{key};
+    return manager.decrypt(chunk_id, ciphertext, nonce);
 }
 
 }  // namespace ephemeralnet::crypto

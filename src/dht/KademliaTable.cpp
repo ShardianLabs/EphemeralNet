@@ -121,6 +121,14 @@ void KademliaTable::sweep_expired() {
             ++it;
         }
     }
+
+    for (auto it = shard_table_.begin(); it != shard_table_.end();) {
+        if (now >= it->second.expires_at) {
+            it = shard_table_.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 std::vector<ChunkLocator> KademliaTable::snapshot_locators() const {
@@ -148,6 +156,34 @@ void KademliaTable::withdraw_contact(const ChunkId& chunk_id, const PeerId& prov
     if (holders.empty()) {
         table_.erase(it);
     }
+}
+
+void KademliaTable::publish_shards(const ChunkId& chunk_id,
+                                   std::vector<protocol::KeyShard> shards,
+                                   std::uint8_t threshold,
+                                   std::uint8_t total_shares,
+                                   std::chrono::seconds ttl) {
+    KeyShardRecord record{};
+    record.shards = std::move(shards);
+    record.threshold = threshold;
+    record.total_shares = total_shares;
+    record.expires_at = std::chrono::steady_clock::now() + ttl;
+
+    shard_table_[chunk_id_to_string(chunk_id)] = std::move(record);
+}
+
+std::optional<KademliaTable::KeyShardRecord> KademliaTable::shard_record(const ChunkId& chunk_id) const {
+    const auto it = shard_table_.find(chunk_id_to_string(chunk_id));
+    if (it == shard_table_.end()) {
+        return std::nullopt;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= it->second.expires_at) {
+        return std::nullopt;
+    }
+
+    return it->second;
 }
 
 void KademliaTable::upsert_bucket(PeerContact contact) {

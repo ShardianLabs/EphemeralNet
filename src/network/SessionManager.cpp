@@ -412,6 +412,10 @@ void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session
     session->running.store(false);
     close_socket(session->socket);
 
+    if (session->reader.joinable()) {
+        session->reader.detach();
+    }
+
     {
         std::scoped_lock lock(sessions_mutex_);
         sessions_.erase(peer_key_string(peer_id));

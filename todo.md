@@ -14,10 +14,18 @@
 - Gestor de limpieza que coordina expiraciones locales y retirada de anuncios en la DHT.
 - Transporte TCP cifrado extremo a extremo que sustituye el `SessionManager` simulado.
 - Compilación y `ctest` funcionando con MinGW-w64.
+- Libreria de comparticion de claves de Shamir n-de-m con pruebas unitarias de reconstruccion.
+- Formato de manifiesto `eph://` con codificacion/decodificacion Base64 y prueba de round-trip.
+- Tabla Kademlia extendida para publicar y expirar metadatos de shards con TTL.
 
 ## Próximos hitos
+- Definir e implementar mecanismo de Bootstrapping de la DHT (nodos de arranque).
+- Implementar estrategia de NAT Traversal (STUN / UPnP / Hole Punching).
+- Integrar flujo de comparticion de claves Shamir: generacion, anuncio en la DHT y consumo durante la recuperacion.
 - Incorporar almacenamiento persistente opcional con borrado seguro (wipe) por TTL.
 - Construir CLI/daemon: comandos para anunciar, recuperar, listar y configurar TTLs.
+- Distribuir manifiestos `eph://` con validacion de metadatos y coordinacion de entrega segura entre pares.
+- Diseñar capa de intercambio de chunks estilo BitTorrent (programación de envíos, multi-seeding y propagación entre pares).
 - Integrar configuración en YAML/JSON + perfiles de red.
 - Añadir logging estructurado y sistema de métricas para monitorizar expiraciones.
 - Desarrollar suite de pruebas unitarias y de integración (simulaciones multi-nodo).

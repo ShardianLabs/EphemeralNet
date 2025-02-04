@@ -2,6 +2,7 @@
 
 #include "ephemeralnet/Config.hpp"
 #include "ephemeralnet/Types.hpp"
+#include "ephemeralnet/protocol/Manifest.hpp"
 
 #include <array>
 #include <bit>
@@ -37,6 +38,20 @@ public:
     std::vector<ChunkLocator> snapshot_locators() const;
     void withdraw_contact(const ChunkId& chunk_id, const PeerId& provider_id);
 
+    struct KeyShardRecord {
+        std::vector<protocol::KeyShard> shards;
+        std::uint8_t threshold{0};
+        std::uint8_t total_shares{0};
+        std::chrono::steady_clock::time_point expires_at{};
+    };
+
+    void publish_shards(const ChunkId& chunk_id,
+                        std::vector<protocol::KeyShard> shards,
+                        std::uint8_t threshold,
+                        std::uint8_t total_shares,
+                        std::chrono::seconds ttl);
+    std::optional<KeyShardRecord> shard_record(const ChunkId& chunk_id) const;
+
 private:
     static constexpr std::size_t kBucketSize = 16;
     static constexpr std::size_t kIdBits = PeerId{}.size() * 8;
@@ -45,6 +60,7 @@ private:
     PeerId self_id_{};
     Config config_;
     std::unordered_map<std::string, ChunkLocator> table_;
+    std::unordered_map<std::string, KeyShardRecord> shard_table_;
     std::array<Bucket, kIdBits> buckets_{};
 
     void upsert_bucket(PeerContact contact);

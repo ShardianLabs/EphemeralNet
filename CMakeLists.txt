@@ -26,6 +26,8 @@ add_library(ephemeralnet_core
     src/crypto/CryptoManager.cpp
     src/crypto/Sha256.cpp
     src/crypto/HmacSha256.cpp
+    src/crypto/Shamir.cpp
+    src/protocol/Manifest.cpp
     src/protocol/Message.cpp
 )
 
@@ -219,4 +221,38 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.SecureTransport COMMAND ephemeralnet_secure_transport_tests)
+
+    add_executable(ephemeralnet_shamir_tests
+        tests/shamir.cpp
+    )
+
+    target_link_libraries(ephemeralnet_shamir_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_shamir_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_shamir_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.Shamir COMMAND ephemeralnet_shamir_tests)
+
+    add_executable(ephemeralnet_manifest_tests
+        tests/manifest.cpp
+    )
+
+    target_link_libraries(ephemeralnet_manifest_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_manifest_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_manifest_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.Manifest COMMAND ephemeralnet_manifest_tests)
 endif()
