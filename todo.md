@@ -17,11 +17,12 @@
 - Libreria de comparticion de claves de Shamir n-de-m con pruebas unitarias de reconstruccion.
 - Formato de manifiesto `eph://` con codificacion/decodificacion Base64 y prueba de round-trip.
 - Tabla Kademlia extendida para publicar y expirar metadatos de shards con TTL.
+- Flujo de compartición de claves Shamir integrado: generación de claves por chunk, manifiesto y publicación en la DHT.
 
 ## Próximos hitos
 - Definir e implementar mecanismo de Bootstrapping de la DHT (nodos de arranque).
 - Implementar estrategia de NAT Traversal (STUN / UPnP / Hole Punching).
-- Integrar flujo de comparticion de claves Shamir: generacion, anuncio en la DHT y consumo durante la recuperacion.
+- Orquestar consumo remoto de manifiestos `eph://` y reparto de shards entre pares durante las descargas.
 - Incorporar almacenamiento persistente opcional con borrado seguro (wipe) por TTL.
 - Construir CLI/daemon: comandos para anunciar, recuperar, listar y configurar TTLs.
 - Distribuir manifiestos `eph://` con validacion de metadatos y coordinacion de entrega segura entre pares.

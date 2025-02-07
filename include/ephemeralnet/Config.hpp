@@ -12,6 +12,8 @@ struct Config {
     std::chrono::seconds cleanup_interval{std::chrono::minutes(5)};
     std::chrono::seconds handshake_cooldown{std::chrono::seconds(5)};
     std::optional<std::uint32_t> identity_seed{};
+    std::uint8_t shard_threshold{3};
+    std::uint8_t shard_total{5};
 };
 
 }  

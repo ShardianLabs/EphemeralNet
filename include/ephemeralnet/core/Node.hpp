@@ -9,6 +9,7 @@
 #include "ephemeralnet/network/ReputationManager.hpp"
 #include "ephemeralnet/network/SessionManager.hpp"
 #include "ephemeralnet/storage/ChunkStore.hpp"
+#include "ephemeralnet/protocol/Manifest.hpp"
 
 #include <array>
 #include <chrono>
@@ -26,7 +27,7 @@ public:
     ~Node();
 
     void announce_chunk(const ChunkId& chunk_id, std::chrono::seconds ttl);
-    void store_chunk(const ChunkId& chunk_id, ChunkData data, std::chrono::seconds ttl);
+    protocol::Manifest store_chunk(const ChunkId& chunk_id, ChunkData data, std::chrono::seconds ttl);
     std::optional<ChunkData> fetch_chunk(const ChunkId& chunk_id);
 
     void register_shared_secret(const PeerId& peer_id, const crypto::Key& shared_secret);

@@ -2,6 +2,8 @@
 
 #include "ephemeralnet/Types.hpp"
 #include "ephemeralnet/network/KeyExchange.hpp"
+#include "ephemeralnet/crypto/Sha256.hpp"
+#include "ephemeralnet/crypto/Shamir.hpp"
 
 #include <algorithm>
 #include <array>
@@ -72,23 +74,73 @@ void Node::announce_chunk(const ChunkId& chunk_id, std::chrono::seconds ttl) {
     dht_.add_contact(chunk_id, self_contact, ttl);
 }
 
-void Node::store_chunk(const ChunkId& chunk_id, ChunkData data, std::chrono::seconds ttl) {
-    auto sealed = crypto_.encrypt(chunk_id, data);
+protocol::Manifest Node::store_chunk(const ChunkId& chunk_id, ChunkData data, std::chrono::seconds ttl) {
+    const auto threshold = std::max<std::uint8_t>(std::uint8_t{1}, config_.shard_threshold);
+    const auto total_shares = std::max(threshold, config_.shard_total);
+
+    const auto effective_ttl = ttl.count() > 0 ? ttl : config_.default_chunk_ttl;
+    const auto sanitized_ttl = std::max(effective_ttl, std::chrono::seconds{1});
+
+    const auto chunk_hash = crypto::Sha256::digest(std::span<const std::uint8_t>{data});
+
+    const auto chunk_key = crypto::CryptoManager::generate_key();
+    auto sealed = crypto::CryptoManager::encrypt_with_key(chunk_key, chunk_id, data);
+
     chunk_store_.put(chunk_id,
         std::move(sealed.data),
-        ttl,
+        sanitized_ttl,
         sealed.nonce.bytes,
         sealed.encrypted);
-    announce_chunk(chunk_id, ttl);
+
+    const auto shares = crypto::Shamir::split(chunk_key.bytes, threshold, total_shares);
+    std::vector<protocol::KeyShard> protocol_shards;
+    protocol_shards.reserve(shares.size());
+    for (const auto& share : shares) {
+        protocol::KeyShard key_shard{};
+        key_shard.index = share.index;
+        key_shard.value = share.value;
+        protocol_shards.push_back(key_shard);
+    }
+
+    protocol::Manifest manifest{};
+    manifest.chunk_id = chunk_id;
+    manifest.chunk_hash = chunk_hash;
+    manifest.nonce = sealed.nonce;
+    manifest.threshold = threshold;
+    manifest.total_shares = total_shares;
+    manifest.expires_at = std::chrono::system_clock::now() + sanitized_ttl;
+    manifest.shards = protocol_shards;
+
+    dht_.publish_shards(chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, sanitized_ttl);
+    announce_chunk(chunk_id, sanitized_ttl);
+
+    return manifest;
 }
 
 std::optional<ChunkData> Node::fetch_chunk(const ChunkId& chunk_id) {
     if (auto record = chunk_store_.get_record(chunk_id)) {
         if (record->encrypted) {
+            const auto shard_info = dht_.shard_record(chunk_id);
+            if (!shard_info.has_value() || shard_info->threshold == 0 || shard_info->shards.size() < shard_info->threshold) {
+                return std::nullopt;
+            }
+
+            std::vector<crypto::ShamirShare> shares;
+            shares.reserve(shard_info->shards.size());
+            for (const auto& shard : shard_info->shards) {
+                crypto::ShamirShare share{};
+                share.index = shard.index;
+                share.value = shard.value;
+                shares.push_back(share);
+            }
+
+            const auto secret_bytes = crypto::Shamir::combine(shares, shard_info->threshold);
+            crypto::Key chunk_key{};
+            chunk_key.bytes = secret_bytes;
+
             const crypto::Nonce nonce{record->nonce};
             const std::span<const std::uint8_t> ciphertext{record->data};
-            const auto maybe_plain = crypto_.decrypt(chunk_id, ciphertext, nonce);
-            return maybe_plain;
+            return crypto::CryptoManager::decrypt_with_key(chunk_key, chunk_id, ciphertext, nonce);
         }
         return record->data;
     }
