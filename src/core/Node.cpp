@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <exception>
 #include <iostream>
 #include <random>
 #include <span>
@@ -46,6 +47,23 @@ std::array<std::uint8_t, 8> make_handshake_material(std::uint32_t local_public,
         }
     }
     return material;
+}
+
+std::optional<std::chrono::seconds> manifest_ttl(const protocol::Manifest& manifest) {
+    const auto now = std::chrono::system_clock::now();
+    if (manifest.expires_at <= now) {
+        return std::nullopt;
+    }
+
+    auto ttl = std::chrono::duration_cast<std::chrono::seconds>(manifest.expires_at - now);
+    if (ttl <= std::chrono::seconds{0}) {
+        ttl = std::chrono::seconds{1};
+    }
+    return ttl;
+}
+
+bool validate_shards(const protocol::Manifest& manifest) {
+    return manifest.threshold > 0 && manifest.shards.size() >= manifest.threshold;
 }
 
 }  // namespace
@@ -115,6 +133,84 @@ protocol::Manifest Node::store_chunk(const ChunkId& chunk_id, ChunkData data, st
     announce_chunk(chunk_id, sanitized_ttl);
 
     return manifest;
+}
+
+bool Node::ingest_manifest(const std::string& manifest_uri) {
+    protocol::Manifest manifest{};
+    try {
+        manifest = protocol::decode_manifest(manifest_uri);
+    } catch (const std::exception&) {
+        return false;
+    }
+
+    if (!validate_shards(manifest)) {
+        return false;
+    }
+
+    const auto ttl = manifest_ttl(manifest);
+    if (!ttl.has_value()) {
+        return false;
+    }
+
+    dht_.publish_shards(manifest.chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, *ttl);
+    return true;
+}
+
+std::optional<ChunkData> Node::receive_chunk(const std::string& manifest_uri, ChunkData ciphertext) {
+    protocol::Manifest manifest{};
+    try {
+        manifest = protocol::decode_manifest(manifest_uri);
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+
+    if (!validate_shards(manifest)) {
+        return std::nullopt;
+    }
+
+    const auto ttl = manifest_ttl(manifest);
+    if (!ttl.has_value()) {
+        return std::nullopt;
+    }
+
+    std::vector<crypto::ShamirShare> shares;
+    shares.reserve(manifest.shards.size());
+    for (const auto& shard : manifest.shards) {
+        crypto::ShamirShare share{};
+        share.index = shard.index;
+        share.value = shard.value;
+        shares.push_back(share);
+    }
+
+    crypto::Key chunk_key{};
+    chunk_key.bytes = crypto::Shamir::combine(shares, manifest.threshold);
+
+    const auto plaintext = crypto::CryptoManager::decrypt_with_key(chunk_key,
+                                                                  manifest.chunk_id,
+                                                                  std::span<const std::uint8_t>(ciphertext),
+                                                                  manifest.nonce);
+    if (!plaintext.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto hash = crypto::Sha256::digest(std::span<const std::uint8_t>(*plaintext));
+    if (hash != manifest.chunk_hash) {
+        return std::nullopt;
+    }
+
+    dht_.publish_shards(manifest.chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, *ttl);
+    announce_chunk(manifest.chunk_id, *ttl);
+    chunk_store_.put(manifest.chunk_id,
+                     std::move(ciphertext),
+                     *ttl,
+                     manifest.nonce.bytes,
+                     true);
+
+    return plaintext;
+}
+
+std::optional<ChunkRecord> Node::export_chunk_record(const ChunkId& chunk_id) {
+    return chunk_store_.get_record(chunk_id);
 }
 
 std::optional<ChunkData> Node::fetch_chunk(const ChunkId& chunk_id) {

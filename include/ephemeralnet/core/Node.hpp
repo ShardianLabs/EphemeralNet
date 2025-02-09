@@ -2,14 +2,13 @@
 
 #include "ephemeralnet/Config.hpp"
 #include "ephemeralnet/Types.hpp"
-#include "ephemeralnet/network/KeyManager.hpp"
 #include "ephemeralnet/crypto/CryptoManager.hpp"
 #include "ephemeralnet/dht/KademliaTable.hpp"
 #include "ephemeralnet/network/KeyManager.hpp"
 #include "ephemeralnet/network/ReputationManager.hpp"
 #include "ephemeralnet/network/SessionManager.hpp"
-#include "ephemeralnet/storage/ChunkStore.hpp"
 #include "ephemeralnet/protocol/Manifest.hpp"
+#include "ephemeralnet/storage/ChunkStore.hpp"
 
 #include <array>
 #include <chrono>
@@ -28,6 +27,9 @@ public:
 
     void announce_chunk(const ChunkId& chunk_id, std::chrono::seconds ttl);
     protocol::Manifest store_chunk(const ChunkId& chunk_id, ChunkData data, std::chrono::seconds ttl);
+    bool ingest_manifest(const std::string& manifest_uri);
+    std::optional<ChunkData> receive_chunk(const std::string& manifest_uri, ChunkData ciphertext);
+    std::optional<ChunkRecord> export_chunk_record(const ChunkId& chunk_id);
     std::optional<ChunkData> fetch_chunk(const ChunkId& chunk_id);
 
     void register_shared_secret(const PeerId& peer_id, const crypto::Key& shared_secret);

@@ -255,4 +255,21 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.Manifest COMMAND ephemeralnet_manifest_tests)
+
+    add_executable(ephemeralnet_manifest_flow_tests
+        tests/manifest_flow.cpp
+    )
+
+    target_link_libraries(ephemeralnet_manifest_flow_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_manifest_flow_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_manifest_flow_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.ManifestFlow COMMAND ephemeralnet_manifest_flow_tests)
 endif()
