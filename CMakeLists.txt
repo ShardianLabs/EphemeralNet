@@ -272,4 +272,21 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.ManifestFlow COMMAND ephemeralnet_manifest_flow_tests)
+
+    add_executable(ephemeralnet_secure_exchange_tests
+        tests/secure_exchange.cpp
+    )
+
+    target_link_libraries(ephemeralnet_secure_exchange_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_secure_exchange_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_secure_exchange_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.SecureExchange COMMAND ephemeralnet_secure_exchange_tests)
 endif()

@@ -4,6 +4,7 @@
 #include "ephemeralnet/network/KeyExchange.hpp"
 #include "ephemeralnet/crypto/Sha256.hpp"
 #include "ephemeralnet/crypto/Shamir.hpp"
+#include "ephemeralnet/protocol/Message.hpp"
 
 #include <algorithm>
 #include <array>
@@ -81,7 +82,9 @@ Node::Node(PeerId id, Config config)
             identity_public_(network::KeyExchange::compute_public(identity_scalar_)),
             handshake_state_(),
             cleanup_notifications_(),
-            last_cleanup_(std::chrono::steady_clock::now()) {}
+            last_cleanup_(std::chrono::steady_clock::now()) {
+        initialize_transport_handler();
+}
 
 Node::~Node() {
         stop_transport();
@@ -129,6 +132,7 @@ protocol::Manifest Node::store_chunk(const ChunkId& chunk_id, ChunkData data, st
     manifest.expires_at = std::chrono::system_clock::now() + sanitized_ttl;
     manifest.shards = protocol_shards;
 
+    manifest_cache_[chunk_id_to_string(chunk_id)] = manifest;
     dht_.publish_shards(chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, sanitized_ttl);
     announce_chunk(chunk_id, sanitized_ttl);
 
@@ -152,6 +156,7 @@ bool Node::ingest_manifest(const std::string& manifest_uri) {
         return false;
     }
 
+    manifest_cache_[chunk_id_to_string(manifest.chunk_id)] = manifest;
     dht_.publish_shards(manifest.chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, *ttl);
     return true;
 }
@@ -198,6 +203,7 @@ std::optional<ChunkData> Node::receive_chunk(const std::string& manifest_uri, Ch
         return std::nullopt;
     }
 
+    manifest_cache_[chunk_id_to_string(manifest.chunk_id)] = manifest;
     dht_.publish_shards(manifest.chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, *ttl);
     announce_chunk(manifest.chunk_id, *ttl);
     chunk_store_.put(manifest.chunk_id,
@@ -211,6 +217,41 @@ std::optional<ChunkData> Node::receive_chunk(const std::string& manifest_uri, Ch
 
 std::optional<ChunkRecord> Node::export_chunk_record(const ChunkId& chunk_id) {
     return chunk_store_.get_record(chunk_id);
+}
+
+bool Node::request_chunk(const PeerId& peer_id,
+                         const std::string& host,
+                         std::uint16_t port,
+                         const std::string& manifest_uri) {
+    if (!ingest_manifest(manifest_uri)) {
+        return false;
+    }
+
+    protocol::Manifest manifest{};
+    try {
+        manifest = protocol::decode_manifest(manifest_uri);
+    } catch (const std::exception&) {
+        return false;
+    }
+
+    manifest_cache_[chunk_id_to_string(manifest.chunk_id)] = manifest;
+
+    connect_peer(peer_id, host, port);
+
+    const auto key = session_shared_key(peer_id);
+    if (!key.has_value()) {
+        return false;
+    }
+
+    protocol::Message message{};
+    message.version = 1;
+    message.type = protocol::MessageType::Request;
+    message.payload = protocol::RequestPayload{manifest.chunk_id, id_};
+
+    const auto key_span = std::span<const std::uint8_t>(key->data(), key->size());
+    auto encoded = protocol::encode_signed(message, key_span);
+    const std::span<const std::uint8_t> payload_span(encoded.data(), encoded.size());
+    return send_secure(peer_id, payload_span);
 }
 
 std::optional<ChunkData> Node::fetch_chunk(const ChunkId& chunk_id) {
@@ -405,7 +446,7 @@ std::uint16_t Node::transport_port() const {
 }
 
 void Node::set_message_handler(network::SessionManager::MessageHandler handler) {
-    sessions_.set_message_handler(std::move(handler));
+    external_handler_ = std::move(handler);
 }
 
 bool Node::connect_peer(const PeerId& peer_id, const std::string& host, std::uint16_t port) {
@@ -419,6 +460,157 @@ bool Node::send_secure(const PeerId& peer_id, std::span<const std::uint8_t> payl
     }
     sessions_.register_peer_key(peer_id, *key);
     return sessions_.send(peer_id, payload);
+}
+
+void Node::initialize_transport_handler() {
+    sessions_.set_message_handler([this](const network::TransportMessage& message) {
+        handle_transport_message(message);
+        if (external_handler_) {
+            external_handler_(message);
+        }
+    });
+}
+
+void Node::handle_transport_message(const network::TransportMessage& message) {
+    const auto key = session_shared_key(message.peer_id);
+    if (!key.has_value()) {
+        return;
+    }
+
+    const auto key_span = std::span<const std::uint8_t>(key->data(), key->size());
+    const auto decoded = protocol::decode_signed(message.payload, key_span);
+    if (!decoded.has_value()) {
+        return;
+    }
+
+    handle_protocol_message(*decoded, message);
+}
+
+void Node::handle_protocol_message(const protocol::Message& message, const network::TransportMessage& transport) {
+    switch (message.type) {
+        case protocol::MessageType::Request: {
+            if (const auto* payload = std::get_if<protocol::RequestPayload>(&message.payload)) {
+                handle_request(*payload, transport.peer_id);
+            }
+            break;
+        }
+        case protocol::MessageType::Chunk: {
+            if (const auto* payload = std::get_if<protocol::ChunkPayload>(&message.payload)) {
+                handle_chunk(*payload, transport.peer_id);
+            }
+            break;
+        }
+        case protocol::MessageType::Acknowledge: {
+            if (const auto* payload = std::get_if<protocol::AcknowledgePayload>(&message.payload)) {
+                handle_acknowledge(*payload, transport.peer_id);
+            }
+            break;
+        }
+        case protocol::MessageType::Announce:
+        default:
+            break;
+    }
+}
+
+void Node::handle_request(const protocol::RequestPayload& payload, const PeerId& sender) {
+    const auto key = session_shared_key(sender);
+    if (!key.has_value()) {
+        return;
+    }
+
+    const auto manifest = manifest_for_chunk(payload.chunk_id);
+    const auto record = chunk_store_.get_record(payload.chunk_id);
+    bool accepted = manifest.has_value() && record.has_value();
+    std::chrono::seconds ttl{0};
+    if (manifest.has_value()) {
+        const auto ttl_opt = manifest_ttl(*manifest);
+        if (!ttl_opt.has_value()) {
+            accepted = false;
+        } else {
+            ttl = *ttl_opt;
+        }
+    }
+
+    if (accepted) {
+        protocol::Message response{};
+        response.version = 1;
+        response.type = protocol::MessageType::Chunk;
+        protocol::ChunkPayload chunk_payload{};
+        chunk_payload.chunk_id = payload.chunk_id;
+        chunk_payload.data = record->data;
+        chunk_payload.ttl = ttl;
+        response.payload = std::move(chunk_payload);
+
+        const auto key_span = std::span<const std::uint8_t>(key->data(), key->size());
+        auto encoded = protocol::encode_signed(response, key_span);
+        const std::span<const std::uint8_t> payload_span(encoded.data(), encoded.size());
+        send_secure(sender, payload_span);
+    } else {
+        protocol::Message response{};
+        response.version = 1;
+        response.type = protocol::MessageType::Acknowledge;
+        protocol::AcknowledgePayload ack{};
+        ack.chunk_id = payload.chunk_id;
+        ack.peer_id = id_;
+        ack.accepted = false;
+        response.payload = ack;
+
+        const auto key_span = std::span<const std::uint8_t>(key->data(), key->size());
+        auto encoded = protocol::encode_signed(response, key_span);
+        const std::span<const std::uint8_t> payload_span(encoded.data(), encoded.size());
+        send_secure(sender, payload_span);
+    }
+}
+
+void Node::handle_chunk(const protocol::ChunkPayload& payload, const PeerId& sender) {
+    const auto key = session_shared_key(sender);
+    if (!key.has_value()) {
+        return;
+    }
+
+    const auto manifest = manifest_for_chunk(payload.chunk_id);
+    bool accepted = false;
+    if (manifest.has_value()) {
+        auto ciphertext = payload.data;
+        const auto manifest_uri = protocol::encode_manifest(*manifest);
+        const auto plaintext = receive_chunk(manifest_uri, std::move(ciphertext));
+        accepted = plaintext.has_value();
+    }
+
+    protocol::Message ack_message{};
+    ack_message.version = 1;
+    ack_message.type = protocol::MessageType::Acknowledge;
+    protocol::AcknowledgePayload ack{};
+    ack.chunk_id = payload.chunk_id;
+    ack.peer_id = id_;
+    ack.accepted = accepted;
+    ack_message.payload = ack;
+
+    const auto key_span = std::span<const std::uint8_t>(key->data(), key->size());
+    auto encoded = protocol::encode_signed(ack_message, key_span);
+    const std::span<const std::uint8_t> payload_span(encoded.data(), encoded.size());
+    send_secure(sender, payload_span);
+}
+
+void Node::handle_acknowledge(const protocol::AcknowledgePayload& payload, const PeerId& sender) {
+    if (payload.accepted) {
+        reputation_.record_success(sender);
+    } else {
+        reputation_.record_failure(sender);
+    }
+}
+
+std::optional<std::array<std::uint8_t, 32>> Node::session_shared_key(const PeerId& peer_id) const {
+    return key_manager_.current_key(peer_id);
+}
+
+std::optional<protocol::Manifest> Node::manifest_for_chunk(const ChunkId& chunk_id) const {
+    const auto key = chunk_id_to_string(chunk_id);
+    const auto it = manifest_cache_.find(key);
+    if (it == manifest_cache_.end()) {
+        return std::nullopt;
+    }
+    return it->second;
 }
 
 }  

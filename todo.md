@@ -19,11 +19,12 @@
 - Tabla Kademlia extendida para publicar y expirar metadatos de shards con TTL.
 - Flujo de compartición de claves Shamir integrado: generación de claves por chunk, manifiesto y publicación en la DHT.
 - Ingestión y validación de manifiestos `eph://` con reconstrucción de claves y almacenamiento local replicado.
+- Flujo de petición/entrega de chunks cifrados entre pares con transporte seguro y acuses firmados.
 
 ## Próximos hitos
 - Definir e implementar mecanismo de Bootstrapping de la DHT (nodos de arranque).
 - Implementar estrategia de NAT Traversal (STUN / UPnP / Hole Punching).
-- Diseñar flujo de petición/entrega de chunks cifrados entre pares usando manifest URIs y transporte seguro.
+- Diseñar estrategia de distribución de manifiestos y shards entre múltiples proveedores (swarm coordinado).
 - Incorporar almacenamiento persistente opcional con borrado seguro (wipe) por TTL.
 - Construir CLI/daemon: comandos para anunciar, recuperar, listar y configurar TTLs.
 - Distribuir manifiestos `eph://` con validacion de metadatos y coordinacion de entrega segura entre pares.

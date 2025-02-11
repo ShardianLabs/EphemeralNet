@@ -7,6 +7,7 @@
 #include "ephemeralnet/network/KeyManager.hpp"
 #include "ephemeralnet/network/ReputationManager.hpp"
 #include "ephemeralnet/network/SessionManager.hpp"
+#include "ephemeralnet/protocol/Message.hpp"
 #include "ephemeralnet/protocol/Manifest.hpp"
 #include "ephemeralnet/storage/ChunkStore.hpp"
 
@@ -30,6 +31,10 @@ public:
     bool ingest_manifest(const std::string& manifest_uri);
     std::optional<ChunkData> receive_chunk(const std::string& manifest_uri, ChunkData ciphertext);
     std::optional<ChunkRecord> export_chunk_record(const ChunkId& chunk_id);
+    bool request_chunk(const PeerId& peer_id,
+                       const std::string& host,
+                       std::uint16_t port,
+                       const std::string& manifest_uri);
     std::optional<ChunkData> fetch_chunk(const ChunkId& chunk_id);
 
     void register_shared_secret(const PeerId& peer_id, const crypto::Key& shared_secret);
@@ -90,6 +95,17 @@ private:
     std::unordered_map<std::string, HandshakeRecord> handshake_state_;
     std::vector<std::string> cleanup_notifications_;
     std::chrono::steady_clock::time_point last_cleanup_{};
+    std::unordered_map<std::string, protocol::Manifest> manifest_cache_;
+    network::SessionManager::MessageHandler external_handler_{};
+
+    void initialize_transport_handler();
+    void handle_transport_message(const network::TransportMessage& message);
+    void handle_protocol_message(const protocol::Message& message, const network::TransportMessage& transport);
+    void handle_request(const protocol::RequestPayload& payload, const PeerId& sender);
+    void handle_chunk(const protocol::ChunkPayload& payload, const PeerId& sender);
+    void handle_acknowledge(const protocol::AcknowledgePayload& payload, const PeerId& sender);
+    std::optional<std::array<std::uint8_t, 32>> session_shared_key(const PeerId& peer_id) const;
+    std::optional<protocol::Manifest> manifest_for_chunk(const ChunkId& chunk_id) const;
 };
 
 }  
