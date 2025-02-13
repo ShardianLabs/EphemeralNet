@@ -289,4 +289,21 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.SecureExchange COMMAND ephemeralnet_secure_exchange_tests)
+
+    add_executable(ephemeralnet_bootstrap_tests
+        tests/bootstrap.cpp
+    )
+
+    target_link_libraries(ephemeralnet_bootstrap_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_bootstrap_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_bootstrap_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.Bootstrap COMMAND ephemeralnet_bootstrap_tests)
 endif()

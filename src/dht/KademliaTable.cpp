@@ -158,6 +158,13 @@ void KademliaTable::withdraw_contact(const ChunkId& chunk_id, const PeerId& prov
     }
 }
 
+void KademliaTable::register_peer(PeerContact contact) {
+    if (contact.expires_at.time_since_epoch().count() == 0) {
+        contact.expires_at = std::chrono::steady_clock::now();
+    }
+    upsert_bucket(std::move(contact));
+}
+
 void KademliaTable::publish_shards(const ChunkId& chunk_id,
                                    std::vector<protocol::KeyShard> shards,
                                    std::uint8_t threshold,

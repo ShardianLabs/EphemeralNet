@@ -1,8 +1,12 @@
 #pragma once
 
+#include "ephemeralnet/Types.hpp"
+
 #include <chrono>
 #include <cstdint>
 #include <optional>
+#include <string>
+#include <vector>
 
 namespace ephemeralnet {
 
@@ -14,6 +18,16 @@ struct Config {
     std::optional<std::uint32_t> identity_seed{};
     std::uint8_t shard_threshold{3};
     std::uint8_t shard_total{5};
+    std::chrono::seconds bootstrap_contact_ttl{std::chrono::minutes(15)};
+
+    struct BootstrapNode {
+        PeerId id{};
+        std::string host;
+        std::uint16_t port{0};
+        std::optional<std::uint32_t> public_identity{};
+    };
+
+    std::vector<BootstrapNode> bootstrap_nodes;
 };
 
 }  

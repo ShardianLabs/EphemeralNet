@@ -51,6 +51,7 @@ public:
                         std::uint8_t total_shares,
                         std::chrono::seconds ttl);
     std::optional<KeyShardRecord> shard_record(const ChunkId& chunk_id) const;
+    void register_peer(PeerContact contact);
 
 private:
     static constexpr std::size_t kBucketSize = 16;

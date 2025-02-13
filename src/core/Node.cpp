@@ -83,7 +83,12 @@ Node::Node(PeerId id, Config config)
             handshake_state_(),
             cleanup_notifications_(),
             last_cleanup_(std::chrono::steady_clock::now()) {
+        for (const auto& entry : config_.bootstrap_nodes) {
+            bootstrap_nodes_[peer_id_to_string(entry.id)] = entry;
+        }
         initialize_transport_handler();
+        seed_bootstrap_contacts();
+        attempt_bootstrap_handshakes();
 }
 
 Node::~Node() {
@@ -227,6 +232,23 @@ bool Node::request_chunk(const PeerId& peer_id,
         return false;
     }
 
+    std::string resolved_host = host;
+    std::uint16_t resolved_port = port;
+    const auto peer_key = peer_id_to_string(peer_id);
+    const auto bootstrap_it = bootstrap_nodes_.find(peer_key);
+    if (bootstrap_it != bootstrap_nodes_.end()) {
+        if (resolved_host.empty()) {
+            resolved_host = bootstrap_it->second.host;
+        }
+        if (resolved_port == 0) {
+            resolved_port = bootstrap_it->second.port;
+        }
+    }
+
+    if (resolved_host.empty() || resolved_port == 0) {
+        return false;
+    }
+
     protocol::Manifest manifest{};
     try {
         manifest = protocol::decode_manifest(manifest_uri);
@@ -236,7 +258,11 @@ bool Node::request_chunk(const PeerId& peer_id,
 
     manifest_cache_[chunk_id_to_string(manifest.chunk_id)] = manifest;
 
-    connect_peer(peer_id, host, port);
+    ensure_bootstrap_handshake(peer_id);
+
+    if (!connect_peer(peer_id, resolved_host, resolved_port)) {
+        return false;
+    }
 
     const auto key = session_shared_key(peer_id);
     if (!key.has_value()) {
@@ -611,6 +637,37 @@ std::optional<protocol::Manifest> Node::manifest_for_chunk(const ChunkId& chunk_
         return std::nullopt;
     }
     return it->second;
+}
+
+void Node::seed_bootstrap_contacts() {
+    const auto now = std::chrono::steady_clock::now();
+    for (const auto& entry : config_.bootstrap_nodes) {
+        PeerContact contact{};
+        contact.id = entry.id;
+        contact.address = entry.host + ":" + std::to_string(entry.port);
+        contact.expires_at = now + config_.bootstrap_contact_ttl;
+        dht_.register_peer(contact);
+    }
+}
+
+void Node::attempt_bootstrap_handshakes() {
+    for (const auto& entry : config_.bootstrap_nodes) {
+        ensure_bootstrap_handshake(entry.id);
+    }
+}
+
+void Node::ensure_bootstrap_handshake(const PeerId& peer_id) {
+    const auto key = peer_id_to_string(peer_id);
+    const auto it = bootstrap_nodes_.find(key);
+    if (it == bootstrap_nodes_.end()) {
+        return;
+    }
+
+    if (!it->second.public_identity.has_value()) {
+        return;
+    }
+
+    perform_handshake(peer_id, *it->second.public_identity);
 }
 
 }  

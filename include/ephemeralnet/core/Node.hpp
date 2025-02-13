@@ -97,6 +97,7 @@ private:
     std::chrono::steady_clock::time_point last_cleanup_{};
     std::unordered_map<std::string, protocol::Manifest> manifest_cache_;
     network::SessionManager::MessageHandler external_handler_{};
+    std::unordered_map<std::string, Config::BootstrapNode> bootstrap_nodes_;
 
     void initialize_transport_handler();
     void handle_transport_message(const network::TransportMessage& message);
@@ -106,6 +107,9 @@ private:
     void handle_acknowledge(const protocol::AcknowledgePayload& payload, const PeerId& sender);
     std::optional<std::array<std::uint8_t, 32>> session_shared_key(const PeerId& peer_id) const;
     std::optional<protocol::Manifest> manifest_for_chunk(const ChunkId& chunk_id) const;
+    void seed_bootstrap_contacts();
+    void attempt_bootstrap_handshakes();
+    void ensure_bootstrap_handshake(const PeerId& peer_id);
 };
 
 }  
