@@ -7,6 +7,7 @@
 #include "ephemeralnet/network/KeyManager.hpp"
 #include "ephemeralnet/network/ReputationManager.hpp"
 #include "ephemeralnet/network/SessionManager.hpp"
+#include "ephemeralnet/network/NatTraversal.hpp"
 #include "ephemeralnet/protocol/Message.hpp"
 #include "ephemeralnet/protocol/Manifest.hpp"
 #include "ephemeralnet/storage/ChunkStore.hpp"
@@ -40,6 +41,7 @@ public:
     void register_shared_secret(const PeerId& peer_id, const crypto::Key& shared_secret);
     std::optional<std::array<std::uint8_t, 32>> session_key(const PeerId& peer_id) const;
     std::optional<std::array<std::uint8_t, 32>> rotate_session_key(const PeerId& peer_id);
+    std::optional<network::NatTraversalResult> nat_status() const { return nat_status_; }
 
     std::uint32_t public_identity() const noexcept { return identity_public_; }
     bool perform_handshake(const PeerId& peer_id, std::uint32_t remote_public_key);
@@ -84,6 +86,8 @@ private:
     network::KeyManager key_manager_;
     network::ReputationManager reputation_;
     network::SessionManager sessions_;
+    network::NatTraversalManager nat_manager_;
+    std::optional<network::NatTraversalResult> nat_status_;
     crypto::CryptoManager crypto_;
     std::uint32_t identity_scalar_{0};
     std::uint32_t identity_public_{0};

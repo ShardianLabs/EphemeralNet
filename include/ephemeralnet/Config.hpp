@@ -15,6 +15,9 @@ struct Config {
     std::chrono::seconds announce_interval{std::chrono::minutes(15)};
     std::chrono::seconds cleanup_interval{std::chrono::minutes(5)};
     std::chrono::seconds handshake_cooldown{std::chrono::seconds(5)};
+    std::chrono::seconds nat_retry_interval{std::chrono::seconds(30)};
+    std::uint16_t nat_upnp_start_port{45000};
+    std::uint16_t nat_upnp_end_port{45099};
     std::optional<std::uint32_t> identity_seed{};
     std::uint8_t shard_threshold{3};
     std::uint8_t shard_total{5};

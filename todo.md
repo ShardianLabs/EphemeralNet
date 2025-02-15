@@ -21,9 +21,9 @@
 - Ingestión y validación de manifiestos `eph://` con reconstrucción de claves y almacenamiento local replicado.
 - Flujo de petición/entrega de chunks cifrados entre pares con transporte seguro y acuses firmados.
 - Bootstrapping de la DHT con nodos semilla y negociación inicial de llaves.
+- Simulación de NAT traversal con coordinación UPnP/STUN/hole punching y telemetría integrada en `Node`.
 
 ## Próximos hitos
-- Implementar estrategia de NAT Traversal (STUN / UPnP / Hole Punching).
 - Diseñar estrategia de distribución de manifiestos y shards entre múltiples proveedores (swarm coordinado).
 - Incorporar almacenamiento persistente opcional con borrado seguro (wipe) por TTL.
 - Construir CLI/daemon: comandos para anunciar, recuperar, listar y configurar TTLs.

@@ -77,6 +77,7 @@ Node::Node(PeerId id, Config config)
             key_manager_(config.announce_interval),
             reputation_(),
             sessions_(id),
+            nat_manager_(config),
             crypto_(),
             identity_scalar_(generate_identity_scalar(config)),
             identity_public_(network::KeyExchange::compute_public(identity_scalar_)),
@@ -461,6 +462,7 @@ void Node::tick() {
 
 void Node::start_transport(std::uint16_t port) {
     sessions_.start(port);
+    nat_status_ = nat_manager_.coordinate("0.0.0.0", sessions_.listening_port());
 }
 
 void Node::stop_transport() {

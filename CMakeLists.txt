@@ -27,6 +27,7 @@ add_library(ephemeralnet_core
     src/crypto/Sha256.cpp
     src/crypto/HmacSha256.cpp
     src/crypto/Shamir.cpp
+    src/network/NatTraversal.cpp
     src/protocol/Manifest.cpp
     src/protocol/Message.cpp
 )
@@ -306,4 +307,21 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.Bootstrap COMMAND ephemeralnet_bootstrap_tests)
+
+    add_executable(ephemeralnet_nat_traversal_tests
+        tests/nat_traversal.cpp
+    )
+
+    target_link_libraries(ephemeralnet_nat_traversal_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_nat_traversal_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_nat_traversal_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.NatTraversal COMMAND ephemeralnet_nat_traversal_tests)
 endif()
