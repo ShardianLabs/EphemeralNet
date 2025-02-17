@@ -18,6 +18,10 @@ struct Config {
     std::chrono::seconds nat_retry_interval{std::chrono::seconds(30)};
     std::uint16_t nat_upnp_start_port{45000};
     std::uint16_t nat_upnp_end_port{45099};
+    std::uint16_t swarm_target_replicas{3};
+    std::uint16_t swarm_min_providers{2};
+    std::uint16_t swarm_candidate_sample{8};
+    std::chrono::seconds swarm_rebalance_interval{std::chrono::minutes(30)};
     std::optional<std::uint32_t> identity_seed{};
     std::uint8_t shard_threshold{3};
     std::uint8_t shard_total{5};

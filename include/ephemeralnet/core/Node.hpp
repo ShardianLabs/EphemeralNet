@@ -8,6 +8,7 @@
 #include "ephemeralnet/network/ReputationManager.hpp"
 #include "ephemeralnet/network/SessionManager.hpp"
 #include "ephemeralnet/network/NatTraversal.hpp"
+#include "ephemeralnet/core/SwarmCoordinator.hpp"
 #include "ephemeralnet/protocol/Message.hpp"
 #include "ephemeralnet/protocol/Manifest.hpp"
 #include "ephemeralnet/storage/ChunkStore.hpp"
@@ -42,6 +43,7 @@ public:
     std::optional<std::array<std::uint8_t, 32>> session_key(const PeerId& peer_id) const;
     std::optional<std::array<std::uint8_t, 32>> rotate_session_key(const PeerId& peer_id);
     std::optional<network::NatTraversalResult> nat_status() const { return nat_status_; }
+    std::optional<SwarmDistributionPlan> swarm_plan(const ChunkId& chunk_id) const;
 
     std::uint32_t public_identity() const noexcept { return identity_public_; }
     bool perform_handshake(const PeerId& peer_id, std::uint32_t remote_public_key);
@@ -70,6 +72,7 @@ public:
     void set_message_handler(network::SessionManager::MessageHandler handler);
     bool connect_peer(const PeerId& peer_id, const std::string& host, std::uint16_t port);
     bool send_secure(const PeerId& peer_id, std::span<const std::uint8_t> payload);
+    void register_peer_contact(PeerContact contact);
 
 
     void tick();
@@ -88,6 +91,7 @@ private:
     network::SessionManager sessions_;
     network::NatTraversalManager nat_manager_;
     std::optional<network::NatTraversalResult> nat_status_;
+    SwarmCoordinator swarm_;
     crypto::CryptoManager crypto_;
     std::uint32_t identity_scalar_{0};
     std::uint32_t identity_public_{0};
@@ -102,6 +106,7 @@ private:
     std::unordered_map<std::string, protocol::Manifest> manifest_cache_;
     network::SessionManager::MessageHandler external_handler_{};
     std::unordered_map<std::string, Config::BootstrapNode> bootstrap_nodes_;
+    std::unordered_map<std::string, SwarmDistributionPlan> swarm_plans_;
 
     void initialize_transport_handler();
     void handle_transport_message(const network::TransportMessage& message);
@@ -114,6 +119,8 @@ private:
     void seed_bootstrap_contacts();
     void attempt_bootstrap_handshakes();
     void ensure_bootstrap_handshake(const PeerId& peer_id);
+    void update_swarm_plan(const protocol::Manifest& manifest);
+    void rebalance_swarm_plans();
 };
 
 }  

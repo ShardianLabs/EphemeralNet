@@ -78,6 +78,7 @@ Node::Node(PeerId id, Config config)
             reputation_(),
             sessions_(id),
             nat_manager_(config),
+            swarm_(config),
             crypto_(),
             identity_scalar_(generate_identity_scalar(config)),
             identity_public_(network::KeyExchange::compute_public(identity_scalar_)),
@@ -141,6 +142,7 @@ protocol::Manifest Node::store_chunk(const ChunkId& chunk_id, ChunkData data, st
     manifest_cache_[chunk_id_to_string(chunk_id)] = manifest;
     dht_.publish_shards(chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, sanitized_ttl);
     announce_chunk(chunk_id, sanitized_ttl);
+    update_swarm_plan(manifest);
 
     return manifest;
 }
@@ -164,6 +166,7 @@ bool Node::ingest_manifest(const std::string& manifest_uri) {
 
     manifest_cache_[chunk_id_to_string(manifest.chunk_id)] = manifest;
     dht_.publish_shards(manifest.chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, *ttl);
+    update_swarm_plan(manifest);
     return true;
 }
 
@@ -338,6 +341,14 @@ std::optional<std::array<std::uint8_t, 32>> Node::rotate_session_key(const PeerI
     return std::nullopt;
 }
 
+std::optional<SwarmDistributionPlan> Node::swarm_plan(const ChunkId& chunk_id) const {
+    const auto it = swarm_plans_.find(chunk_id_to_string(chunk_id));
+    if (it == swarm_plans_.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
 bool Node::perform_handshake(const PeerId& peer_id, std::uint32_t remote_public_key) {
     const auto now = std::chrono::steady_clock::now();
     const auto key = peer_id_to_string(peer_id);
@@ -458,6 +469,7 @@ void Node::tick() {
         dht_.sweep_expired();
         last_cleanup_ = now;
     }
+    rebalance_swarm_plans();
 }
 
 void Node::start_transport(std::uint16_t port) {
@@ -488,6 +500,10 @@ bool Node::send_secure(const PeerId& peer_id, std::span<const std::uint8_t> payl
     }
     sessions_.register_peer_key(peer_id, *key);
     return sessions_.send(peer_id, payload);
+}
+
+void Node::register_peer_contact(PeerContact contact) {
+    dht_.register_peer(std::move(contact));
 }
 
 void Node::initialize_transport_handler() {
@@ -639,6 +655,41 @@ std::optional<protocol::Manifest> Node::manifest_for_chunk(const ChunkId& chunk_
         return std::nullopt;
     }
     return it->second;
+}
+
+void Node::update_swarm_plan(const protocol::Manifest& manifest) {
+    const auto key = chunk_id_to_string(manifest.chunk_id);
+    auto plan = swarm_.compute_plan(manifest.chunk_id, manifest, dht_, id_);
+    if (plan.assignments.empty()) {
+        plan.diagnostics.emplace_back("Swarm coordinator produced no assignments.");
+    }
+    swarm_plans_[key] = std::move(plan);
+}
+
+void Node::rebalance_swarm_plans() {
+    const auto now = std::chrono::steady_clock::now();
+    std::vector<std::string> stale_keys;
+    stale_keys.reserve(swarm_plans_.size());
+
+    for (auto& [key, plan] : swarm_plans_) {
+        if (now < plan.next_rebalance) {
+            continue;
+        }
+
+        const auto manifest_it = manifest_cache_.find(key);
+        if (manifest_it == manifest_cache_.end()) {
+            stale_keys.push_back(key);
+            continue;
+        }
+
+        auto refreshed = swarm_.compute_plan(manifest_it->second.chunk_id, manifest_it->second, dht_, id_);
+        refreshed.diagnostics.emplace_back("Plan recomputed after rebalance interval.");
+        plan = std::move(refreshed);
+    }
+
+    for (const auto& key : stale_keys) {
+        swarm_plans_.erase(key);
+    }
 }
 
 void Node::seed_bootstrap_contacts() {

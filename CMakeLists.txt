@@ -28,6 +28,7 @@ add_library(ephemeralnet_core
     src/crypto/HmacSha256.cpp
     src/crypto/Shamir.cpp
     src/network/NatTraversal.cpp
+    src/core/SwarmCoordinator.cpp
     src/protocol/Manifest.cpp
     src/protocol/Message.cpp
 )
@@ -324,4 +325,38 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.NatTraversal COMMAND ephemeralnet_nat_traversal_tests)
+
+    add_executable(ephemeralnet_swarm_distribution_tests
+        tests/swarm_distribution.cpp
+    )
+
+    target_link_libraries(ephemeralnet_swarm_distribution_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_swarm_distribution_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_swarm_distribution_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.SwarmDistribution COMMAND ephemeralnet_swarm_distribution_tests)
+
+    add_executable(ephemeralnet_swarm_node_tests
+        tests/swarm_node.cpp
+    )
+
+    target_link_libraries(ephemeralnet_swarm_node_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_swarm_node_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_swarm_node_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.SwarmNode COMMAND ephemeralnet_swarm_node_tests)
 endif()

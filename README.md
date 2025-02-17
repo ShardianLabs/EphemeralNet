@@ -17,11 +17,14 @@ EphemeralNet es un proyecto de sistema de ficheros P2P efímero escrito en C++ c
 - **Coordinación de limpieza**: sincroniza expiraciones locales con retirada automática de anuncios en la DHT y emite eventos de notificación.
 - **Transporte seguro**: sesiones TCP cifradas con ChaCha20 reemplazan el gestor simulado y permiten mensajería punto a punto.
 - **Prueba de humo**: verificación básica del borrado tras el TTL.
+- **Coordinación de swarm**: replicación de manifiestos y shards entre múltiples proveedores simulados.
 
 ## Requisitos
 
 - CMake ≥ 3.20
 - Compilador con soporte para C++20 (MSVC 19.3+, Clang 13+, GCC 11+)
+- Windows con MinGW-w64 o toolchain equivalente (prototipo actual)
+
 
 ## Compilación
 

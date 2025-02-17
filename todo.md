@@ -22,9 +22,9 @@
 - Flujo de petición/entrega de chunks cifrados entre pares con transporte seguro y acuses firmados.
 - Bootstrapping de la DHT con nodos semilla y negociación inicial de llaves.
 - Simulación de NAT traversal con coordinación UPnP/STUN/hole punching y telemetría integrada en `Node`.
+- Estrategia de distribución coordinada de manifiestos y shards (SwarmCoordinator) con planes de replicación y rebalanceo.
 
 ## Próximos hitos
-- Diseñar estrategia de distribución de manifiestos y shards entre múltiples proveedores (swarm coordinado).
 - Incorporar almacenamiento persistente opcional con borrado seguro (wipe) por TTL.
 - Construir CLI/daemon: comandos para anunciar, recuperar, listar y configurar TTLs.
 - Distribuir manifiestos `eph://` con validacion de metadatos y coordinacion de entrega segura entre pares.
