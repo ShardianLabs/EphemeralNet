@@ -359,4 +359,21 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.SwarmNode COMMAND ephemeralnet_swarm_node_tests)
+
+    add_executable(ephemeralnet_persistent_storage_tests
+        tests/persistent_storage.cpp
+    )
+
+    target_link_libraries(ephemeralnet_persistent_storage_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_persistent_storage_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_persistent_storage_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.PersistentStorage COMMAND ephemeralnet_persistent_storage_tests)
 endif()

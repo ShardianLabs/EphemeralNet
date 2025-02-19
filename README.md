@@ -18,6 +18,7 @@ EphemeralNet es un proyecto de sistema de ficheros P2P efímero escrito en C++ c
 - **Transporte seguro**: sesiones TCP cifradas con ChaCha20 reemplazan el gestor simulado y permiten mensajería punto a punto.
 - **Prueba de humo**: verificación básica del borrado tras el TTL.
 - **Coordinación de swarm**: replicación de manifiestos y shards entre múltiples proveedores simulados.
+- **Almacenamiento persistente opcional**: backend en disco con borrado seguro (wipe) al expirar el TTL.
 
 ## Requisitos
 

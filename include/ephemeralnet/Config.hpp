@@ -22,6 +22,10 @@ struct Config {
     std::uint16_t swarm_min_providers{2};
     std::uint16_t swarm_candidate_sample{8};
     std::chrono::seconds swarm_rebalance_interval{std::chrono::minutes(30)};
+    bool storage_persistent_enabled{false};
+    bool storage_wipe_on_expiry{true};
+    std::uint8_t storage_wipe_passes{1};
+    std::string storage_directory{"storage"};
     std::optional<std::uint32_t> identity_seed{};
     std::uint8_t shard_threshold{3};
     std::uint8_t shard_total{5};

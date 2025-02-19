@@ -23,9 +23,9 @@
 - Bootstrapping de la DHT con nodos semilla y negociación inicial de llaves.
 - Simulación de NAT traversal con coordinación UPnP/STUN/hole punching y telemetría integrada en `Node`.
 - Estrategia de distribución coordinada de manifiestos y shards (SwarmCoordinator) con planes de replicación y rebalanceo.
+- Almacenamiento persistente opcional en disco con borrado seguro por TTL (wipe configurable).
 
 ## Próximos hitos
-- Incorporar almacenamiento persistente opcional con borrado seguro (wipe) por TTL.
 - Construir CLI/daemon: comandos para anunciar, recuperar, listar y configurar TTLs.
 - Distribuir manifiestos `eph://` con validacion de metadatos y coordinacion de entrega segura entre pares.
 - Diseñar capa de intercambio de chunks estilo BitTorrent (programación de envíos, multi-seeding y propagación entre pares).
