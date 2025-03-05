@@ -19,6 +19,7 @@ EphemeralNet es un proyecto de sistema de ficheros P2P efímero escrito en C++ c
 - **Prueba de humo**: verificación básica del borrado tras el TTL.
 - **Coordinación de swarm**: replicación de manifiestos y shards entre múltiples proveedores simulados.
 - **Almacenamiento persistente opcional**: backend en disco con borrado seguro (wipe) al expirar el TTL.
+- **CLI de nodo**: comandos `serve`, `store`, `fetch` y `list` para operar el nodo sin código adicional.
 
 ## Requisitos
 
@@ -47,5 +48,28 @@ ctest --test-dir build
 1. Implementar una capa de red real para intercambio de chunks (UDP/TCP o QUIC).
 2. Diseñar reemplazo del `SessionManager` con transporte real y cifrado extremo a extremo.
 3. Añadir auditorías de TTL y coordinación de limpieza distribuida.
-4. Construir un CLI interactivo para anunciar y recuperar ficheros.
-5. Integrar almacenamiento persistente cifrado opcional en disco con borrado seguro.
+4. Exponer API gRPC/REST para automatizar la orquestación de nodos.
+5. Implementar modo daemon con gestión de claves y control remoto de la CLI.
+
+## CLI
+
+El binario `eph` ofrece la interfaz de línea de comandos para el daemon. Ejemplos básicos:
+
+```powershell
+# Mostrar ayuda general
+eph --help
+
+# Arrancar el nodo y procesar eventos hasta Ctrl+C
+eph --storage-dir .\data serve
+
+# Almacenar un archivo con TTL de 3600 segundos
+eph store secrets.bin --ttl 3600
+
+# Recuperar un archivo usando un manifiesto eph://...
+eph fetch eph://<manifest> --out recovered.bin
+
+# Listar chunks almacenados localmente y su TTL restante
+eph list
+```
+
+Las opciones globales permiten controlar la persistencia (`--no-persistent`), la ruta de almacenamiento (`--storage-dir`), el número de pasadas del borrado seguro (`--wipe-passes`), la identidad determinista (`--identity-seed`), así como el host y puerto del plano de control (`--control-host`, `--control-port`).

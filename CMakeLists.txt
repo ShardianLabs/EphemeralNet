@@ -67,6 +67,12 @@ endif()
 
 add_executable(ephemeralnet
     src/main.cpp
+    src/daemon/ControlClient.cpp
+    src/daemon/ControlServer.cpp
+)
+
+set_target_properties(ephemeralnet PROPERTIES
+    OUTPUT_NAME eph
 )
 
 if(EPHEMERALNET_WARNINGS_AS_ERRORS)
@@ -376,4 +382,6 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.PersistentStorage COMMAND ephemeralnet_persistent_storage_tests)
+
+    add_test(NAME EphemeralNet.CLIUsage COMMAND $<TARGET_FILE:ephemeralnet> --help)
 endif()

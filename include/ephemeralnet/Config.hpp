@@ -26,6 +26,8 @@ struct Config {
     bool storage_wipe_on_expiry{true};
     std::uint8_t storage_wipe_passes{1};
     std::string storage_directory{"storage"};
+    std::string control_host{"127.0.0.1"};
+    std::uint16_t control_port{47777};
     std::optional<std::uint32_t> identity_seed{};
     std::uint8_t shard_threshold{3};
     std::uint8_t shard_total{5};

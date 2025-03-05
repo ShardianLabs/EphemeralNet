@@ -24,9 +24,10 @@
 - Simulación de NAT traversal con coordinación UPnP/STUN/hole punching y telemetría integrada en `Node`.
 - Estrategia de distribución coordinada de manifiestos y shards (SwarmCoordinator) con planes de replicación y rebalanceo.
 - Almacenamiento persistente opcional en disco con borrado seguro por TTL (wipe configurable).
+- CLI de nodo con comandos `serve`, `store`, `fetch` y `list` sobre la API de `Node`.
 
 ## Próximos hitos
-- Construir CLI/daemon: comandos para anunciar, recuperar, listar y configurar TTLs.
+- Evolucionar el modo CLI a daemon con API RPC local y programación de tareas.
 - Distribuir manifiestos `eph://` con validacion de metadatos y coordinacion de entrega segura entre pares.
 - Diseñar capa de intercambio de chunks estilo BitTorrent (programación de envíos, multi-seeding y propagación entre pares).
 - Integrar configuración en YAML/JSON + perfiles de red.

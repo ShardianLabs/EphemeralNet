@@ -198,6 +198,11 @@ void SessionManager::set_message_handler(MessageHandler handler) {
     handler_ = std::move(handler);
 }
 
+std::size_t SessionManager::active_session_count() const {
+    std::scoped_lock lock(sessions_mutex_);
+    return sessions_.size();
+}
+
 void SessionManager::register_peer_key(const PeerId& peer_id, const std::array<std::uint8_t, 32>& key) {
     std::scoped_lock lock(sessions_mutex_);
     keys_[peer_key_string(peer_id)] = key;

@@ -47,6 +47,8 @@ public:
     bool connect(const PeerId& peer_id, const std::string& host, std::uint16_t port);
     bool send(const PeerId& peer_id, std::span<const std::uint8_t> payload);
 
+    std::size_t active_session_count() const;
+
 private:
     struct Session {
         SocketHandle socket{INVALID_SOCKET_HANDLE};

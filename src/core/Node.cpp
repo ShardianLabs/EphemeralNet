@@ -506,6 +506,14 @@ void Node::register_peer_contact(PeerContact contact) {
     dht_.register_peer(std::move(contact));
 }
 
+std::vector<ChunkStore::SnapshotEntry> Node::stored_chunks() const {
+    return chunk_store_.snapshot();
+}
+
+std::size_t Node::connected_peer_count() const {
+    return sessions_.active_session_count();
+}
+
 void Node::initialize_transport_handler() {
     sessions_.set_message_handler([this](const network::TransportMessage& message) {
         handle_transport_message(message);

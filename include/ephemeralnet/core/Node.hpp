@@ -73,6 +73,8 @@ public:
     bool connect_peer(const PeerId& peer_id, const std::string& host, std::uint16_t port);
     bool send_secure(const PeerId& peer_id, std::span<const std::uint8_t> payload);
     void register_peer_contact(PeerContact contact);
+    std::vector<ChunkStore::SnapshotEntry> stored_chunks() const;
+    std::size_t connected_peer_count() const;
 
 
     void tick();
