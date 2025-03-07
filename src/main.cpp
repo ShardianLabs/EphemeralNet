@@ -137,6 +137,17 @@ std::optional<ArrayType> parse_hex_array(const std::string& hex) {
     return result;
 }
 
+std::string strip_quotes(std::string value) {
+    if (value.size() >= 2) {
+        const char first = value.front();
+        const char last = value.back();
+        if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+            return value.substr(1, value.size() - 2);
+        }
+    }
+    return value;
+}
+
 ephemeralnet::PeerId make_peer_id(const GlobalOptions& options) {
     if (options.peer_id_hex) {
         if (auto parsed = parse_hex_array<ephemeralnet::PeerId>(*options.peer_id_hex)) {
@@ -181,7 +192,7 @@ ephemeralnet::Config build_config(const GlobalOptions& options) {
         config.storage_wipe_passes = options.wipe_passes;
     }
     if (options.storage_dir) {
-        config.storage_directory = *options.storage_dir;
+        config.storage_directory = strip_quotes(*options.storage_dir);
     }
     if (options.identity_seed) {
         config.identity_seed = options.identity_seed;
@@ -190,7 +201,7 @@ ephemeralnet::Config build_config(const GlobalOptions& options) {
         config.default_chunk_ttl = std::chrono::seconds(*options.default_ttl_seconds);
     }
     if (options.control_host) {
-        config.control_host = *options.control_host;
+        config.control_host = strip_quotes(*options.control_host);
     }
     if (options.control_port) {
         config.control_port = *options.control_port;
@@ -199,10 +210,10 @@ ephemeralnet::Config build_config(const GlobalOptions& options) {
 }
 
 std::vector<std::string> build_daemon_arguments(const GlobalOptions& options) {
-    std::vector<std::string> args{"serve"};
+    std::vector<std::string> args;
     if (options.storage_dir) {
         args.emplace_back("--storage-dir");
-        args.emplace_back(*options.storage_dir);
+        args.emplace_back(strip_quotes(*options.storage_dir));
     }
     if (options.persistent_set) {
         args.emplace_back(options.persistent ? "--persistent" : "--no-persistent");
@@ -220,7 +231,7 @@ std::vector<std::string> build_daemon_arguments(const GlobalOptions& options) {
     }
     if (options.peer_id_hex) {
         args.emplace_back("--peer-id");
-        args.emplace_back(*options.peer_id_hex);
+        args.emplace_back(strip_quotes(*options.peer_id_hex));
     }
     if (options.default_ttl_seconds) {
         args.emplace_back("--default-ttl");
@@ -228,12 +239,13 @@ std::vector<std::string> build_daemon_arguments(const GlobalOptions& options) {
     }
     if (options.control_host) {
         args.emplace_back("--control-host");
-        args.emplace_back(*options.control_host);
+        args.emplace_back(strip_quotes(*options.control_host));
     }
     if (options.control_port) {
         args.emplace_back("--control-port");
         args.emplace_back(std::to_string(*options.control_port));
     }
+    args.emplace_back("serve");
     return args;
 }
 
@@ -260,22 +272,105 @@ std::filesystem::path executable_path() {
 
 bool launch_detached(const std::filesystem::path& exe, const std::vector<std::string>& args) {
 #ifdef _WIN32
-    std::vector<std::wstring> wide_args;
-    wide_args.reserve(args.size() + 1);
-    wide_args.push_back(exe.wstring());
+    auto widen = [](const std::string& input) -> std::wstring {
+        if (input.empty()) {
+            return std::wstring{};
+        }
+        int length = MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, nullptr, 0);
+        if (length == 0) {
+            length = MultiByteToWideChar(CP_ACP, 0, input.c_str(), -1, nullptr, 0);
+            if (length == 0) {
+                throw std::runtime_error("No se pudo convertir argumento a UTF-16");
+            }
+            std::wstring result(static_cast<std::size_t>(length - 1), L'\0');
+            MultiByteToWideChar(CP_ACP, 0, input.c_str(), -1, result.data(), length);
+            return result;
+        }
+        std::wstring result(static_cast<std::size_t>(length - 1), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, result.data(), length);
+        return result;
+    };
+
+    auto quote_argument = [](const std::wstring& argument) -> std::wstring {
+        if (argument.empty()) {
+            return L"\"\"";
+        }
+        bool needs_quotes = argument.find_first_of(L" \t\"") != std::wstring::npos;
+        if (!needs_quotes) {
+            return argument;
+        }
+        std::wstring quoted;
+        quoted.reserve(argument.size() + 2);
+        quoted.push_back(L'"');
+        unsigned backslashes = 0;
+        for (wchar_t ch : argument) {
+            if (ch == L'\\') {
+                ++backslashes;
+            } else if (ch == L'"') {
+                quoted.append(backslashes * 2 + 1, L'\\');
+                quoted.push_back(L'"');
+                backslashes = 0;
+            } else {
+                if (backslashes > 0) {
+                    quoted.append(backslashes, L'\\');
+                    backslashes = 0;
+                }
+                quoted.push_back(ch);
+            }
+        }
+        if (backslashes > 0) {
+            quoted.append(backslashes * 2, L'\\');
+        }
+        quoted.push_back(L'"');
+        return quoted;
+    };
+
+    std::wstring application = exe.wstring();
+    std::wstring command_line = quote_argument(application);
     for (const auto& arg : args) {
-        wide_args.emplace_back(arg.begin(), arg.end());
+        command_line.push_back(L' ');
+        command_line += quote_argument(widen(arg));
     }
 
-    std::vector<const wchar_t*> argv;
-    argv.reserve(wide_args.size() + 1);
-    for (const auto& warg : wide_args) {
-        argv.push_back(warg.c_str());
-    }
-    argv.push_back(nullptr);
+    std::vector<wchar_t> mutable_command(command_line.begin(), command_line.end());
+    mutable_command.push_back(L'\0');
 
-    const intptr_t result = _wspawnv(_P_DETACH, exe.wstring().c_str(), argv.data());
-    return result != -1;
+    STARTUPINFOW startup_info{};
+    startup_info.cb = sizeof(startup_info);
+    PROCESS_INFORMATION process_info{};
+
+    BOOL created = CreateProcessW(
+        application.empty() ? nullptr : application.data(),
+        mutable_command.data(),
+        nullptr,
+        nullptr,
+        FALSE,
+        DETACHED_PROCESS | CREATE_UNICODE_ENVIRONMENT,
+        nullptr,
+        nullptr,
+        &startup_info,
+        &process_info);
+
+    if (created) {
+        CloseHandle(process_info.hThread);
+        CloseHandle(process_info.hProcess);
+    } else {
+        const DWORD error = GetLastError();
+        LPWSTR message_buffer = nullptr;
+        const DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS;
+        if (FormatMessageW(flags,
+                           nullptr,
+                           error,
+                           0,
+                           reinterpret_cast<LPWSTR>(&message_buffer),
+                           0,
+                           nullptr) && message_buffer) {
+            std::wcerr << message_buffer;
+            LocalFree(message_buffer);
+        }
+    }
+
+    return created != FALSE;
 #else
     (void)exe;
     (void)args;
@@ -315,37 +410,55 @@ std::string to_lower(std::string value) {
 void print_list_response(const ephemeralnet::daemon::ControlResponse& response) {
     const auto count_it = response.fields.find("COUNT");
     const auto entries_it = response.fields.find("ENTRIES");
-    const auto count = count_it != response.fields.end() ? count_it->second : "0";
+    std::vector<std::array<std::string, 4>> entries;
 
-    std::cout << "Chunks locales: " << count << std::endl;
-    if (entries_it == response.fields.end() || entries_it->second.empty()) {
-        return;
+    if (entries_it != response.fields.end() && !entries_it->second.empty()) {
+        std::istringstream lines(entries_it->second);
+        std::string line;
+        while (std::getline(lines, line)) {
+            if (line.empty()) {
+                continue;
+            }
+            std::vector<std::string> tokens;
+            std::size_t start = 0;
+            while (start <= line.size()) {
+                const auto pos = line.find(',', start);
+                if (pos == std::string::npos) {
+                    tokens.emplace_back(line.substr(start));
+                    break;
+                }
+                tokens.emplace_back(line.substr(start, pos - start));
+                start = pos + 1;
+            }
+            if (tokens.size() == 4) {
+                entries.push_back({tokens[0], tokens[1], tokens[2], tokens[3]});
+            }
+        }
     }
 
-    std::istringstream lines(entries_it->second);
-    std::string line;
-    while (std::getline(lines, line)) {
-        if (line.empty()) {
-            continue;
+    std::optional<std::size_t> reported_count;
+    if (count_it != response.fields.end()) {
+        try {
+            reported_count = static_cast<std::size_t>(std::stoull(count_it->second));
+        } catch (...) {
+            reported_count.reset();
         }
-        std::vector<std::string> tokens;
-        std::size_t start = 0;
-        while (start <= line.size()) {
-            const auto pos = line.find(',', start);
-            if (pos == std::string::npos) {
-                tokens.emplace_back(line.substr(start));
-                break;
-            }
-            tokens.emplace_back(line.substr(start, pos - start));
-            start = pos + 1;
-        }
-        if (tokens.size() != 4) {
-            continue;
-        }
-        std::cout << "  ID=" << tokens[0]
-                  << " tamaño=" << tokens[1] << " bytes"
-                  << ", estado=" << tokens[2]
-                  << ", ttl=" << tokens[3] << "s" << std::endl;
+    }
+
+    const std::size_t entry_count = entries.size();
+    const std::size_t display_count = reported_count.has_value() && *reported_count == entry_count
+                                          ? *reported_count
+                                          : entry_count;
+
+    std::cout << "Chunks locales: " << display_count << std::endl;
+    if (entries.empty()) {
+        return;
+    }
+    for (const auto& entry : entries) {
+        std::cout << "  ID=" << entry[0]
+                  << " tamaño=" << entry[1] << " bytes"
+                  << ", estado=" << entry[2]
+                  << ", ttl=" << entry[3] << "s" << std::endl;
     }
 }
 
@@ -533,10 +646,17 @@ int main(int argc, char** argv) {
                 std::cerr << message << std::endl;
                 return 1;
             }
+            const auto message_it = response->fields.find("MESSAGE");
+            if (message_it != response->fields.end() && !message_it->second.empty()) {
+                std::cout << message_it->second << std::endl;
+            }
 
-            wait_for_daemon_shutdown(client, 5s);
-            const auto message = response->fields.contains("MESSAGE") ? response->fields.at("MESSAGE") : "Daemon detenido";
-            std::cout << message << std::endl;
+            if (!wait_for_daemon_shutdown(client, 5s)) {
+                std::cerr << "El daemon no se detuvo correctamente." << std::endl;
+                return 1;
+            }
+
+            std::cout << "Daemon detenido" << std::endl;
             return 0;
         }
 

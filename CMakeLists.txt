@@ -384,4 +384,42 @@ if(EPHEMERALNET_BUILD_TESTS)
     add_test(NAME EphemeralNet.PersistentStorage COMMAND ephemeralnet_persistent_storage_tests)
 
     add_test(NAME EphemeralNet.CLIUsage COMMAND $<TARGET_FILE:ephemeralnet> --help)
+    set_tests_properties(EphemeralNet.CLIUsage PROPERTIES
+        PASS_REGULAR_EXPRESSION "Uso: eph"
+    )
+
+    add_test(NAME EphemeralNet.CLIHelpAlias COMMAND $<TARGET_FILE:ephemeralnet> help)
+    set_tests_properties(EphemeralNet.CLIHelpAlias PROPERTIES
+        PASS_REGULAR_EXPRESSION "Uso: eph"
+    )
+
+    add_executable(ephemeralnet_cli_tests
+        tests/cli_error_cases.cpp
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_cli_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_cli_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.CLIBehaviour COMMAND ephemeralnet_cli_tests)
+    set_tests_properties(EphemeralNet.CLIBehaviour PROPERTIES
+        ENVIRONMENT "EPH_CLI_EXECUTABLE=$<TARGET_FILE:ephemeralnet>"
+    )
+
+    add_executable(ephemeralnet_cli_flow_tests
+        tests/cli_control_flow.cpp
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_cli_flow_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_cli_flow_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.CLIControlFlow COMMAND ephemeralnet_cli_flow_tests)
+    set_tests_properties(EphemeralNet.CLIControlFlow PROPERTIES
+        ENVIRONMENT "EPH_CLI_EXECUTABLE=$<TARGET_FILE:ephemeralnet>"
+    )
 endif()
