@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ephemeralnet/Types.hpp"
+#include "ephemeralnet/protocol/Manifest.hpp"
 
 #include <array>
 
@@ -26,6 +27,8 @@ struct AnnouncePayload {
     PeerId peer_id{};
     std::string endpoint;
     std::chrono::seconds ttl{0};
+    std::string manifest_uri;
+    std::vector<std::uint8_t> assigned_shards;
 };
 
 struct RequestPayload {

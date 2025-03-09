@@ -25,9 +25,10 @@
 - Estrategia de distribución coordinada de manifiestos y shards (SwarmCoordinator) con planes de replicación y rebalanceo.
 - Almacenamiento persistente opcional en disco con borrado seguro por TTL (wipe configurable).
 - CLI de nodo con comandos `serve`, `store`, `fetch` y `list` sobre la API de `Node`.
+- CLI/daemon desacoplados: `eph` actúa como cliente del plano de control con comandos `start`, `stop`, `status` y pruebas end-to-end para el arranque detenido.
+- Mensajes Announce propagan URI de manifiesto y asignaciones de shards con serialización/decodificación verificada.
 
 ## Próximos hitos
-- Evolucionar el modo CLI a daemon con API RPC local y programación de tareas.
 - Distribuir manifiestos `eph://` con validacion de metadatos y coordinacion de entrega segura entre pares.
 - Diseñar capa de intercambio de chunks estilo BitTorrent (programación de envíos, multi-seeding y propagación entre pares).
 - Integrar configuración en YAML/JSON + perfiles de red.

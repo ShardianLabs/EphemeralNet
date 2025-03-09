@@ -60,11 +60,20 @@ std::vector<std::uint8_t> encode(const Message& message) {
             if constexpr (std::is_same_v<PayloadType, AnnouncePayload>) {
                 const auto chunk_bytes = serialize_chunk_id(payload.chunk_id);
                 const auto peer_bytes = serialize_peer_id(payload.peer_id);
+                const auto endpoint_len = static_cast<std::uint32_t>(payload.endpoint.size());
+                const auto manifest_len = static_cast<std::uint32_t>(payload.manifest_uri.size());
+                const auto assignments_len = static_cast<std::uint32_t>(payload.assigned_shards.size());
+
                 write_u32(out, static_cast<std::uint32_t>(payload.ttl.count()));
-                write_u32(out, static_cast<std::uint32_t>(payload.endpoint.size()));
+                write_u32(out, endpoint_len);
+                write_u32(out, manifest_len);
+                write_u32(out, assignments_len);
+
                 out.insert(out.end(), chunk_bytes.begin(), chunk_bytes.end());
                 out.insert(out.end(), peer_bytes.begin(), peer_bytes.end());
                 out.insert(out.end(), payload.endpoint.begin(), payload.endpoint.end());
+                out.insert(out.end(), payload.manifest_uri.begin(), payload.manifest_uri.end());
+                out.insert(out.end(), payload.assigned_shards.begin(), payload.assigned_shards.end());
             } else if constexpr (std::is_same_v<PayloadType, RequestPayload>) {
                 const auto chunk_bytes = serialize_chunk_id(payload.chunk_id);
                 const auto peer_bytes = serialize_peer_id(payload.requester);
@@ -107,21 +116,42 @@ std::optional<Message> decode(std::span<const std::uint8_t> buffer) {
 
     switch (message.type) {
         case MessageType::Announce: {
-            if (remaining < 4 + 4 + ChunkId{}.size() + PeerId{}.size()) {
+            const auto header_bytes = 4u * 4u;  // ttl + endpoint len + manifest len + assignments len
+            if (remaining < header_bytes + ChunkId{}.size() + PeerId{}.size()) {
                 return std::nullopt;
             }
-            const auto ttl = read_u32(data);
-            const auto endpoint_len = read_u32(data + 4);
-            const auto expected_size = 8 + ChunkId{}.size() + PeerId{}.size() + endpoint_len;
+
+            std::size_t cursor = 0;
+            const auto ttl = read_u32(data + cursor);
+            cursor += 4;
+            const auto endpoint_len = read_u32(data + cursor);
+            cursor += 4;
+            const auto manifest_len = read_u32(data + cursor);
+            cursor += 4;
+            const auto assignments_len = read_u32(data + cursor);
+            cursor += 4;
+
+            const auto expected_size = cursor + ChunkId{}.size() + PeerId{}.size() + endpoint_len + manifest_len + assignments_len;
             if (remaining < expected_size) {
                 return std::nullopt;
             }
+
             AnnouncePayload payload{};
             payload.ttl = std::chrono::seconds(ttl);
-            payload.chunk_id = parse_chunk_id(data + 8);
-            payload.peer_id = parse_peer_id(data + 8 + ChunkId{}.size());
-            payload.endpoint.assign(reinterpret_cast<const char*>(data + 8 + ChunkId{}.size() + PeerId{}.size()), endpoint_len);
-            message.payload = payload;
+            payload.chunk_id = parse_chunk_id(data + cursor);
+            cursor += ChunkId{}.size();
+            payload.peer_id = parse_peer_id(data + cursor);
+            cursor += PeerId{}.size();
+
+            payload.endpoint.assign(reinterpret_cast<const char*>(data + cursor), endpoint_len);
+            cursor += endpoint_len;
+
+            payload.manifest_uri.assign(reinterpret_cast<const char*>(data + cursor), manifest_len);
+            cursor += manifest_len;
+
+            payload.assigned_shards.assign(data + cursor, data + cursor + assignments_len);
+
+            message.payload = std::move(payload);
             break;
         }
         case MessageType::Request: {

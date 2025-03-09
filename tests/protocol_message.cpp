@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <chrono>
+#include <type_traits>
 
 using namespace ephemeralnet;
 using namespace ephemeralnet::protocol;
@@ -30,6 +31,35 @@ void round_trip(const Message& message) {
     assert(decoded.has_value());
     assert(decoded->version == message.version);
     assert(decoded->type == message.type);
+    assert(decoded->payload.index() == message.payload.index());
+
+    std::visit(
+        [&](const auto& expected_payload) {
+            using PayloadType = std::decay_t<decltype(expected_payload)>;
+            const auto* actual_payload = std::get_if<PayloadType>(&decoded->payload);
+            assert(actual_payload != nullptr);
+
+            if constexpr (std::is_same_v<PayloadType, AnnouncePayload>) {
+                assert(actual_payload->chunk_id == expected_payload.chunk_id);
+                assert(actual_payload->peer_id == expected_payload.peer_id);
+                assert(actual_payload->endpoint == expected_payload.endpoint);
+                assert(actual_payload->ttl == expected_payload.ttl);
+                assert(actual_payload->manifest_uri == expected_payload.manifest_uri);
+                assert(actual_payload->assigned_shards == expected_payload.assigned_shards);
+            } else if constexpr (std::is_same_v<PayloadType, RequestPayload>) {
+                assert(actual_payload->chunk_id == expected_payload.chunk_id);
+                assert(actual_payload->requester == expected_payload.requester);
+            } else if constexpr (std::is_same_v<PayloadType, ChunkPayload>) {
+                assert(actual_payload->chunk_id == expected_payload.chunk_id);
+                assert(actual_payload->data == expected_payload.data);
+                assert(actual_payload->ttl == expected_payload.ttl);
+            } else if constexpr (std::is_same_v<PayloadType, AcknowledgePayload>) {
+                assert(actual_payload->chunk_id == expected_payload.chunk_id);
+                assert(actual_payload->peer_id == expected_payload.peer_id);
+                assert(actual_payload->accepted == expected_payload.accepted);
+            }
+        },
+        message.payload);
 }
 
 }  // namespace
@@ -42,6 +72,8 @@ int main() {
         .peer_id = make_peer_id(0x20),
         .endpoint = "127.0.0.1:4000",
         .ttl = std::chrono::seconds{3600},
+        .manifest_uri = "eph://chunk/abc123",
+        .assigned_shards = std::vector<std::uint8_t>{1, 7, 9},
     };
     round_trip(announce);
 

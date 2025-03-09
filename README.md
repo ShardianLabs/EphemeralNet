@@ -53,14 +53,20 @@ ctest --test-dir build
 
 ## CLI
 
-El binario `eph` ofrece la interfaz de línea de comandos para el daemon. Ejemplos básicos:
+El binario `eph` actúa como cliente ligero del daemon y ofrece los comandos de control más habituales. Ejemplos básicos:
 
 ```powershell
 # Mostrar ayuda general
 eph --help
 
-# Arrancar el nodo y procesar eventos hasta Ctrl+C
+# Ejecutar el daemon en primer plano hasta Ctrl+C
 eph --storage-dir .\data serve
+
+# Lanzar el daemon en segundo plano (detached)
+eph --storage-dir .\data start
+
+# Consultar estado del daemon en ejecución
+eph status
 
 # Almacenar un archivo con TTL de 3600 segundos
 eph store secrets.bin --ttl 3600
@@ -70,6 +76,11 @@ eph fetch eph://<manifest> --out recovered.bin
 
 # Listar chunks almacenados localmente y su TTL restante
 eph list
+
+# Detener el daemon de forma ordenada
+eph stop
 ```
 
 Las opciones globales permiten controlar la persistencia (`--no-persistent`), la ruta de almacenamiento (`--storage-dir`), el número de pasadas del borrado seguro (`--wipe-passes`), la identidad determinista (`--identity-seed`), así como el host y puerto del plano de control (`--control-host`, `--control-port`).
+
+> El comando `start` reutiliza las mismas opciones que `serve` para configurar el daemon antes de lanzarlo en segundo plano.
