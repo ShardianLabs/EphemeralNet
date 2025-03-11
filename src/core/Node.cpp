@@ -67,6 +67,34 @@ bool validate_shards(const protocol::Manifest& manifest) {
     return manifest.threshold > 0 && manifest.shards.size() >= manifest.threshold;
 }
 
+std::optional<std::pair<std::string, std::uint16_t>> parse_endpoint(const std::string& address) {
+    if (address.empty()) {
+        return std::nullopt;
+    }
+
+    const auto pos = address.find_last_of(':');
+    if (pos == std::string::npos) {
+        return std::nullopt;
+    }
+
+    auto host = address.substr(0, pos);
+    auto port_text = address.substr(pos + 1);
+
+    if (host.empty() || port_text.empty()) {
+        return std::nullopt;
+    }
+
+    try {
+        const auto numeric = std::stoul(port_text);
+        if (numeric == 0 || numeric > 65535u) {
+            return std::nullopt;
+        }
+        return std::make_pair(std::move(host), static_cast<std::uint16_t>(numeric));
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
 }  // namespace
 
 Node::Node(PeerId id, Config config)
@@ -143,6 +171,7 @@ protocol::Manifest Node::store_chunk(const ChunkId& chunk_id, ChunkData data, st
     dht_.publish_shards(chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, sanitized_ttl);
     announce_chunk(chunk_id, sanitized_ttl);
     update_swarm_plan(manifest);
+    broadcast_manifest(manifest);
 
     return manifest;
 }
@@ -220,6 +249,8 @@ std::optional<ChunkData> Node::receive_chunk(const std::string& manifest_uri, Ch
                      *ttl,
                      manifest.nonce.bytes,
                      true);
+
+    broadcast_manifest(manifest);
 
     return plaintext;
 }
@@ -558,7 +589,12 @@ void Node::handle_protocol_message(const protocol::Message& message, const netwo
             }
             break;
         }
-        case protocol::MessageType::Announce:
+        case protocol::MessageType::Announce: {
+            if (const auto* payload = std::get_if<protocol::AnnouncePayload>(&message.payload)) {
+                handle_announce(*payload, transport.peer_id);
+            }
+            break;
+        }
         default:
             break;
     }
@@ -652,6 +688,70 @@ void Node::handle_acknowledge(const protocol::AcknowledgePayload& payload, const
     }
 }
 
+void Node::handle_announce(const protocol::AnnouncePayload& payload, const PeerId& sender) {
+    if (payload.peer_id != sender) {
+        reputation_.record_failure(sender);
+        return;
+    }
+
+    if (payload.manifest_uri.empty()) {
+        reputation_.record_failure(sender);
+        return;
+    }
+
+    protocol::Manifest manifest{};
+    try {
+        manifest = protocol::decode_manifest(payload.manifest_uri);
+    } catch (const std::exception&) {
+        reputation_.record_failure(sender);
+        return;
+    }
+
+    if (manifest.chunk_id != payload.chunk_id) {
+        reputation_.record_failure(sender);
+        return;
+    }
+
+    if (!validate_shards(manifest)) {
+        reputation_.record_failure(sender);
+        return;
+    }
+
+    const auto ttl_opt = manifest_ttl(manifest);
+    if (!ttl_opt.has_value()) {
+        reputation_.record_failure(sender);
+        return;
+    }
+
+    const bool shards_valid = payload.assigned_shards.empty() ||
+        std::all_of(payload.assigned_shards.begin(), payload.assigned_shards.end(), [&](std::uint8_t index) {
+            return std::any_of(manifest.shards.begin(), manifest.shards.end(), [&](const protocol::KeyShard& shard) {
+                return shard.index == index;
+            });
+        });
+
+    if (!shards_valid) {
+        reputation_.record_failure(sender);
+        return;
+    }
+
+    const auto chunk_key = chunk_id_to_string(manifest.chunk_id);
+    manifest_cache_[chunk_key] = manifest;
+    dht_.publish_shards(manifest.chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, *ttl_opt);
+    update_swarm_plan(manifest);
+
+    const auto ttl = payload.ttl.count() > 0 ? payload.ttl : *ttl_opt;
+    if (!payload.endpoint.empty()) {
+        PeerContact contact{};
+        contact.id = sender;
+        contact.address = payload.endpoint;
+        contact.expires_at = std::chrono::steady_clock::now() + ttl;
+        dht_.add_contact(payload.chunk_id, std::move(contact), ttl);
+    }
+
+    reputation_.record_success(sender);
+}
+
 std::optional<std::array<std::uint8_t, 32>> Node::session_shared_key(const PeerId& peer_id) const {
     return key_manager_.current_key(peer_id);
 }
@@ -698,6 +798,96 @@ void Node::rebalance_swarm_plans() {
     for (const auto& key : stale_keys) {
         swarm_plans_.erase(key);
     }
+}
+
+void Node::broadcast_manifest(const protocol::Manifest& manifest) {
+    const auto port = sessions_.listening_port();
+    if (port == 0) {
+        return;
+    }
+
+    const auto ttl_opt = manifest_ttl(manifest);
+    if (!ttl_opt.has_value()) {
+        return;
+    }
+
+    const auto key = chunk_id_to_string(manifest.chunk_id);
+    const auto plan_it = swarm_plans_.find(key);
+    if (plan_it == swarm_plans_.end()) {
+        return;
+    }
+
+    const auto endpoint = self_endpoint();
+    if (endpoint.empty()) {
+        return;
+    }
+
+    const auto manifest_uri = protocol::encode_manifest(manifest);
+
+    for (const auto& assignment : plan_it->second.assignments) {
+        if (assignment.peer.id == id_) {
+            continue;
+        }
+        if (assignment.shard_indices.empty()) {
+            continue;
+        }
+        deliver_manifest(manifest, assignment, manifest_uri, *ttl_opt, endpoint);
+    }
+}
+
+bool Node::deliver_manifest(const protocol::Manifest& manifest,
+                            const SwarmAssignment& assignment,
+                            const std::string& manifest_uri,
+                            std::chrono::seconds ttl,
+                            const std::string& endpoint) {
+    const auto target = parse_endpoint(assignment.peer.address);
+    if (!target.has_value()) {
+        return false;
+    }
+
+    const auto& [host, port] = *target;
+    if (host.empty() || port == 0) {
+        return false;
+    }
+
+    const auto key = session_shared_key(assignment.peer.id);
+    if (!key.has_value()) {
+        return false;
+    }
+
+    connect_peer(assignment.peer.id, host, port);
+
+    protocol::Message announce{};
+    announce.version = 1;
+    announce.type = protocol::MessageType::Announce;
+
+    protocol::AnnouncePayload payload{};
+    payload.chunk_id = manifest.chunk_id;
+    payload.peer_id = id_;
+    payload.endpoint = endpoint;
+    payload.ttl = ttl;
+    payload.manifest_uri = manifest_uri;
+    payload.assigned_shards = assignment.shard_indices;
+    announce.payload = std::move(payload);
+
+    const auto key_span = std::span<const std::uint8_t>(key->data(), key->size());
+    auto encoded = protocol::encode_signed(announce, key_span);
+    const std::span<const std::uint8_t> payload_span(encoded.data(), encoded.size());
+    return send_secure(assignment.peer.id, payload_span);
+}
+
+std::string Node::self_endpoint() const {
+    const auto port = sessions_.listening_port();
+    if (port == 0) {
+        return {};
+    }
+
+    if (nat_status_.has_value() && !nat_status_->external_address.empty() && nat_status_->external_port != 0) {
+        return nat_status_->external_address + ":" + std::to_string(nat_status_->external_port);
+    }
+
+    const auto& host = !config_.control_host.empty() ? config_.control_host : std::string{"127.0.0.1"};
+    return host + ":" + std::to_string(port);
 }
 
 void Node::seed_bootstrap_contacts() {

@@ -116,6 +116,7 @@ private:
     void handle_request(const protocol::RequestPayload& payload, const PeerId& sender);
     void handle_chunk(const protocol::ChunkPayload& payload, const PeerId& sender);
     void handle_acknowledge(const protocol::AcknowledgePayload& payload, const PeerId& sender);
+    void handle_announce(const protocol::AnnouncePayload& payload, const PeerId& sender);
     std::optional<std::array<std::uint8_t, 32>> session_shared_key(const PeerId& peer_id) const;
     std::optional<protocol::Manifest> manifest_for_chunk(const ChunkId& chunk_id) const;
     void seed_bootstrap_contacts();
@@ -123,6 +124,13 @@ private:
     void ensure_bootstrap_handshake(const PeerId& peer_id);
     void update_swarm_plan(const protocol::Manifest& manifest);
     void rebalance_swarm_plans();
+    void broadcast_manifest(const protocol::Manifest& manifest);
+    bool deliver_manifest(const protocol::Manifest& manifest,
+                          const SwarmAssignment& assignment,
+                          const std::string& manifest_uri,
+                          std::chrono::seconds ttl,
+                          const std::string& endpoint);
+    std::string self_endpoint() const;
 };
 
 }  

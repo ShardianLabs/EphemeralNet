@@ -67,7 +67,8 @@ SwarmDistributionPlan SwarmCoordinator::compute_plan(const ChunkId& chunk_id,
 
     for (std::size_t shard_index = 0; shard_index < total_shards; ++shard_index) {
         const auto recipient = shard_index % provider_count;
-        plan.assignments[recipient].shard_indices.push_back(static_cast<std::uint8_t>(shard_index));
+        const auto shard_label = manifest.shards[shard_index].index;
+        plan.assignments[recipient].shard_indices.push_back(shard_label);
     }
 
     plan.diagnostics.emplace_back("Swarm plan assignments: " + std::to_string(plan.assignments.size()));

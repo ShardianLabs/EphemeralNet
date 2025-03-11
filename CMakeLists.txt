@@ -298,6 +298,23 @@ if(EPHEMERALNET_BUILD_TESTS)
 
     add_test(NAME EphemeralNet.SecureExchange COMMAND ephemeralnet_secure_exchange_tests)
 
+    add_executable(ephemeralnet_manifest_announce_tests
+        tests/announce_distribution.cpp
+    )
+
+    target_link_libraries(ephemeralnet_manifest_announce_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_manifest_announce_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_manifest_announce_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.ManifestAnnounce COMMAND ephemeralnet_manifest_announce_tests)
+
     add_executable(ephemeralnet_bootstrap_tests
         tests/bootstrap.cpp
     )

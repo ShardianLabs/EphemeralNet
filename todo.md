@@ -27,15 +27,35 @@
 - CLI de nodo con comandos `serve`, `store`, `fetch` y `list` sobre la API de `Node`.
 - CLI/daemon desacoplados: `eph` actúa como cliente del plano de control con comandos `start`, `stop`, `status` y pruebas end-to-end para el arranque detenido.
 - Mensajes Announce propagan URI de manifiesto y asignaciones de shards con serialización/decodificación verificada.
+- Broadcast de manifiestos `eph://` coordinado via SwarmCoordinator con validación de metadatos e incorporación automática de contactos seguros.
 
 ## Próximos hitos
-- Distribuir manifiestos `eph://` con validacion de metadatos y coordinacion de entrega segura entre pares.
-- Diseñar capa de intercambio de chunks estilo BitTorrent (programación de envíos, multi-seeding y propagación entre pares).
-- Integrar configuración en YAML/JSON + perfiles de red.
-- Añadir logging estructurado y sistema de métricas para monitorizar expiraciones.
-- Desarrollar suite de pruebas unitarias y de integración (simulaciones multi-nodo).
-- Documentar protocolo, arquitectura y guías operativas en `docs/`.
-- Preparar scripts de despliegue (Docker, empaquetado) y CI para Windows/Linux/macOS.
-- libephemeralnet (lib.so y dll)
-- ephemeralnet-cli
-- ephemeralnet-GUI
+- **CORE & PROTO**
+	- Diseñar estrategia de selección de piezas (p. ej. Rarest First) para el intercambio estilo BitTorrent.
+	- Implementar lógica de choking/unchoking y control de ancho de banda entre pares.
+	- Gestionar estados de seeds/leechers, intercambio de disponibilidad y promoción a seed.
+	- Añadir planificación de envíos multi-peer con priorización dinámica y backpressure.
+	- Versionado de mensajes de protocolo y compatibilidad hacia atrás para nuevas capacidades.
+- **SEGURIDAD**
+	- Integrar fuzzing continuo sobre la capa de deserialización de mensajes y manifiestos.
+	- Revisar endurecimiento criptográfico (rotación de claves, límites de TTL y rate limiting de Announce).
+	- Diseñar e implementar estrategia anti-Sybil/spam (Proof-of-Work ligero u otras defensas para anuncios y peticiones costosas).
+- **TESTEO**
+	- Desplegar nodos de bootstrap y STUN en un VPS para pruebas "in-the-wild".
+	- Crear harness de pruebas de integración multi-nodo con simulación de latencia/pérdida.
+	- Automatizar escenarios end-to-end (store/fetch) con fallos inducidos y rotaciones de plan.
+- **OPS & OBSERVABILIDAD**
+	- Integrar logging estructurado y exportadores de métricas (prometheus/OpenTelemetry).
+	- Preparar scripts de despliegue y pipelines CI/CD para Windows/Linux/macOS (Docker, PPA/Copr, Homebrew).
+	- Gestionar empaquetado reproducible y firma de binarios.
+	- Definir política de gobernanza y abuso (AUP) para nodos públicos de bootstrap/STUN y procesos de cumplimiento.
+- **UX & CONFIG**
+	- Añadir soporte de configuración YAML/JSON con perfiles de red y overrides por entorno.
+	- Incorporar validación interactiva y mensajes de error detallados en CLI/daemon.
+- **PRODUCTO**
+	- Completar API pública `libephemeralnet` (versionado, documentación y ejemplos de uso).
+	- Finalizar `ephemeralnet-cli` incluyendo comandos de diagnóstico y soporte scripting.
+	- Prototipo inicial de `ephemeralnet-GUI` o panel de administración ligero.
+- **DOCS**
+	- Documentar protocolo, arquitectura y flujos operativos en `docs/` con diagramas.
+	- Elaborar guías de despliegue y troubleshooting para operadores.
