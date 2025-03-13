@@ -15,13 +15,18 @@
 
 #include <array>
 #include <chrono>
-#include <string>
-#include <vector>
+#include <cstddef>
 #include <optional>
-#include <unordered_map>
 #include <span>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace ephemeralnet {
+
+namespace test {
+class NodeTestAccess;
+}
 
 class Node {
 public:
@@ -84,6 +89,8 @@ public:
     const Config& config() const noexcept { return config_; }
 
 private:
+    friend class test::NodeTestAccess;
+
     PeerId id_{};
     Config config_{};
     ChunkStore chunk_store_;
@@ -102,6 +109,18 @@ private:
         bool success{false};
         std::uint32_t remote_public{0};
     };
+    struct PendingFetchState {
+        ChunkId chunk_id{};
+        PeerId peer_id{};
+        std::string endpoint;
+        std::string manifest_uri;
+        std::chrono::steady_clock::time_point next_attempt{};
+        std::size_t attempts{0};
+        std::chrono::system_clock::time_point manifest_expires{};
+        std::chrono::steady_clock::time_point enqueue_time{};
+        std::chrono::steady_clock::time_point last_dispatch{};
+        bool in_flight{false};
+    };
     std::unordered_map<std::string, HandshakeRecord> handshake_state_;
     std::vector<std::string> cleanup_notifications_;
     std::chrono::steady_clock::time_point last_cleanup_{};
@@ -109,6 +128,7 @@ private:
     network::SessionManager::MessageHandler external_handler_{};
     std::unordered_map<std::string, Config::BootstrapNode> bootstrap_nodes_;
     std::unordered_map<std::string, SwarmDistributionPlan> swarm_plans_;
+    std::unordered_map<std::string, PendingFetchState> pending_chunk_fetches_;
 
     void initialize_transport_handler();
     void handle_transport_message(const network::TransportMessage& message);
@@ -131,6 +151,11 @@ private:
                           std::chrono::seconds ttl,
                           const std::string& endpoint);
     std::string self_endpoint() const;
+    void schedule_assigned_fetch(const protocol::AnnouncePayload& payload);
+    bool send_chunk_request_direct(const ChunkId& chunk_id, const PeerId& peer_id);
+    void process_pending_fetches();
+    bool dispatch_pending_fetch(PendingFetchState& state);
+    void schedule_next_fetch_attempt(PendingFetchState& state, bool success);
 };
 
 }  

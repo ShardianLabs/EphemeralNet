@@ -315,6 +315,40 @@ if(EPHEMERALNET_BUILD_TESTS)
 
     add_test(NAME EphemeralNet.ManifestAnnounce COMMAND ephemeralnet_manifest_announce_tests)
 
+    add_executable(ephemeralnet_fetch_retry_tests
+        tests/fetch_retry.cpp
+    )
+
+    target_link_libraries(ephemeralnet_fetch_retry_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_fetch_retry_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_fetch_retry_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.FetchRetry COMMAND ephemeralnet_fetch_retry_tests)
+
+    add_executable(ephemeralnet_fetch_priority_tests
+        tests/fetch_priority.cpp
+    )
+
+    target_link_libraries(ephemeralnet_fetch_priority_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_fetch_priority_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_fetch_priority_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.FetchPriority COMMAND ephemeralnet_fetch_priority_tests)
+
     add_executable(ephemeralnet_bootstrap_tests
         tests/bootstrap.cpp
     )

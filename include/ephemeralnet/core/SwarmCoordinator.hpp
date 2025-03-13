@@ -9,6 +9,7 @@
 #include <random>
 #include <string>
 #include <vector>
+#include <unordered_set>
 
 namespace ephemeralnet {
 
@@ -22,7 +23,9 @@ struct SwarmDistributionPlan {
     std::vector<SwarmAssignment> assignments;
     std::chrono::steady_clock::time_point created_at{};
     std::chrono::steady_clock::time_point next_rebalance{};
+    std::chrono::steady_clock::time_point last_broadcast{};
     std::vector<std::string> diagnostics;
+    std::unordered_set<std::string> delivered_peers;
 };
 
 class SwarmCoordinator {

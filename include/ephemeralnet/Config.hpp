@@ -22,6 +22,11 @@ struct Config {
     std::uint16_t swarm_min_providers{2};
     std::uint16_t swarm_candidate_sample{8};
     std::chrono::seconds swarm_rebalance_interval{std::chrono::minutes(30)};
+    std::chrono::seconds fetch_retry_initial_backoff{std::chrono::seconds(3)};
+    std::chrono::seconds fetch_retry_max_backoff{std::chrono::seconds(60)};
+    std::chrono::seconds fetch_retry_success_interval{std::chrono::seconds(15)};
+    std::uint8_t fetch_retry_attempt_limit{5};
+    std::uint16_t fetch_max_parallel_requests{3};
     bool storage_persistent_enabled{false};
     bool storage_wipe_on_expiry{true};
     std::uint8_t storage_wipe_passes{1};

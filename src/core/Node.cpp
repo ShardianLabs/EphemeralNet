@@ -10,12 +10,14 @@
 #include <array>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <span>
 #include <string>
 #include <utility>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace ephemeralnet {
 
@@ -96,6 +98,248 @@ std::optional<std::pair<std::string, std::uint16_t>> parse_endpoint(const std::s
 }
 
 }  // namespace
+
+void Node::schedule_assigned_fetch(const protocol::AnnouncePayload& payload) {
+    if (payload.assigned_shards.empty()) {
+        return;
+    }
+
+    if (chunk_store_.get_record(payload.chunk_id).has_value()) {
+        return;
+    }
+
+    protocol::Manifest manifest{};
+    if (const auto cached = manifest_for_chunk(payload.chunk_id)) {
+        manifest = *cached;
+    } else {
+        try {
+            manifest = protocol::decode_manifest(payload.manifest_uri);
+        } catch (const std::exception&) {
+            return;
+        }
+        manifest_cache_[chunk_id_to_string(payload.chunk_id)] = manifest;
+    }
+
+    const auto key = chunk_id_to_string(payload.chunk_id);
+    const auto now = std::chrono::steady_clock::now();
+
+    auto [it, inserted] = pending_chunk_fetches_.try_emplace(key);
+    auto& state = it->second;
+
+    if (inserted) {
+        state.chunk_id = payload.chunk_id;
+        state.enqueue_time = now;
+        state.attempts = 0;
+    } else if (state.peer_id != payload.peer_id) {
+        state.attempts = 0;
+    }
+
+    state.peer_id = payload.peer_id;
+    if (!payload.endpoint.empty()) {
+        state.endpoint = payload.endpoint;
+    }
+    state.manifest_uri = payload.manifest_uri;
+    state.manifest_expires = manifest.expires_at;
+    state.next_attempt = now;
+    state.in_flight = false;
+    state.last_dispatch = std::chrono::steady_clock::time_point{};
+
+    process_pending_fetches();
+}
+
+bool Node::send_chunk_request_direct(const ChunkId& chunk_id, const PeerId& peer_id) {
+    const auto key = session_shared_key(peer_id);
+    if (!key.has_value()) {
+        return false;
+    }
+
+    protocol::Message message{};
+    message.version = 1;
+    message.type = protocol::MessageType::Request;
+    protocol::RequestPayload request{};
+    request.chunk_id = chunk_id;
+    request.requester = id_;
+    message.payload = request;
+
+    const auto key_span = std::span<const std::uint8_t>(key->data(), key->size());
+    auto encoded = protocol::encode_signed(message, key_span);
+    const std::span<const std::uint8_t> payload_span(encoded.data(), encoded.size());
+    return send_secure(peer_id, payload_span);
+}
+
+void Node::schedule_next_fetch_attempt(PendingFetchState& state, bool success) {
+    const auto now = std::chrono::steady_clock::now();
+
+    if (success) {
+        auto interval = config_.fetch_retry_success_interval;
+        if (interval <= std::chrono::seconds::zero()) {
+            interval = std::chrono::seconds{1};
+        }
+        state.next_attempt = now + interval;
+        return;
+    }
+
+    const auto limit = static_cast<std::size_t>(config_.fetch_retry_attempt_limit);
+    if (limit > 0 && state.attempts >= limit) {
+        state.next_attempt = std::chrono::steady_clock::time_point::max();
+        return;
+    }
+
+    auto base = config_.fetch_retry_initial_backoff;
+    if (base <= std::chrono::seconds::zero()) {
+        base = std::chrono::seconds{1};
+    }
+
+    const std::size_t exponent = state.attempts > 0 ? state.attempts - 1 : 0;
+    const std::size_t clamped_exponent = std::min<std::size_t>(exponent, 8);
+    const auto factor = static_cast<int>(1 << clamped_exponent);
+
+    auto backoff = base * factor;
+    if (config_.fetch_retry_max_backoff > std::chrono::seconds::zero() && backoff > config_.fetch_retry_max_backoff) {
+        backoff = config_.fetch_retry_max_backoff;
+    }
+    if (backoff <= std::chrono::seconds::zero()) {
+        backoff = std::chrono::seconds{1};
+    }
+
+    state.next_attempt = now + backoff;
+}
+
+bool Node::dispatch_pending_fetch(PendingFetchState& state) {
+    const auto dispatch_time = std::chrono::steady_clock::now();
+
+    bool dispatched = send_chunk_request_direct(state.chunk_id, state.peer_id);
+    if (!dispatched) {
+        std::string host;
+        std::uint16_t port = 0;
+        if (!state.endpoint.empty()) {
+            const auto endpoint = parse_endpoint(state.endpoint);
+            if (endpoint.has_value()) {
+                host = endpoint->first;
+                port = endpoint->second;
+            }
+        }
+        dispatched = request_chunk(state.peer_id, host, port, state.manifest_uri);
+    }
+
+    state.attempts += 1;
+    schedule_next_fetch_attempt(state, dispatched);
+    state.last_dispatch = dispatch_time;
+    state.in_flight = dispatched;
+
+    return dispatched;
+}
+
+void Node::process_pending_fetches() {
+    if (pending_chunk_fetches_.empty()) {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto wall_now = std::chrono::system_clock::now();
+
+    struct ReadyFetch {
+        std::string key;
+        PendingFetchState* state;
+        std::chrono::seconds ttl;
+    };
+
+    std::vector<std::string> completed;
+    completed.reserve(pending_chunk_fetches_.size());
+    std::vector<ReadyFetch> ready;
+    ready.reserve(pending_chunk_fetches_.size());
+
+    std::size_t inflight_count = 0;
+
+    for (auto& [key, state] : pending_chunk_fetches_) {
+        if (chunk_store_.get_record(state.chunk_id).has_value()) {
+            completed.push_back(key);
+            continue;
+        }
+
+        if (state.manifest_expires != std::chrono::system_clock::time_point{}
+            && wall_now >= state.manifest_expires) {
+            completed.push_back(key);
+            continue;
+        }
+
+        if (state.next_attempt == std::chrono::steady_clock::time_point::max()) {
+            completed.push_back(key);
+            continue;
+        }
+
+        if (state.in_flight) {
+            if (now >= state.next_attempt) {
+                state.in_flight = false;
+            } else {
+                ++inflight_count;
+                continue;
+            }
+        }
+
+        if (now < state.next_attempt) {
+            continue;
+        }
+
+        auto ttl_remaining = std::chrono::seconds::max();
+        if (state.manifest_expires != std::chrono::system_clock::time_point{}) {
+            if (state.manifest_expires <= wall_now) {
+                ttl_remaining = std::chrono::seconds::zero();
+            } else {
+                ttl_remaining = std::chrono::duration_cast<std::chrono::seconds>(state.manifest_expires - wall_now);
+            }
+        }
+
+        ready.push_back(ReadyFetch{key, &state, ttl_remaining});
+    }
+
+    if (ready.empty()) {
+        for (const auto& key : completed) {
+            pending_chunk_fetches_.erase(key);
+        }
+        return;
+    }
+
+    std::sort(ready.begin(), ready.end(), [](const ReadyFetch& lhs, const ReadyFetch& rhs) {
+        if (lhs.ttl != rhs.ttl) {
+            return lhs.ttl < rhs.ttl;
+        }
+        if (lhs.state->attempts != rhs.state->attempts) {
+            return lhs.state->attempts > rhs.state->attempts;
+        }
+        return lhs.state->enqueue_time < rhs.state->enqueue_time;
+    });
+
+    auto limit = static_cast<std::size_t>(config_.fetch_max_parallel_requests);
+    if (limit == 0) {
+        limit = std::numeric_limits<std::size_t>::max();
+    }
+
+    std::vector<std::string> exhausted;
+    exhausted.reserve(ready.size());
+
+    for (auto& entry : ready) {
+        if (inflight_count >= limit) {
+            break;
+        }
+
+        auto& state = *entry.state;
+        const bool dispatched = dispatch_pending_fetch(state);
+        if (dispatched) {
+            ++inflight_count;
+        }
+
+        const auto attempt_limit = static_cast<std::size_t>(config_.fetch_retry_attempt_limit);
+        if (!dispatched && attempt_limit > 0 && state.attempts >= attempt_limit) {
+            exhausted.push_back(entry.key);
+        }
+    }
+
+    completed.insert(completed.end(), exhausted.begin(), exhausted.end());
+    for (const auto& key : completed) {
+        pending_chunk_fetches_.erase(key);
+    }
+}
 
 Node::Node(PeerId id, Config config)
         : id_(id),
@@ -249,6 +493,7 @@ std::optional<ChunkData> Node::receive_chunk(const std::string& manifest_uri, Ch
                      *ttl,
                      manifest.nonce.bytes,
                      true);
+    pending_chunk_fetches_.erase(chunk_id_to_string(manifest.chunk_id));
 
     broadcast_manifest(manifest);
 
@@ -501,6 +746,7 @@ void Node::tick() {
         last_cleanup_ = now;
     }
     rebalance_swarm_plans();
+    process_pending_fetches();
 }
 
 void Node::start_transport(std::uint16_t port) {
@@ -749,6 +995,10 @@ void Node::handle_announce(const protocol::AnnouncePayload& payload, const PeerI
         dht_.add_contact(payload.chunk_id, std::move(contact), ttl);
     }
 
+    schedule_assigned_fetch(payload);
+
+    broadcast_manifest(manifest);
+
     reputation_.record_success(sender);
 }
 
@@ -768,9 +1018,21 @@ std::optional<protocol::Manifest> Node::manifest_for_chunk(const ChunkId& chunk_
 void Node::update_swarm_plan(const protocol::Manifest& manifest) {
     const auto key = chunk_id_to_string(manifest.chunk_id);
     auto plan = swarm_.compute_plan(manifest.chunk_id, manifest, dht_, id_);
+
+    if (const auto existing = swarm_plans_.find(key); existing != swarm_plans_.end()) {
+        for (const auto& assignment : plan.assignments) {
+            const auto peer_key = peer_id_to_string(assignment.peer.id);
+            if (existing->second.delivered_peers.contains(peer_key)) {
+                plan.delivered_peers.insert(peer_key);
+            }
+        }
+        plan.last_broadcast = existing->second.last_broadcast;
+    }
+
     if (plan.assignments.empty()) {
         plan.diagnostics.emplace_back("Swarm coordinator produced no assignments.");
     }
+
     swarm_plans_[key] = std::move(plan);
 }
 
@@ -792,6 +1054,13 @@ void Node::rebalance_swarm_plans() {
 
         auto refreshed = swarm_.compute_plan(manifest_it->second.chunk_id, manifest_it->second, dht_, id_);
         refreshed.diagnostics.emplace_back("Plan recomputed after rebalance interval.");
+        for (const auto& assignment : refreshed.assignments) {
+            const auto peer_key = peer_id_to_string(assignment.peer.id);
+            if (plan.delivered_peers.contains(peer_key)) {
+                refreshed.delivered_peers.insert(peer_key);
+            }
+        }
+        refreshed.last_broadcast = plan.last_broadcast;
         plan = std::move(refreshed);
     }
 
@@ -817,6 +1086,8 @@ void Node::broadcast_manifest(const protocol::Manifest& manifest) {
         return;
     }
 
+    auto& plan = plan_it->second;
+
     const auto endpoint = self_endpoint();
     if (endpoint.empty()) {
         return;
@@ -824,14 +1095,26 @@ void Node::broadcast_manifest(const protocol::Manifest& manifest) {
 
     const auto manifest_uri = protocol::encode_manifest(manifest);
 
-    for (const auto& assignment : plan_it->second.assignments) {
+    bool any_delivered = false;
+    for (const auto& assignment : plan.assignments) {
         if (assignment.peer.id == id_) {
             continue;
         }
         if (assignment.shard_indices.empty()) {
             continue;
         }
-        deliver_manifest(manifest, assignment, manifest_uri, *ttl_opt, endpoint);
+        const auto peer_key = peer_id_to_string(assignment.peer.id);
+        if (plan.delivered_peers.contains(peer_key)) {
+            continue;
+        }
+        if (deliver_manifest(manifest, assignment, manifest_uri, *ttl_opt, endpoint)) {
+            plan.delivered_peers.insert(peer_key);
+            any_delivered = true;
+        }
+    }
+
+    if (any_delivered) {
+        plan.last_broadcast = std::chrono::steady_clock::now();
     }
 }
 

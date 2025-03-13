@@ -100,14 +100,26 @@ int main() {
 
     const auto status = future.wait_for(2s);
     assert(status == std::future_status::ready);
-    const auto payload = future.get();
+    const auto announce_payload = future.get();
 
-    assert(payload.chunk_id == manifest.chunk_id);
-    assert(payload.peer_id == producer_id);
-    assert(payload.ttl.count() > 0);
-    assert(payload.manifest_uri == manifest_uri);
-    assert(!payload.endpoint.empty());
-    assert(!payload.assigned_shards.empty());
+    assert(announce_payload.chunk_id == manifest.chunk_id);
+    assert(announce_payload.peer_id == producer_id);
+    assert(announce_payload.ttl.count() > 0);
+    assert(announce_payload.manifest_uri == manifest_uri);
+    assert(!announce_payload.endpoint.empty());
+    assert(!announce_payload.assigned_shards.empty());
+
+    std::optional<ephemeralnet::ChunkData> fetched_chunk;
+    auto fetch_start = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - fetch_start < 2s) {
+        fetched_chunk = consumer.fetch_chunk(chunk_id);
+        if (fetched_chunk.has_value()) {
+            break;
+        }
+        std::this_thread::sleep_for(20ms);
+    }
+    assert(fetched_chunk.has_value());
+    assert(*fetched_chunk == data);
 
     auto start = std::chrono::steady_clock::now();
     std::optional<ephemeralnet::SwarmDistributionPlan> plan;

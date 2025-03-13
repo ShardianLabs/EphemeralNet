@@ -23,6 +23,7 @@ SwarmDistributionPlan SwarmCoordinator::compute_plan(const ChunkId& chunk_id,
     plan.chunk_id = chunk_id;
     plan.created_at = std::chrono::steady_clock::now();
     plan.next_rebalance = plan.created_at + config_.swarm_rebalance_interval;
+    plan.last_broadcast = plan.created_at;
 
     if (manifest.shards.empty()) {
         plan.diagnostics.emplace_back("Manifest has no shards to distribute.");

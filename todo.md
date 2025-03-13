@@ -28,13 +28,15 @@
 - CLI/daemon desacoplados: `eph` actúa como cliente del plano de control con comandos `start`, `stop`, `status` y pruebas end-to-end para el arranque detenido.
 - Mensajes Announce propagan URI de manifiesto y asignaciones de shards con serialización/decodificación verificada.
 - Broadcast de manifiestos `eph://` coordinado via SwarmCoordinator con validación de metadatos e incorporación automática de contactos seguros.
+- Reintentos automáticos con backoff exponencial para fetches asignados tras Announce, gestionados en `tick()` y limpieza del estado pendiente.
+- Scheduler de fetch prioriza expiración de manifiestos y respeta un límite de concurrencia configurable para mitigar backpressure.
 
 ## Próximos hitos
 - **CORE & PROTO**
 	- Diseñar estrategia de selección de piezas (p. ej. Rarest First) para el intercambio estilo BitTorrent.
 	- Implementar lógica de choking/unchoking y control de ancho de banda entre pares.
 	- Gestionar estados de seeds/leechers, intercambio de disponibilidad y promoción a seed.
-	- Añadir planificación de envíos multi-peer con priorización dinámica y backpressure.
+	- Extender la planificación multi-peer incorporando métricas de disponibilidad, choking/unchoking y fairness cross-swarm.
 	- Versionado de mensajes de protocolo y compatibilidad hacia atrás para nuevas capacidades.
 - **SEGURIDAD**
 	- Integrar fuzzing continuo sobre la capa de deserialización de mensajes y manifiestos.
