@@ -29,7 +29,7 @@
 - Mensajes Announce propagan URI de manifiesto y asignaciones de shards con serialización/decodificación verificada.
 - Broadcast de manifiestos `eph://` coordinado via SwarmCoordinator con validación de metadatos e incorporación automática de contactos seguros.
 - Reintentos automáticos con backoff exponencial para fetches asignados tras Announce, gestionados en `tick()` y limpieza del estado pendiente.
-- Scheduler de fetch prioriza expiración de manifiestos y respeta un límite de concurrencia configurable para mitigar backpressure.
+- Scheduler de fetch prioriza expiración de manifiestos, aplica límite de concurrencia configurable y equilibra solicitudes por par para mitigar backpressure.
 
 ## Próximos hitos
 - **CORE & PROTO**

@@ -129,6 +129,7 @@ private:
     std::unordered_map<std::string, Config::BootstrapNode> bootstrap_nodes_;
     std::unordered_map<std::string, SwarmDistributionPlan> swarm_plans_;
     std::unordered_map<std::string, PendingFetchState> pending_chunk_fetches_;
+    std::unordered_map<std::string, std::size_t> active_peer_requests_;
 
     void initialize_transport_handler();
     void handle_transport_message(const network::TransportMessage& message);
@@ -156,6 +157,10 @@ private:
     void process_pending_fetches();
     bool dispatch_pending_fetch(PendingFetchState& state);
     void schedule_next_fetch_attempt(PendingFetchState& state, bool success);
+    bool can_dispatch_fetch(const PendingFetchState& state) const;
+    void note_dispatch_start(const PendingFetchState& state);
+    void note_dispatch_end(const PendingFetchState& state);
+    void clear_pending_fetch(const std::string& key);
 };
 
 }  

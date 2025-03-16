@@ -225,6 +225,9 @@ bool Node::dispatch_pending_fetch(PendingFetchState& state) {
     state.attempts += 1;
     schedule_next_fetch_attempt(state, dispatched);
     state.last_dispatch = dispatch_time;
+    if (dispatched) {
+        note_dispatch_start(state);
+    }
     state.in_flight = dispatched;
 
     return dispatched;
@@ -270,6 +273,7 @@ void Node::process_pending_fetches() {
 
         if (state.in_flight) {
             if (now >= state.next_attempt) {
+                note_dispatch_end(state);
                 state.in_flight = false;
             } else {
                 ++inflight_count;
@@ -295,7 +299,7 @@ void Node::process_pending_fetches() {
 
     if (ready.empty()) {
         for (const auto& key : completed) {
-            pending_chunk_fetches_.erase(key);
+            clear_pending_fetch(key);
         }
         return;
     }
@@ -324,6 +328,9 @@ void Node::process_pending_fetches() {
         }
 
         auto& state = *entry.state;
+        if (!can_dispatch_fetch(state)) {
+            continue;
+        }
         const bool dispatched = dispatch_pending_fetch(state);
         if (dispatched) {
             ++inflight_count;
@@ -337,8 +344,53 @@ void Node::process_pending_fetches() {
 
     completed.insert(completed.end(), exhausted.begin(), exhausted.end());
     for (const auto& key : completed) {
-        pending_chunk_fetches_.erase(key);
+        clear_pending_fetch(key);
     }
+}
+
+bool Node::can_dispatch_fetch(const PendingFetchState& state) const {
+    if (config_.fetch_max_parallel_requests == 0) {
+        return true;
+    }
+
+    const auto peer_key = peer_id_to_string(state.peer_id);
+    const auto it = active_peer_requests_.find(peer_key);
+    if (it == active_peer_requests_.end()) {
+        return true;
+    }
+    return it->second < config_.fetch_max_parallel_requests;
+}
+
+void Node::note_dispatch_start(const PendingFetchState& state) {
+    const auto peer_key = peer_id_to_string(state.peer_id);
+    active_peer_requests_[peer_key] += 1;
+}
+
+void Node::note_dispatch_end(const PendingFetchState& state) {
+    const auto peer_key = peer_id_to_string(state.peer_id);
+    auto it = active_peer_requests_.find(peer_key);
+    if (it == active_peer_requests_.end()) {
+        return;
+    }
+
+    if (it->second <= 1) {
+        active_peer_requests_.erase(it);
+    } else {
+        it->second -= 1;
+    }
+}
+
+void Node::clear_pending_fetch(const std::string& key) {
+    auto it = pending_chunk_fetches_.find(key);
+    if (it == pending_chunk_fetches_.end()) {
+        return;
+    }
+
+    if (it->second.in_flight) {
+        note_dispatch_end(it->second);
+    }
+
+    pending_chunk_fetches_.erase(it);
 }
 
 Node::Node(PeerId id, Config config)
@@ -493,7 +545,7 @@ std::optional<ChunkData> Node::receive_chunk(const std::string& manifest_uri, Ch
                      *ttl,
                      manifest.nonce.bytes,
                      true);
-    pending_chunk_fetches_.erase(chunk_id_to_string(manifest.chunk_id));
+    clear_pending_fetch(chunk_id_to_string(manifest.chunk_id));
 
     broadcast_manifest(manifest);
 
