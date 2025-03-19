@@ -16,6 +16,7 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -120,6 +121,8 @@ private:
         std::chrono::steady_clock::time_point enqueue_time{};
         std::chrono::steady_clock::time_point last_dispatch{};
         bool in_flight{false};
+        std::size_t provider_count{std::numeric_limits<std::size_t>::max()};
+        std::chrono::steady_clock::time_point last_availability_check{};
     };
     std::unordered_map<std::string, HandshakeRecord> handshake_state_;
     std::vector<std::string> cleanup_notifications_;
@@ -161,6 +164,10 @@ private:
     void note_dispatch_start(const PendingFetchState& state);
     void note_dispatch_end(const PendingFetchState& state);
     void clear_pending_fetch(const std::string& key);
+    void refresh_provider_count(PendingFetchState& state,
+                                std::chrono::steady_clock::time_point now,
+                                bool force);
+    std::size_t count_known_providers(const ChunkId& chunk_id);
 };
 
 }  

@@ -27,6 +27,7 @@ struct Config {
     std::chrono::seconds fetch_retry_success_interval{std::chrono::seconds(15)};
     std::uint8_t fetch_retry_attempt_limit{5};
     std::uint16_t fetch_max_parallel_requests{3};
+    std::chrono::seconds fetch_availability_refresh{std::chrono::seconds(10)};
     bool storage_persistent_enabled{false};
     bool storage_wipe_on_expiry{true};
     std::uint8_t storage_wipe_passes{1};

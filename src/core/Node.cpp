@@ -143,6 +143,10 @@ void Node::schedule_assigned_fetch(const protocol::AnnouncePayload& payload) {
     state.next_attempt = now;
     state.in_flight = false;
     state.last_dispatch = std::chrono::steady_clock::time_point{};
+    state.provider_count = std::numeric_limits<std::size_t>::max();
+    state.last_availability_check = std::chrono::steady_clock::time_point{};
+
+    refresh_provider_count(state, now, true);
 
     process_pending_fetches();
 }
@@ -260,6 +264,8 @@ void Node::process_pending_fetches() {
             continue;
         }
 
+        refresh_provider_count(state, now, false);
+
         if (state.manifest_expires != std::chrono::system_clock::time_point{}
             && wall_now >= state.manifest_expires) {
             completed.push_back(key);
@@ -305,6 +311,9 @@ void Node::process_pending_fetches() {
     }
 
     std::sort(ready.begin(), ready.end(), [](const ReadyFetch& lhs, const ReadyFetch& rhs) {
+        if (lhs.state->provider_count != rhs.state->provider_count) {
+            return lhs.state->provider_count < rhs.state->provider_count;
+        }
         if (lhs.ttl != rhs.ttl) {
             return lhs.ttl < rhs.ttl;
         }
@@ -391,6 +400,46 @@ void Node::clear_pending_fetch(const std::string& key) {
     }
 
     pending_chunk_fetches_.erase(it);
+}
+
+std::size_t Node::count_known_providers(const ChunkId& chunk_id) {
+    auto providers = dht_.find_providers(chunk_id);
+    if (providers.empty()) {
+        return 0;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    std::unordered_set<std::string> unique;
+    unique.reserve(providers.size());
+
+    for (const auto& contact : providers) {
+        if (contact.id == id_) {
+            continue;
+        }
+        if (now >= contact.expires_at) {
+            continue;
+        }
+        unique.insert(peer_id_to_string(contact.id));
+    }
+
+    return unique.size();
+}
+
+void Node::refresh_provider_count(PendingFetchState& state,
+                                  std::chrono::steady_clock::time_point now,
+                                  bool force) {
+    const auto interval = config_.fetch_availability_refresh;
+    if (!force && state.last_availability_check != std::chrono::steady_clock::time_point{}) {
+        if (interval > std::chrono::seconds::zero()) {
+            const auto elapsed = now - state.last_availability_check;
+            if (elapsed < interval) {
+                return;
+            }
+        }
+    }
+
+    state.provider_count = count_known_providers(state.chunk_id);
+    state.last_availability_check = now;
 }
 
 Node::Node(PeerId id, Config config)

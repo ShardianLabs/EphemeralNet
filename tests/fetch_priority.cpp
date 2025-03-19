@@ -44,6 +44,7 @@ int main() {
     consumer_config.fetch_max_parallel_requests = 1;
     consumer_config.fetch_retry_initial_backoff = std::chrono::seconds(1);
     consumer_config.fetch_retry_success_interval = std::chrono::seconds(2);
+    consumer_config.fetch_availability_refresh = std::chrono::seconds(1);
 
     const auto producer_id = make_peer_id(0x10);
     const auto consumer_id = make_peer_id(0x90);
@@ -68,8 +69,8 @@ int main() {
     ephemeralnet::ChunkData urgent_data(64, 0x11u);
     ephemeralnet::ChunkData background_data(64, 0x22u);
 
-    const auto urgent_manifest = producer.store_chunk(urgent_chunk, urgent_data, 45s);
-    const auto background_manifest = producer.store_chunk(background_chunk, background_data, 240s);
+    const auto urgent_manifest = producer.store_chunk(urgent_chunk, urgent_data, 180s);
+    const auto background_manifest = producer.store_chunk(background_chunk, background_data, 180s);
 
     const auto urgent_uri = ephemeralnet::protocol::encode_manifest(urgent_manifest);
     const auto background_uri = ephemeralnet::protocol::encode_manifest(background_manifest);
@@ -119,6 +120,20 @@ int main() {
 
     ephemeralnet::test::NodeTestAccess::handle_announce(consumer, urgent_payload, producer_id);
     ephemeralnet::test::NodeTestAccess::handle_announce(consumer, background_payload, producer_id);
+
+    const auto extra_peer = make_peer_id(0xC0);
+    ephemeralnet::test::NodeTestAccess::register_chunk_provider(consumer,
+                                                                background_chunk,
+                                                                extra_peer,
+                                                                180s,
+                                                                "127.0.0.1:6500");
+    ephemeralnet::test::NodeTestAccess::force_availability_refresh(consumer, urgent_chunk);
+    ephemeralnet::test::NodeTestAccess::force_availability_refresh(consumer, background_chunk);
+
+    const auto urgent_known = ephemeralnet::test::NodeTestAccess::provider_count(consumer, urgent_chunk);
+    const auto background_known = ephemeralnet::test::NodeTestAccess::provider_count(consumer, background_chunk);
+    assert(urgent_known.has_value() && background_known.has_value());
+    assert(*urgent_known < *background_known);
 
     std::optional<ephemeralnet::ChunkData> urgent_fetched;
     std::optional<ephemeralnet::ChunkData> background_fetched;

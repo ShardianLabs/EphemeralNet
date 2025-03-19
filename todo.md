@@ -30,10 +30,10 @@
 - Broadcast de manifiestos `eph://` coordinado via SwarmCoordinator con validación de metadatos e incorporación automática de contactos seguros.
 - Reintentos automáticos con backoff exponencial para fetches asignados tras Announce, gestionados en `tick()` y limpieza del estado pendiente.
 - Scheduler de fetch prioriza expiración de manifiestos, aplica límite de concurrencia configurable y equilibra solicitudes por par para mitigar backpressure.
+- Planificación `fetch` incorpora rarest-first apoyado en refrescos periódicos de disponibilidad y conteo de proveedores por chunk.
 
 ## Próximos hitos
 - **CORE & PROTO**
-	- Diseñar estrategia de selección de piezas (p. ej. Rarest First) para el intercambio estilo BitTorrent.
 	- Implementar lógica de choking/unchoking y control de ancho de banda entre pares.
 	- Gestionar estados de seeds/leechers, intercambio de disponibilidad y promoción a seed.
 	- Extender la planificación multi-peer incorporando métricas de disponibilidad, choking/unchoking y fairness cross-swarm.
