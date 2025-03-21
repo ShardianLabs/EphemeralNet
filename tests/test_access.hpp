@@ -59,6 +59,53 @@ public:
         }
         return node.count_known_providers(chunk_id);
     }
+
+    static std::size_t pending_uploads(const Node& node) {
+        return node.pending_uploads_.size();
+    }
+
+    static std::size_t active_uploads(const Node& node) {
+        return node.active_uploads_.size();
+    }
+
+    static std::size_t active_uploads_for_peer(const Node& node, const PeerId& peer_id) {
+        const auto key = peer_id_to_string(peer_id);
+        const auto it = node.active_uploads_per_peer_.find(key);
+        if (it == node.active_uploads_per_peer_.end()) {
+            return 0;
+        }
+        return it->second;
+    }
+
+    static void enqueue_upload(Node& node,
+                               const PeerId& peer_id,
+                               const ChunkId& chunk_id,
+                               std::size_t payload_size) {
+        Node::PendingUploadRequest request{};
+        request.chunk_id = chunk_id;
+        request.peer_id = peer_id;
+        request.enqueue_time = std::chrono::steady_clock::now();
+        request.payload_size = payload_size;
+        node.pending_uploads_.push_back(std::move(request));
+    }
+
+    static void inject_active_upload(Node& node,
+                                     const PeerId& peer_id,
+                                     const ChunkId& chunk_id,
+                                     std::chrono::steady_clock::time_point started_at) {
+        Node::ActiveUploadState state{};
+        state.chunk_id = chunk_id;
+        state.peer_id = peer_id;
+        state.started_at = started_at;
+        state.payload_size = 0;
+        const auto key = node.make_upload_key(peer_id, chunk_id);
+        node.active_uploads_[key] = state;
+        node.active_uploads_per_peer_[peer_id_to_string(peer_id)] += 1;
+    }
+
+    static void process_uploads(Node& node) {
+        node.process_pending_uploads();
+    }
 };
 
 }  // namespace ephemeralnet::test

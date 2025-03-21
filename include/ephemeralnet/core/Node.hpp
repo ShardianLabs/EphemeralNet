@@ -14,6 +14,7 @@
 #include "ephemeralnet/storage/ChunkStore.hpp"
 
 #include <array>
+#include <deque>
 #include <chrono>
 #include <cstddef>
 #include <limits>
@@ -124,6 +125,18 @@ private:
         std::size_t provider_count{std::numeric_limits<std::size_t>::max()};
         std::chrono::steady_clock::time_point last_availability_check{};
     };
+    struct PendingUploadRequest {
+        ChunkId chunk_id{};
+        PeerId peer_id{};
+        std::chrono::steady_clock::time_point enqueue_time{};
+        std::size_t payload_size{0};
+    };
+    struct ActiveUploadState {
+        ChunkId chunk_id{};
+        PeerId peer_id{};
+        std::chrono::steady_clock::time_point started_at{};
+        std::size_t payload_size{0};
+    };
     std::unordered_map<std::string, HandshakeRecord> handshake_state_;
     std::vector<std::string> cleanup_notifications_;
     std::chrono::steady_clock::time_point last_cleanup_{};
@@ -133,6 +146,10 @@ private:
     std::unordered_map<std::string, SwarmDistributionPlan> swarm_plans_;
     std::unordered_map<std::string, PendingFetchState> pending_chunk_fetches_;
     std::unordered_map<std::string, std::size_t> active_peer_requests_;
+    std::deque<PendingUploadRequest> pending_uploads_;
+    std::unordered_map<std::string, ActiveUploadState> active_uploads_;
+    std::unordered_map<std::string, std::size_t> active_uploads_per_peer_;
+    std::chrono::steady_clock::time_point last_upload_rotation_{};
 
     void initialize_transport_handler();
     void handle_transport_message(const network::TransportMessage& message);
@@ -168,6 +185,21 @@ private:
                                 std::chrono::steady_clock::time_point now,
                                 bool force);
     std::size_t count_known_providers(const ChunkId& chunk_id);
+    void enqueue_upload_request(const protocol::RequestPayload& payload,
+                                const PeerId& sender,
+                                std::size_t payload_size);
+    void process_pending_uploads();
+    bool can_accept_more_uploads() const;
+    bool can_dispatch_upload(const PeerId& peer_id) const;
+    bool dispatch_upload(const PendingUploadRequest& request);
+    void note_upload_start(const PendingUploadRequest& request,
+                           std::size_t payload_size);
+    void note_upload_end(const PeerId& peer_id,
+                         const ChunkId& chunk_id,
+                         bool success);
+    std::string make_upload_key(const PeerId& peer_id, const ChunkId& chunk_id) const;
+    void prune_stale_uploads(std::chrono::steady_clock::time_point now);
+    void send_negative_ack(const PeerId& peer_id, const ChunkId& chunk_id);
 };
 
 }  

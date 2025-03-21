@@ -425,6 +425,201 @@ std::size_t Node::count_known_providers(const ChunkId& chunk_id) {
     return unique.size();
 }
 
+void Node::enqueue_upload_request(const protocol::RequestPayload& payload,
+                                  const PeerId& sender,
+                                  std::size_t payload_size) {
+    PendingUploadRequest request{};
+    request.chunk_id = payload.chunk_id;
+    request.peer_id = sender;
+    request.enqueue_time = std::chrono::steady_clock::now();
+    request.payload_size = payload_size;
+    pending_uploads_.push_back(std::move(request));
+}
+
+bool Node::can_accept_more_uploads() const {
+    if (config_.upload_max_parallel_transfers == 0) {
+        return true;
+    }
+    return active_uploads_.size() < config_.upload_max_parallel_transfers;
+}
+
+bool Node::can_dispatch_upload(const PeerId& peer_id) const {
+    if (!can_accept_more_uploads()) {
+        return false;
+    }
+    if (config_.upload_max_transfers_per_peer == 0) {
+        return true;
+    }
+    const auto peer_key = peer_id_to_string(peer_id);
+    const auto it = active_uploads_per_peer_.find(peer_key);
+    if (it == active_uploads_per_peer_.end()) {
+        return true;
+    }
+    return it->second < config_.upload_max_transfers_per_peer;
+}
+
+std::string Node::make_upload_key(const PeerId& peer_id, const ChunkId& chunk_id) const {
+    return peer_id_to_string(peer_id) + ":" + chunk_id_to_string(chunk_id);
+}
+
+void Node::note_upload_start(const PendingUploadRequest& request, std::size_t payload_size) {
+    const auto key = make_upload_key(request.peer_id, request.chunk_id);
+    ActiveUploadState state{};
+    state.chunk_id = request.chunk_id;
+    state.peer_id = request.peer_id;
+    state.started_at = std::chrono::steady_clock::now();
+    state.payload_size = payload_size;
+    active_uploads_[key] = state;
+
+    const auto peer_key = peer_id_to_string(request.peer_id);
+    active_uploads_per_peer_[peer_key] += 1;
+}
+
+void Node::note_upload_end(const PeerId& peer_id, const ChunkId& chunk_id, bool /*success*/) {
+    const auto key = make_upload_key(peer_id, chunk_id);
+    const auto it = active_uploads_.find(key);
+    if (it == active_uploads_.end()) {
+        return;
+    }
+
+    const auto peer_key = peer_id_to_string(peer_id);
+    auto peer_it = active_uploads_per_peer_.find(peer_key);
+    if (peer_it != active_uploads_per_peer_.end()) {
+        if (peer_it->second <= 1) {
+            active_uploads_per_peer_.erase(peer_it);
+        } else {
+            peer_it->second -= 1;
+        }
+    }
+
+    active_uploads_.erase(it);
+}
+
+void Node::prune_stale_uploads(std::chrono::steady_clock::time_point now) {
+    const auto timeout = config_.upload_transfer_timeout;
+    if (timeout <= std::chrono::seconds::zero()) {
+        return;
+    }
+
+    std::vector<std::pair<PeerId, ChunkId>> expired;
+    expired.reserve(active_uploads_.size());
+    for (const auto& entry : active_uploads_) {
+        const auto& state = entry.second;
+        if (now - state.started_at >= timeout) {
+            expired.emplace_back(state.peer_id, state.chunk_id);
+        }
+    }
+
+    for (const auto& entry : expired) {
+        note_upload_end(entry.first, entry.second, false);
+    }
+}
+
+void Node::send_negative_ack(const PeerId& peer_id, const ChunkId& chunk_id) {
+    const auto key = session_shared_key(peer_id);
+    if (!key.has_value()) {
+        return;
+    }
+
+    protocol::Message response{};
+    response.version = 1;
+    response.type = protocol::MessageType::Acknowledge;
+    protocol::AcknowledgePayload ack{};
+    ack.chunk_id = chunk_id;
+    ack.peer_id = id_;
+    ack.accepted = false;
+    response.payload = ack;
+
+    const auto key_span = std::span<const std::uint8_t>(key->data(), key->size());
+    auto encoded = protocol::encode_signed(response, key_span);
+    const std::span<const std::uint8_t> payload_span(encoded.data(), encoded.size());
+    send_secure(peer_id, payload_span);
+}
+
+bool Node::dispatch_upload(const PendingUploadRequest& request) {
+    const auto manifest = manifest_for_chunk(request.chunk_id);
+    const auto record = chunk_store_.get_record(request.chunk_id);
+    if (!manifest.has_value() || !record.has_value()) {
+        send_negative_ack(request.peer_id, request.chunk_id);
+        return false;
+    }
+
+    const auto ttl_opt = manifest_ttl(*manifest);
+    if (!ttl_opt.has_value()) {
+        send_negative_ack(request.peer_id, request.chunk_id);
+        return false;
+    }
+
+    protocol::Message response{};
+    response.version = 1;
+    response.type = protocol::MessageType::Chunk;
+    protocol::ChunkPayload chunk_payload{};
+    chunk_payload.chunk_id = request.chunk_id;
+    chunk_payload.data = record->data;
+    chunk_payload.ttl = *ttl_opt;
+    response.payload = std::move(chunk_payload);
+
+    const auto key = session_shared_key(request.peer_id);
+    if (!key.has_value()) {
+        return false;
+    }
+
+    const auto key_span = std::span<const std::uint8_t>(key->data(), key->size());
+    auto encoded = protocol::encode_signed(response, key_span);
+    const std::span<const std::uint8_t> payload_span(encoded.data(), encoded.size());
+    const bool dispatched = send_secure(request.peer_id, payload_span);
+    if (!dispatched) {
+        send_negative_ack(request.peer_id, request.chunk_id);
+        return false;
+    }
+
+    note_upload_start(request, record->data.size());
+    return true;
+}
+
+void Node::process_pending_uploads() {
+    if (pending_uploads_.empty()) {
+        prune_stale_uploads(std::chrono::steady_clock::now());
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    prune_stale_uploads(now);
+
+    if (pending_uploads_.empty()) {
+        return;
+    }
+
+    const auto interval = config_.upload_reconsider_interval;
+    if (pending_uploads_.size() > 1 && interval > std::chrono::seconds::zero()) {
+        if (now - last_upload_rotation_ >= interval) {
+            auto rotated = pending_uploads_.front();
+            pending_uploads_.pop_front();
+            pending_uploads_.push_back(rotated);
+            last_upload_rotation_ = now;
+        }
+    }
+
+    std::size_t iterations = pending_uploads_.size();
+    while (iterations-- > 0) {
+        if (!can_accept_more_uploads()) {
+            break;
+        }
+
+        auto request = pending_uploads_.front();
+        pending_uploads_.pop_front();
+
+        if (!can_dispatch_upload(request.peer_id)) {
+            pending_uploads_.push_back(std::move(request));
+            continue;
+        }
+
+        if (!dispatch_upload(request)) {
+            continue;
+        }
+    }
+}
+
 void Node::refresh_provider_count(PendingFetchState& state,
                                   std::chrono::steady_clock::time_point now,
                                   bool force) {
@@ -457,7 +652,8 @@ Node::Node(PeerId id, Config config)
             identity_public_(network::KeyExchange::compute_public(identity_scalar_)),
             handshake_state_(),
             cleanup_notifications_(),
-            last_cleanup_(std::chrono::steady_clock::now()) {
+            last_cleanup_(std::chrono::steady_clock::now()),
+            last_upload_rotation_(std::chrono::steady_clock::now()) {
         for (const auto& entry : config_.bootstrap_nodes) {
             bootstrap_nodes_[peer_id_to_string(entry.id)] = entry;
         }
@@ -847,6 +1043,7 @@ void Node::tick() {
         last_cleanup_ = now;
     }
     rebalance_swarm_plans();
+    process_pending_uploads();
     process_pending_fetches();
 }
 
@@ -956,45 +1153,20 @@ void Node::handle_request(const protocol::RequestPayload& payload, const PeerId&
     const auto manifest = manifest_for_chunk(payload.chunk_id);
     const auto record = chunk_store_.get_record(payload.chunk_id);
     bool accepted = manifest.has_value() && record.has_value();
-    std::chrono::seconds ttl{0};
     if (manifest.has_value()) {
         const auto ttl_opt = manifest_ttl(*manifest);
         if (!ttl_opt.has_value()) {
             accepted = false;
-        } else {
-            ttl = *ttl_opt;
         }
     }
 
-    if (accepted) {
-        protocol::Message response{};
-        response.version = 1;
-        response.type = protocol::MessageType::Chunk;
-        protocol::ChunkPayload chunk_payload{};
-        chunk_payload.chunk_id = payload.chunk_id;
-        chunk_payload.data = record->data;
-        chunk_payload.ttl = ttl;
-        response.payload = std::move(chunk_payload);
-
-        const auto key_span = std::span<const std::uint8_t>(key->data(), key->size());
-        auto encoded = protocol::encode_signed(response, key_span);
-        const std::span<const std::uint8_t> payload_span(encoded.data(), encoded.size());
-        send_secure(sender, payload_span);
-    } else {
-        protocol::Message response{};
-        response.version = 1;
-        response.type = protocol::MessageType::Acknowledge;
-        protocol::AcknowledgePayload ack{};
-        ack.chunk_id = payload.chunk_id;
-        ack.peer_id = id_;
-        ack.accepted = false;
-        response.payload = ack;
-
-        const auto key_span = std::span<const std::uint8_t>(key->data(), key->size());
-        auto encoded = protocol::encode_signed(response, key_span);
-        const std::span<const std::uint8_t> payload_span(encoded.data(), encoded.size());
-        send_secure(sender, payload_span);
+    if (!accepted) {
+        send_negative_ack(sender, payload.chunk_id);
+        return;
     }
+
+    enqueue_upload_request(payload, sender, record->data.size());
+    process_pending_uploads();
 }
 
 void Node::handle_chunk(const protocol::ChunkPayload& payload, const PeerId& sender) {
@@ -1033,6 +1205,8 @@ void Node::handle_acknowledge(const protocol::AcknowledgePayload& payload, const
     } else {
         reputation_.record_failure(sender);
     }
+    note_upload_end(sender, payload.chunk_id, payload.accepted);
+    process_pending_uploads();
 }
 
 void Node::handle_announce(const protocol::AnnouncePayload& payload, const PeerId& sender) {

@@ -28,6 +28,10 @@ struct Config {
     std::uint8_t fetch_retry_attempt_limit{5};
     std::uint16_t fetch_max_parallel_requests{3};
     std::chrono::seconds fetch_availability_refresh{std::chrono::seconds(10)};
+    std::uint16_t upload_max_parallel_transfers{3};
+    std::uint16_t upload_max_transfers_per_peer{1};
+    std::chrono::seconds upload_reconsider_interval{std::chrono::seconds(2)};
+    std::chrono::seconds upload_transfer_timeout{std::chrono::seconds(30)};
     bool storage_persistent_enabled{false};
     bool storage_wipe_on_expiry{true};
     std::uint8_t storage_wipe_passes{1};

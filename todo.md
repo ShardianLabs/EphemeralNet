@@ -31,10 +31,10 @@
 - Reintentos automáticos con backoff exponencial para fetches asignados tras Announce, gestionados en `tick()` y limpieza del estado pendiente.
 - Scheduler de fetch prioriza expiración de manifiestos, aplica límite de concurrencia configurable y equilibra solicitudes por par para mitigar backpressure.
 - Planificación `fetch` incorpora rarest-first apoyado en refrescos periódicos de disponibilidad y conteo de proveedores por chunk.
+- Subidas controladas por choking/unchoking respetan límites globales y por par con timeouts de transferencia y fair rotation.
 
 ## Próximos hitos
 - **CORE & PROTO**
-	- Implementar lógica de choking/unchoking y control de ancho de banda entre pares.
 	- Gestionar estados de seeds/leechers, intercambio de disponibilidad y promoción a seed.
 	- Extender la planificación multi-peer incorporando métricas de disponibilidad, choking/unchoking y fairness cross-swarm.
 	- Versionado de mensajes de protocolo y compatibilidad hacia atrás para nuevas capacidades.

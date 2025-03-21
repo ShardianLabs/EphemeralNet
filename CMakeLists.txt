@@ -349,6 +349,40 @@ if(EPHEMERALNET_BUILD_TESTS)
 
     add_test(NAME EphemeralNet.FetchPriority COMMAND ephemeralnet_fetch_priority_tests)
 
+    add_executable(ephemeralnet_upload_choking_tests
+        tests/upload_choking.cpp
+    )
+
+    target_link_libraries(ephemeralnet_upload_choking_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_upload_choking_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_upload_choking_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.UploadChoking COMMAND ephemeralnet_upload_choking_tests)
+
+    add_executable(ephemeralnet_upload_choking_scheduler_tests
+        tests/upload_choking_scheduler.cpp
+    )
+
+    target_link_libraries(ephemeralnet_upload_choking_scheduler_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_upload_choking_scheduler_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_upload_choking_scheduler_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.UploadChokingScheduler COMMAND ephemeralnet_upload_choking_scheduler_tests)
+
     add_executable(ephemeralnet_bootstrap_tests
         tests/bootstrap.cpp
     )
