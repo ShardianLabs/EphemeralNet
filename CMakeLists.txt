@@ -417,6 +417,23 @@ if(EPHEMERALNET_BUILD_TESTS)
 
     add_test(NAME EphemeralNet.NatTraversal COMMAND ephemeralnet_nat_traversal_tests)
 
+    add_executable(ephemeralnet_nat_node_tests
+        tests/nat_node.cpp
+    )
+
+    target_link_libraries(ephemeralnet_nat_node_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_nat_node_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_nat_node_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.NatNode COMMAND ephemeralnet_nat_node_tests)
+
     add_executable(ephemeralnet_swarm_distribution_tests
         tests/swarm_distribution.cpp
     )

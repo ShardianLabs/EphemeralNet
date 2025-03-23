@@ -270,6 +270,7 @@ bool SessionManager::connect(const PeerId& peer_id, const std::string& host, std
     }
 
     session->reader = std::thread(&SessionManager::receive_loop, this, peer_id, session);
+    session->reader.detach();
     return true;
 }
 
@@ -359,6 +360,7 @@ void SessionManager::accept_loop() {
         }
 
         session->reader = std::thread(&SessionManager::receive_loop, this, peer_id, session);
+        session->reader.detach();
     }
 }
 
@@ -417,10 +419,6 @@ void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session
     session->running.store(false);
     close_socket(session->socket);
 
-    if (session->reader.joinable()) {
-        session->reader.detach();
-    }
-
     {
         std::scoped_lock lock(sessions_mutex_);
         sessions_.erase(peer_key_string(peer_id));
@@ -441,8 +439,10 @@ void SessionManager::teardown_sessions() {
         }
         session->running.store(false);
         close_socket(session->socket);
-        if (session->reader.joinable()) {
-            session->reader.join();
+
+        auto wait_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (session->running.load() && std::chrono::steady_clock::now() < wait_deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
 }

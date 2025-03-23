@@ -100,17 +100,13 @@ int main() {
         max_active = std::max(max_active, ephemeralnet::test::NodeTestAccess::active_uploads(seeder));
 
         if (!a_complete) {
-            if (const auto record = peer_a.export_chunk_record(chunk_id); record.has_value()) {
-                const auto data = peer_a.fetch_chunk(chunk_id);
-                a_complete = data.has_value() && *data == chunk_payload;
-            }
+            const auto data = peer_a.fetch_chunk(chunk_id);
+            a_complete = data.has_value() && *data == chunk_payload;
         }
 
         if (!b_complete) {
-            if (const auto record = peer_b.export_chunk_record(chunk_id); record.has_value()) {
-                const auto data = peer_b.fetch_chunk(chunk_id);
-                b_complete = data.has_value() && *data == chunk_payload;
-            }
+            const auto data = peer_b.fetch_chunk(chunk_id);
+            b_complete = data.has_value() && *data == chunk_payload;
         }
 
         std::this_thread::sleep_for(30ms);
