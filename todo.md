@@ -32,10 +32,10 @@
 - Scheduler de fetch prioriza expiración de manifiestos, aplica límite de concurrencia configurable y equilibra solicitudes por par para mitigar backpressure.
 - Planificación `fetch` incorpora rarest-first apoyado en refrescos periódicos de disponibilidad y conteo de proveedores por chunk.
 - Subidas controladas por choking/unchoking respetan límites globales y por par con timeouts de transferencia y fair rotation.
+- Seguimiento de roles seed/leecher por chunk con ledger en `Node` y prueba de transición multi-nodo.
 
 ## Próximos hitos
 - **CORE & PROTO**
-	- Gestionar estados de seeds/leechers, intercambio de disponibilidad y promoción a seed.
 	- Extender la planificación multi-peer incorporando métricas de disponibilidad, choking/unchoking y fairness cross-swarm.
 	- Versionado de mensajes de protocolo y compatibilidad hacia atrás para nuevas capacidades.
 - **SEGURIDAD**
@@ -61,3 +61,4 @@
 - **DOCS**
 	- Documentar protocolo, arquitectura y flujos operativos en `docs/` con diagramas.
 	- Elaborar guías de despliegue y troubleshooting para operadores.
+    - LICENSE

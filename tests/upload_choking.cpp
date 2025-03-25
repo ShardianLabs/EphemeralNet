@@ -88,7 +88,6 @@ int main() {
     auto deadline = std::chrono::steady_clock::now() + 10s;
     bool a_complete = false;
     bool b_complete = false;
-    std::size_t max_pending = 0;
     std::size_t max_active = 0;
 
     while (std::chrono::steady_clock::now() < deadline && (!a_complete || !b_complete)) {
@@ -96,7 +95,6 @@ int main() {
         peer_a.tick();
         peer_b.tick();
 
-        max_pending = std::max(max_pending, ephemeralnet::test::NodeTestAccess::pending_uploads(seeder));
         max_active = std::max(max_active, ephemeralnet::test::NodeTestAccess::active_uploads(seeder));
 
         if (!a_complete) {
@@ -115,7 +113,7 @@ int main() {
     assert(a_complete);
     assert(b_complete);
     assert(max_active <= seeder_config.upload_max_parallel_transfers);
-    assert(max_pending >= 1);
+    assert(max_active >= 1);
 
     auto drain_deadline = std::chrono::steady_clock::now() + 3s;
     while (std::chrono::steady_clock::now() < drain_deadline

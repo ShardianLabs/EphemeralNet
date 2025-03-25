@@ -2,14 +2,23 @@
 
 #include "ephemeralnet/core/Node.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace ephemeralnet::test {
 
 class NodeTestAccess {
 public:
+    struct SwarmSnapshot {
+        bool self_seed{false};
+        bool self_leecher{false};
+        std::vector<std::string> seeds;
+        std::vector<std::string> leechers;
+    };
+
     static void handle_announce(Node& node,
                                 const protocol::AnnouncePayload& payload,
                                 const PeerId& sender) {
@@ -105,6 +114,19 @@ public:
 
     static void process_uploads(Node& node) {
         node.process_pending_uploads();
+    }
+
+    static SwarmSnapshot swarm_snapshot(const Node& node, const ChunkId& chunk_id) {
+        SwarmSnapshot snapshot{};
+        if (const auto* ledger = node.find_swarm_ledger(chunk_id)) {
+            snapshot.self_seed = ledger->self_seed;
+            snapshot.self_leecher = ledger->self_leecher;
+            snapshot.seeds.assign(ledger->seeds.begin(), ledger->seeds.end());
+            snapshot.leechers.assign(ledger->leechers.begin(), ledger->leechers.end());
+            std::sort(snapshot.seeds.begin(), snapshot.seeds.end());
+            std::sort(snapshot.leechers.begin(), snapshot.leechers.end());
+        }
+        return snapshot;
     }
 };
 

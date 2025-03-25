@@ -120,6 +120,9 @@ void Node::schedule_assigned_fetch(const protocol::AnnouncePayload& payload) {
         manifest_cache_[chunk_id_to_string(payload.chunk_id)] = manifest;
     }
 
+    note_peer_seed(payload.chunk_id, payload.peer_id);
+    note_local_leecher(payload.chunk_id);
+
     const auto key = chunk_id_to_string(payload.chunk_id);
     const auto now = std::chrono::steady_clock::now();
 
@@ -536,6 +539,68 @@ void Node::send_negative_ack(const PeerId& peer_id, const ChunkId& chunk_id) {
     send_secure(peer_id, payload_span);
 }
 
+Node::SwarmRoleLedger& Node::ensure_swarm_ledger(const ChunkId& chunk_id) {
+    const auto key = chunk_id_to_string(chunk_id);
+    return swarm_roles_[key];
+}
+
+const Node::SwarmRoleLedger* Node::find_swarm_ledger(const ChunkId& chunk_id) const {
+    const auto key = chunk_id_to_string(chunk_id);
+    const auto it = swarm_roles_.find(key);
+    if (it == swarm_roles_.end()) {
+        return nullptr;
+    }
+    return &it->second;
+}
+
+void Node::retire_swarm_ledger(const ChunkId& chunk_id) {
+    const auto key = chunk_id_to_string(chunk_id);
+    swarm_roles_.erase(key);
+}
+
+void Node::note_local_seed(const ChunkId& chunk_id) {
+    auto& ledger = ensure_swarm_ledger(chunk_id);
+    const auto self_key = peer_id_to_string(id_);
+    ledger.self_seed = true;
+    ledger.self_leecher = false;
+    ledger.leechers.erase(self_key);
+    ledger.seeds.insert(self_key);
+}
+
+void Node::note_local_leecher(const ChunkId& chunk_id) {
+    auto& ledger = ensure_swarm_ledger(chunk_id);
+    if (ledger.self_seed) {
+        ledger.self_leecher = false;
+        return;
+    }
+    const auto self_key = peer_id_to_string(id_);
+    ledger.self_leecher = true;
+    ledger.leechers.insert(self_key);
+}
+
+void Node::note_peer_seed(const ChunkId& chunk_id, const PeerId& peer_id) {
+    if (peer_id == id_) {
+        note_local_seed(chunk_id);
+        return;
+    }
+    auto& ledger = ensure_swarm_ledger(chunk_id);
+    const auto peer_key = peer_id_to_string(peer_id);
+    ledger.leechers.erase(peer_key);
+    ledger.seeds.insert(peer_key);
+}
+
+void Node::note_peer_leecher(const ChunkId& chunk_id, const PeerId& peer_id) {
+    if (peer_id == id_) {
+        note_local_leecher(chunk_id);
+        return;
+    }
+    auto& ledger = ensure_swarm_ledger(chunk_id);
+    const auto peer_key = peer_id_to_string(peer_id);
+    if (!ledger.seeds.contains(peer_key)) {
+        ledger.leechers.insert(peer_key);
+    }
+}
+
 bool Node::dispatch_upload(const PendingUploadRequest& request) {
     const auto manifest = manifest_for_chunk(request.chunk_id);
     const auto record = chunk_store_.get_record(request.chunk_id);
@@ -713,6 +778,7 @@ protocol::Manifest Node::store_chunk(const ChunkId& chunk_id, ChunkData data, st
     announce_chunk(chunk_id, sanitized_ttl);
     update_swarm_plan(manifest);
     broadcast_manifest(manifest);
+    note_local_seed(chunk_id);
 
     return manifest;
 }
@@ -791,6 +857,7 @@ std::optional<ChunkData> Node::receive_chunk(const std::string& manifest_uri, Ch
                      manifest.nonce.bytes,
                      true);
     clear_pending_fetch(chunk_id_to_string(manifest.chunk_id));
+    note_local_seed(manifest.chunk_id);
 
     broadcast_manifest(manifest);
 
@@ -834,6 +901,8 @@ bool Node::request_chunk(const PeerId& peer_id,
     }
 
     manifest_cache_[chunk_id_to_string(manifest.chunk_id)] = manifest;
+    note_peer_seed(manifest.chunk_id, peer_id);
+    note_local_leecher(manifest.chunk_id);
 
     ensure_bootstrap_handshake(peer_id);
 
@@ -1038,6 +1107,7 @@ void Node::tick() {
             const auto key = chunk_id_to_string(chunk_id);
             cleanup_notifications_.push_back(key);
             dht_.withdraw_contact(chunk_id, id_);
+            retire_swarm_ledger(chunk_id);
         }
         dht_.sweep_expired();
         last_cleanup_ = now;
@@ -1150,6 +1220,8 @@ void Node::handle_request(const protocol::RequestPayload& payload, const PeerId&
         return;
     }
 
+    note_peer_leecher(payload.chunk_id, sender);
+
     const auto manifest = manifest_for_chunk(payload.chunk_id);
     const auto record = chunk_store_.get_record(payload.chunk_id);
     bool accepted = manifest.has_value() && record.has_value();
@@ -1184,6 +1256,10 @@ void Node::handle_chunk(const protocol::ChunkPayload& payload, const PeerId& sen
         accepted = plaintext.has_value();
     }
 
+    if (accepted) {
+        note_peer_seed(payload.chunk_id, sender);
+    }
+
     protocol::Message ack_message{};
     ack_message.version = 1;
     ack_message.type = protocol::MessageType::Acknowledge;
@@ -1202,8 +1278,10 @@ void Node::handle_chunk(const protocol::ChunkPayload& payload, const PeerId& sen
 void Node::handle_acknowledge(const protocol::AcknowledgePayload& payload, const PeerId& sender) {
     if (payload.accepted) {
         reputation_.record_success(sender);
+        note_peer_seed(payload.chunk_id, sender);
     } else {
         reputation_.record_failure(sender);
+        note_peer_leecher(payload.chunk_id, sender);
     }
     note_upload_end(sender, payload.chunk_id, payload.accepted);
     process_pending_uploads();
@@ -1260,6 +1338,7 @@ void Node::handle_announce(const protocol::AnnouncePayload& payload, const PeerI
     manifest_cache_[chunk_key] = manifest;
     dht_.publish_shards(manifest.chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, *ttl_opt);
     update_swarm_plan(manifest);
+    note_peer_seed(manifest.chunk_id, sender);
 
     const auto ttl = payload.ttl.count() > 0 ? payload.ttl : *ttl_opt;
     if (!payload.endpoint.empty()) {

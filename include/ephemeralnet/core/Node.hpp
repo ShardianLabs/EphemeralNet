@@ -22,6 +22,7 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace ephemeralnet {
@@ -137,6 +138,12 @@ private:
         std::chrono::steady_clock::time_point started_at{};
         std::size_t payload_size{0};
     };
+    struct SwarmRoleLedger {
+        std::unordered_set<std::string> seeds;
+        std::unordered_set<std::string> leechers;
+        bool self_seed{false};
+        bool self_leecher{false};
+    };
     std::unordered_map<std::string, HandshakeRecord> handshake_state_;
     std::vector<std::string> cleanup_notifications_;
     std::chrono::steady_clock::time_point last_cleanup_{};
@@ -150,6 +157,7 @@ private:
     std::unordered_map<std::string, ActiveUploadState> active_uploads_;
     std::unordered_map<std::string, std::size_t> active_uploads_per_peer_;
     std::chrono::steady_clock::time_point last_upload_rotation_{};
+    std::unordered_map<std::string, SwarmRoleLedger> swarm_roles_;
 
     void initialize_transport_handler();
     void handle_transport_message(const network::TransportMessage& message);
@@ -200,6 +208,13 @@ private:
     std::string make_upload_key(const PeerId& peer_id, const ChunkId& chunk_id) const;
     void prune_stale_uploads(std::chrono::steady_clock::time_point now);
     void send_negative_ack(const PeerId& peer_id, const ChunkId& chunk_id);
+    SwarmRoleLedger& ensure_swarm_ledger(const ChunkId& chunk_id);
+    [[nodiscard]] const SwarmRoleLedger* find_swarm_ledger(const ChunkId& chunk_id) const;
+    void retire_swarm_ledger(const ChunkId& chunk_id);
+    void note_local_seed(const ChunkId& chunk_id);
+    void note_local_leecher(const ChunkId& chunk_id);
+    void note_peer_seed(const ChunkId& chunk_id, const PeerId& peer_id);
+    void note_peer_leecher(const ChunkId& chunk_id, const PeerId& peer_id);
 };
 
 }  

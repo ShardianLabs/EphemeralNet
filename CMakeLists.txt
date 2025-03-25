@@ -468,6 +468,23 @@ if(EPHEMERALNET_BUILD_TESTS)
 
     add_test(NAME EphemeralNet.SwarmNode COMMAND ephemeralnet_swarm_node_tests)
 
+    add_executable(ephemeralnet_swarm_roles_tests
+        tests/swarm_roles.cpp
+    )
+
+    target_link_libraries(ephemeralnet_swarm_roles_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_swarm_roles_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_swarm_roles_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.SwarmRoles COMMAND ephemeralnet_swarm_roles_tests)
+
     add_executable(ephemeralnet_persistent_storage_tests
         tests/persistent_storage.cpp
     )
