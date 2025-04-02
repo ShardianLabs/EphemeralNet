@@ -1,6 +1,7 @@
 #include "ephemeralnet/Types.hpp"
 
 #include <iomanip>
+#include <optional>
 #include <sstream>
 
 namespace ephemeralnet {
@@ -28,6 +29,26 @@ std::string chunk_id_to_string(const ChunkId& id) {
 
 std::string peer_id_to_string(const PeerId& id) {
     return array_to_hex_string(id);
+}
+
+std::optional<PeerId> peer_id_from_string(const std::string& text) {
+    if (text.size() != PeerId{}.size() * 2) {
+        return std::nullopt;
+    }
+
+    PeerId id{};
+    for (std::size_t index = 0; index < id.size(); ++index) {
+        const auto offset = index * 2;
+        const auto byte_text = text.substr(offset, 2);
+        std::istringstream iss(byte_text);
+        int value = 0;
+        iss >> std::hex >> value;
+        if (iss.fail() || value < 0 || value > 0xFF) {
+            return std::nullopt;
+        }
+        id[index] = static_cast<std::uint8_t>(value);
+    }
+    return id;
 }
 
 }  

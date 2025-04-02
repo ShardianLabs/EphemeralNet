@@ -601,6 +601,89 @@ void Node::note_peer_leecher(const ChunkId& chunk_id, const PeerId& peer_id) {
     }
 }
 
+SwarmPeerLoadMap Node::gather_peer_load() const {
+    SwarmPeerLoadMap loads;
+
+    auto ensure_entry = [&](const PeerId& peer_id) -> SwarmPeerLoad& {
+        const auto key = peer_id_to_string(peer_id);
+        auto& entry = loads[key];
+        if (!entry.has_reputation) {
+            entry.reputation = reputation_.score(peer_id);
+            entry.has_reputation = true;
+        }
+        return entry;
+    };
+
+    for (const auto& upload_entry : active_uploads_) {
+        const auto& state = upload_entry.second;
+        auto& entry = ensure_entry(state.peer_id);
+        entry.active_uploads += 1;
+    }
+
+    for (const auto& request : pending_uploads_) {
+        auto& entry = ensure_entry(request.peer_id);
+        entry.pending_uploads += 1;
+    }
+
+    for (const auto& fetch_entry : pending_chunk_fetches_) {
+        const auto& state = fetch_entry.second;
+        auto& entry = ensure_entry(state.peer_id);
+        if (state.in_flight) {
+            entry.active_downloads += 1;
+        } else {
+            entry.pending_downloads += 1;
+        }
+    }
+
+    for (const auto& [peer_key, count] : active_uploads_per_peer_) {
+        if (count == 0) {
+            continue;
+        }
+        auto& entry = loads[peer_key];
+        entry.active_uploads = std::max(entry.active_uploads, count);
+        if (!entry.has_reputation) {
+            if (const auto peer_id = peer_id_from_string(peer_key)) {
+                entry.reputation = reputation_.score(*peer_id);
+                entry.has_reputation = true;
+            }
+        }
+    }
+
+    for (const auto& [chunk_key, ledger] : swarm_roles_) {
+        (void)chunk_key;
+        for (const auto& seed_key : ledger.seeds) {
+            auto& entry = loads[seed_key];
+            entry.seed_roles += 1;
+            if (!entry.has_reputation) {
+                if (const auto peer_id = peer_id_from_string(seed_key)) {
+                    entry.reputation = reputation_.score(*peer_id);
+                    entry.has_reputation = true;
+                }
+            }
+        }
+        for (const auto& leecher_key : ledger.leechers) {
+            auto& entry = loads[leecher_key];
+            entry.leecher_roles += 1;
+            if (!entry.has_reputation) {
+                if (const auto peer_id = peer_id_from_string(leecher_key)) {
+                    entry.reputation = reputation_.score(*peer_id);
+                    entry.has_reputation = true;
+                }
+            }
+        }
+    }
+
+    if (config_.upload_max_transfers_per_peer > 0) {
+        for (auto& [key, entry] : loads) {
+            if (!entry.is_choked && entry.active_uploads >= static_cast<std::size_t>(config_.upload_max_transfers_per_peer)) {
+                entry.is_choked = true;
+            }
+        }
+    }
+
+    return loads;
+}
+
 bool Node::dispatch_upload(const PendingUploadRequest& request) {
     const auto manifest = manifest_for_chunk(request.chunk_id);
     const auto record = chunk_store_.get_record(request.chunk_id);
@@ -1371,7 +1454,8 @@ std::optional<protocol::Manifest> Node::manifest_for_chunk(const ChunkId& chunk_
 
 void Node::update_swarm_plan(const protocol::Manifest& manifest) {
     const auto key = chunk_id_to_string(manifest.chunk_id);
-    auto plan = swarm_.compute_plan(manifest.chunk_id, manifest, dht_, id_);
+    const auto load_snapshot = gather_peer_load();
+    auto plan = swarm_.compute_plan(manifest.chunk_id, manifest, dht_, id_, load_snapshot);
 
     if (const auto existing = swarm_plans_.find(key); existing != swarm_plans_.end()) {
         for (const auto& assignment : plan.assignments) {
@@ -1395,6 +1479,7 @@ void Node::rebalance_swarm_plans() {
     std::vector<std::string> stale_keys;
     stale_keys.reserve(swarm_plans_.size());
 
+    const auto load_snapshot = gather_peer_load();
     for (auto& [key, plan] : swarm_plans_) {
         if (now < plan.next_rebalance) {
             continue;
@@ -1406,7 +1491,7 @@ void Node::rebalance_swarm_plans() {
             continue;
         }
 
-        auto refreshed = swarm_.compute_plan(manifest_it->second.chunk_id, manifest_it->second, dht_, id_);
+        auto refreshed = swarm_.compute_plan(manifest_it->second.chunk_id, manifest_it->second, dht_, id_, load_snapshot);
         refreshed.diagnostics.emplace_back("Plan recomputed after rebalance interval.");
         for (const auto& assignment : refreshed.assignments) {
             const auto peer_key = peer_id_to_string(assignment.peer.id);

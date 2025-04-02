@@ -33,10 +33,10 @@
 - Planificación `fetch` incorpora rarest-first apoyado en refrescos periódicos de disponibilidad y conteo de proveedores por chunk.
 - Subidas controladas por choking/unchoking respetan límites globales y por par con timeouts de transferencia y fair rotation.
 - Seguimiento de roles seed/leecher por chunk con ledger en `Node` y prueba de transición multi-nodo.
+- Planificación multi-peer pondera disponibilidad, carga y roles previos para distribuir shards con fairness cross-swarm y evita peers "choked".
 
 ## Próximos hitos
 - **CORE & PROTO**
-	- Extender la planificación multi-peer incorporando métricas de disponibilidad, choking/unchoking y fairness cross-swarm.
 	- Versionado de mensajes de protocolo y compatibilidad hacia atrás para nuevas capacidades.
 - **SEGURIDAD**
 	- Integrar fuzzing continuo sobre la capa de deserialización de mensajes y manifiestos.

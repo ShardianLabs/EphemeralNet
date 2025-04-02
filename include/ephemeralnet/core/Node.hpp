@@ -215,6 +215,7 @@ private:
     void note_local_leecher(const ChunkId& chunk_id);
     void note_peer_seed(const ChunkId& chunk_id, const PeerId& peer_id);
     void note_peer_leecher(const ChunkId& chunk_id, const PeerId& peer_id);
+    SwarmPeerLoadMap gather_peer_load() const;
 };
 
 }  

@@ -39,7 +39,8 @@ int main() {
     }
 
     ephemeralnet::SwarmCoordinator coordinator(config);
-    const auto plan = coordinator.compute_plan(manifest.chunk_id, manifest, table, self);
+    const ephemeralnet::SwarmPeerLoadMap loads{};
+    const auto plan = coordinator.compute_plan(manifest.chunk_id, manifest, table, self, loads);
 
     assert(!plan.assignments.empty());
     assert(plan.assignments.size() >= 2);

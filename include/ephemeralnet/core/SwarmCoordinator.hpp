@@ -8,8 +8,9 @@
 #include <chrono>
 #include <random>
 #include <string>
-#include <vector>
+#include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace ephemeralnet {
 
@@ -28,6 +29,20 @@ struct SwarmDistributionPlan {
     std::unordered_set<std::string> delivered_peers;
 };
 
+struct SwarmPeerLoad {
+    std::size_t active_uploads{0};
+    std::size_t pending_uploads{0};
+    std::size_t active_downloads{0};
+    std::size_t pending_downloads{0};
+    std::size_t seed_roles{0};
+    std::size_t leecher_roles{0};
+    int reputation{0};
+    bool has_reputation{false};
+    bool is_choked{false};
+};
+
+using SwarmPeerLoadMap = std::unordered_map<std::string, SwarmPeerLoad>;
+
 class SwarmCoordinator {
 public:
     explicit SwarmCoordinator(const Config& config);
@@ -35,7 +50,8 @@ public:
     SwarmDistributionPlan compute_plan(const ChunkId& chunk_id,
                                         const protocol::Manifest& manifest,
                                         const KademliaTable& table,
-                                        const PeerId& self_id);
+                                        const PeerId& self_id,
+                                        const SwarmPeerLoadMap& load_snapshot);
 
 private:
     const Config& config_;

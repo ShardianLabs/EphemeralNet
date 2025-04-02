@@ -451,6 +451,23 @@ if(EPHEMERALNET_BUILD_TESTS)
 
     add_test(NAME EphemeralNet.SwarmDistribution COMMAND ephemeralnet_swarm_distribution_tests)
 
+    add_executable(ephemeralnet_swarm_fairness_tests
+        tests/swarm_fairness.cpp
+    )
+
+    target_link_libraries(ephemeralnet_swarm_fairness_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_swarm_fairness_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_swarm_fairness_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.SwarmFairness COMMAND ephemeralnet_swarm_fairness_tests)
+
     add_executable(ephemeralnet_swarm_node_tests
         tests/swarm_node.cpp
     )
