@@ -96,7 +96,8 @@ int main() {
     const int control_port = port_dist(gen);
 
     const std::string base_options = std::string("--storage-dir ") + quote(test_dir) +
-                                     " --control-host 127.0.0.1 --control-port " + std::to_string(control_port);
+                                     " --control-host 127.0.0.1 --control-port " + std::to_string(control_port) +
+                                     " --yes";
 
     bool daemon_started = false;
 

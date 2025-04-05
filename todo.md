@@ -34,6 +34,7 @@
 - Subidas controladas por choking/unchoking respetan límites globales y por par con timeouts de transferencia y fair rotation.
 - Seguimiento de roles seed/leecher por chunk con ledger en `Node` y prueba de transición multi-nodo.
 - Planificación multi-peer pondera disponibilidad, carga y roles previos para distribuir shards con fairness cross-swarm y evita peers "choked".
+- CLI ahora incluye confirmaciones interactivas (con `--yes` para automatización), reporting de errores estructurado y códigos/hints provinientes del daemon.
 
 ## Próximos hitos
 - **CORE & PROTO**
@@ -53,7 +54,7 @@
 	- Definir política de gobernanza y abuso (AUP) para nodos públicos de bootstrap/STUN y procesos de cumplimiento.
 - **UX & CONFIG**
 	- Añadir soporte de configuración YAML/JSON con perfiles de red y overrides por entorno.
-	- Incorporar validación interactiva y mensajes de error detallados en CLI/daemon.
+	- Extender validaciones de entrada (paths/puertos) y surfacear hints del daemon en la CLI contextualizados en cada comando.
 - **PRODUCTO**
 	- Completar API pública `libephemeralnet` (versionado, documentación y ejemplos de uso).
 	- Finalizar `ephemeralnet-cli` incluyendo comandos de diagnóstico y soporte scripting.
@@ -61,4 +62,5 @@
 - **DOCS**
 	- Documentar protocolo, arquitectura y flujos operativos en `docs/` con diagramas.
 	- Elaborar guías de despliegue y troubleshooting para operadores.
-    - LICENSE
+    - LICENSE.
+    - Hacer el proyecto en inglés.

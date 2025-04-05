@@ -26,6 +26,9 @@
 #ifdef _WIN32
 #include <process.h>
 #include <windows.h>
+#include <io.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace {
@@ -45,7 +48,107 @@ struct GlobalOptions {
     std::optional<std::uint64_t> default_ttl_seconds{};
     std::optional<std::string> control_host{};
     std::optional<std::uint16_t> control_port{};
+    bool assume_yes{false};
 };
+
+class CliException : public std::exception {
+public:
+    CliException(std::string code, std::string message, std::string hint = {})
+        : code_(std::move(code)), message_(std::move(message)), hint_(std::move(hint)) {
+        formatted_ = code_.empty() ? message_ : ("[" + code_ + "] " + message_);
+    }
+
+    const char* what() const noexcept override {
+        return formatted_.c_str();
+    }
+
+    const std::string& code() const noexcept { return code_; }
+    const std::string& message() const noexcept { return message_; }
+    const std::string& hint() const noexcept { return hint_; }
+
+private:
+    std::string code_;
+    std::string message_;
+    std::string hint_;
+    std::string formatted_;
+};
+
+[[noreturn]] void throw_cli_error(std::string code, std::string message, std::string hint = {}) {
+    throw CliException(std::move(code), std::move(message), std::move(hint));
+}
+
+std::string trim(std::string value) {
+    const auto is_space = [](unsigned char ch) { return std::isspace(ch) != 0; };
+    value.erase(value.begin(), std::find_if(value.begin(), value.end(), [&](unsigned char ch) { return !is_space(ch); }));
+    value.erase(std::find_if(value.rbegin(), value.rend(), [&](unsigned char ch) { return !is_space(ch); }).base(), value.end());
+    return value;
+}
+
+std::string to_lower(std::string value);
+
+bool stdin_is_interactive() {
+#ifdef _WIN32
+    return _isatty(_fileno(stdin)) != 0;
+#else
+    return ::isatty(STDIN_FILENO) != 0;
+#endif
+}
+
+bool confirm_action(const std::string& prompt, bool default_yes, bool assume_yes) {
+    if (assume_yes || !stdin_is_interactive()) {
+        return default_yes;
+    }
+
+    const std::string suffix = default_yes ? " [S/n]: " : " [s/N]: ";
+    while (true) {
+        std::cout << prompt << suffix;
+        std::cout.flush();
+        std::string input;
+        if (!std::getline(std::cin, input)) {
+            return default_yes;
+        }
+        input = to_lower(trim(input));
+        if (input.empty()) {
+            return default_yes;
+        }
+        if (input == "s" || input == "si" || input == "sí" || input == "y" || input == "yes") {
+            return true;
+        }
+        if (input == "n" || input == "no") {
+            return false;
+        }
+        std::cout << "Respuesta no reconocida. Escribe 's' para sí o 'n' para no." << std::endl;
+    }
+}
+
+void print_cli_error(const CliException& ex) {
+    std::cerr << "Error";
+    if (!ex.code().empty()) {
+        std::cerr << " [" << ex.code() << ']';
+    }
+    std::cerr << ": " << ex.message() << std::endl;
+    if (!ex.hint().empty()) {
+        std::cerr << "Sugerencia: " << ex.hint() << std::endl;
+    }
+}
+
+void print_daemon_failure(const ephemeralnet::daemon::ControlResponse& response) {
+    const auto code_it = response.fields.find("CODE");
+    const auto message_it = response.fields.find("MESSAGE");
+    const auto hint_it = response.fields.find("HINT");
+
+    const std::string code = code_it != response.fields.end() && !code_it->second.empty()
+                                 ? code_it->second
+                                 : std::string{"ERR_DAEMON_UNKNOWN"};
+    const std::string message = message_it != response.fields.end() && !message_it->second.empty()
+                                    ? message_it->second
+                                    : std::string{"Fallo en la operación del daemon"};
+
+    std::cerr << "Error del daemon [" << code << "]: " << message << std::endl;
+    if (hint_it != response.fields.end() && !hint_it->second.empty()) {
+        std::cerr << "Sugerencia: " << hint_it->second << std::endl;
+    }
+}
 
 std::atomic_bool g_run_loop{true};
 
@@ -477,7 +580,9 @@ int main(int argc, char** argv) {
 
         auto require_value = [&](std::string_view option) -> std::string {
             if (index >= args.size()) {
-                throw std::runtime_error(std::string(option) + " requiere un valor");
+                throw_cli_error("E_MISSING_VALUE",
+                                std::string(option) + " requiere un valor",
+                                "Proporciona un argumento inmediatamente después de " + std::string(option));
             }
             return std::string(args[index++]);
         };
@@ -487,6 +592,10 @@ int main(int argc, char** argv) {
             if (opt == "--help" || opt == "-h") {
                 print_usage();
                 return 0;
+            }
+            if (opt == "--yes" || opt == "-y") {
+                options.assume_yes = true;
+                continue;
             }
             if (opt == "--storage-dir") {
                 options.storage_dir = require_value(opt);
@@ -511,7 +620,9 @@ int main(int argc, char** argv) {
                 const auto value = require_value(opt);
                 std::uint64_t parsed{};
                 if (!parse_uint64(value, parsed) || parsed == 0 || parsed > 255) {
-                    throw std::runtime_error("--wipe-passes debe estar entre 1 y 255");
+                    throw_cli_error("E_INVALID_WIPE_PASSES",
+                                    "--wipe-passes debe estar entre 1 y 255",
+                                    "Usa un entero positivo pequeño, por ejemplo --wipe-passes 3");
                 }
                 options.wipe_passes = static_cast<std::uint8_t>(parsed);
                 options.wipe_passes_set = true;
@@ -521,7 +632,9 @@ int main(int argc, char** argv) {
                 const auto value = require_value(opt);
                 std::uint32_t seed{};
                 if (!parse_uint32(value, seed)) {
-                    throw std::runtime_error("--identity-seed debe ser un entero sin signo");
+                    throw_cli_error("E_INVALID_IDENTITY_SEED",
+                                    "--identity-seed debe ser un entero sin signo",
+                                    "Ejemplo válido: --identity-seed 123456");
                 }
                 options.identity_seed = seed;
                 continue;
@@ -534,7 +647,9 @@ int main(int argc, char** argv) {
                 const auto value = require_value(opt);
                 std::uint64_t ttl{};
                 if (!parse_uint64(value, ttl)) {
-                    throw std::runtime_error("--default-ttl debe ser un entero positivo");
+                    throw_cli_error("E_INVALID_DEFAULT_TTL",
+                                    "--default-ttl debe ser un entero positivo",
+                                    "Indica el TTL en segundos, por ejemplo --default-ttl 3600");
                 }
                 options.default_ttl_seconds = ttl;
                 continue;
@@ -547,13 +662,17 @@ int main(int argc, char** argv) {
                 const auto value = require_value(opt);
                 std::uint16_t port{};
                 if (!parse_uint16(value, port)) {
-                    throw std::runtime_error("--control-port debe ser un entero entre 1 y 65535");
+                    throw_cli_error("E_INVALID_CONTROL_PORT",
+                                    "--control-port debe ser un entero entre 1 y 65535",
+                                    "Ejemplo válido: --control-port 47777");
                 }
                 options.control_port = port;
                 continue;
             }
 
-            throw std::runtime_error("Opción desconocida: " + std::string(opt));
+            throw_cli_error("E_UNKNOWN_OPTION",
+                            "Opción desconocida: " + std::string(opt),
+                            "Ejecuta 'eph --help' para ver las opciones disponibles");
         }
 
         if (index >= args.size()) {
@@ -642,8 +761,7 @@ int main(int argc, char** argv) {
                 return 1;
             }
             if (!response->success) {
-                const auto message = response->fields.contains("MESSAGE") ? response->fields.at("MESSAGE") : "Fallo al detener";
-                std::cerr << message << std::endl;
+                print_daemon_failure(*response);
                 return 1;
             }
             const auto message_it = response->fields.find("MESSAGE");
@@ -667,8 +785,7 @@ int main(int argc, char** argv) {
                 return 1;
             }
             if (!response->success) {
-                const auto message = response->fields.contains("MESSAGE") ? response->fields.at("MESSAGE") : "Estado no disponible";
-                std::cerr << message << std::endl;
+                print_daemon_failure(*response);
                 return 1;
             }
             const auto peers = response->fields.contains("PEERS") ? response->fields.at("PEERS") : "0";
@@ -688,8 +805,7 @@ int main(int argc, char** argv) {
                 return 1;
             }
             if (!response->success) {
-                const auto message = response->fields.contains("MESSAGE") ? response->fields.at("MESSAGE") : "No se pudo obtener el listado";
-                std::cerr << message << std::endl;
+                print_daemon_failure(*response);
                 return 1;
             }
             print_list_response(*response);
@@ -698,11 +814,15 @@ int main(int argc, char** argv) {
 
         if (command == "store") {
             if (index >= args.size()) {
-                throw std::runtime_error("store requiere la ruta de un archivo");
+                throw_cli_error("E_STORE_MISSING_PATH",
+                                "store requiere la ruta de un archivo",
+                                "Ejemplo: eph store ./archivo.txt --out ...");
             }
             const auto input_path = std::filesystem::absolute(std::filesystem::path(args[index++]));
             if (!std::filesystem::exists(input_path)) {
-                throw std::runtime_error("El archivo no existe: " + input_path.string());
+                throw_cli_error("E_STORE_FILE_NOT_FOUND",
+                                "El archivo no existe: " + input_path.string(),
+                                "Verifica la ruta o proporciona una ruta absoluta");
             }
 
             std::optional<std::uint64_t> ttl_override;
@@ -710,16 +830,31 @@ int main(int argc, char** argv) {
                 const auto opt = args[index++];
                 if (opt == "--ttl") {
                     if (index >= args.size()) {
-                        throw std::runtime_error("--ttl requiere un valor");
+                        throw_cli_error("E_STORE_MISSING_TTL",
+                                        "--ttl requiere un valor",
+                                        "Ejemplo: --ttl 3600 para una hora");
                     }
                     std::uint64_t ttl{};
                     if (!parse_uint64(args[index++], ttl)) {
-                        throw std::runtime_error("--ttl debe ser un entero positivo");
+                        throw_cli_error("E_STORE_INVALID_TTL",
+                                        "--ttl debe ser un entero positivo",
+                                        "Usa segundos positivos, p. ej. 3600");
                     }
                     ttl_override = ttl;
                     continue;
                 }
-                throw std::runtime_error("Opción desconocida para store: " + std::string(opt));
+                throw_cli_error("E_STORE_UNKNOWN_OPTION",
+                                "Opción desconocida para store: " + std::string(opt),
+                                "Consulta 'eph store --help' para ver los modificadores válidos");
+            }
+
+            const auto file_size = std::filesystem::file_size(input_path);
+            if (!confirm_action("Se almacenará " + input_path.filename().string() + " (" + std::to_string(file_size) +
+                                    " bytes). ¿Deseas continuar?",
+                                true,
+                                options.assume_yes)) {
+                std::cout << "Operación cancelada por el usuario." << std::endl;
+                return 0;
             }
 
             ephemeralnet::daemon::ControlFields fields{{"PATH", input_path.string()}};
@@ -733,8 +868,7 @@ int main(int argc, char** argv) {
                 return 1;
             }
             if (!response->success) {
-                const auto message = response->fields.contains("MESSAGE") ? response->fields.at("MESSAGE") : "Fallo al almacenar";
-                std::cerr << message << std::endl;
+                print_daemon_failure(*response);
                 return 1;
             }
 
@@ -750,11 +884,15 @@ int main(int argc, char** argv) {
 
         if (command == "fetch") {
             if (index >= args.size()) {
-                throw std::runtime_error("fetch requiere un manifiesto eph://");
+                throw_cli_error("E_FETCH_MISSING_MANIFEST",
+                                "fetch requiere un manifiesto eph://",
+                                "Ejemplo: eph fetch eph://... --out ./archivo.bin");
             }
             const std::string manifest_uri(args[index++]);
             if (manifest_uri.rfind("eph://", 0) != 0) {
-                throw std::runtime_error("fetch requiere un manifiesto con prefijo eph://");
+                throw_cli_error("E_FETCH_INVALID_MANIFEST",
+                                "fetch requiere un manifiesto con prefijo eph://",
+                                "Asegúrate de pegar el URI completo generado por 'store'");
             }
 
             std::optional<std::filesystem::path> output_path;
@@ -762,16 +900,30 @@ int main(int argc, char** argv) {
                 const auto opt = args[index++];
                 if (opt == "--out") {
                     if (index >= args.size()) {
-                        throw std::runtime_error("--out requiere una ruta");
+                        throw_cli_error("E_FETCH_MISSING_OUT",
+                                        "--out requiere una ruta",
+                                        "Ejemplo: --out ./descarga.bin");
                     }
                     output_path = std::filesystem::absolute(std::filesystem::path(args[index++]));
                     continue;
                 }
-                throw std::runtime_error("Opción desconocida para fetch: " + std::string(opt));
+                throw_cli_error("E_FETCH_UNKNOWN_OPTION",
+                                "Opción desconocida para fetch: " + std::string(opt),
+                                "Consulta 'eph --help' para los modificadores permitidos");
             }
 
             if (!output_path) {
-                throw std::runtime_error("fetch requiere --out para indicar el archivo destino");
+                throw_cli_error("E_FETCH_OUT_REQUIRED",
+                                "fetch requiere --out para indicar el archivo destino",
+                                "Usa --out ./archivo.bin");
+            }
+
+            if (std::filesystem::exists(*output_path) &&
+                !confirm_action("El archivo " + output_path->string() + " ya existe. ¿Sobrescribir?",
+                                false,
+                                options.assume_yes)) {
+                std::cout << "Operación cancelada por el usuario." << std::endl;
+                return 0;
             }
 
             ephemeralnet::daemon::ControlFields fields{{"MANIFEST", manifest_uri},
@@ -783,8 +935,7 @@ int main(int argc, char** argv) {
                 return 1;
             }
             if (!response->success) {
-                const auto message = response->fields.contains("MESSAGE") ? response->fields.at("MESSAGE") : "Fallo al recuperar";
-                std::cerr << message << std::endl;
+                print_daemon_failure(*response);
                 return 1;
             }
 
@@ -794,12 +945,15 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        std::cerr << "Comando desconocido: " << command << std::endl;
-        print_usage();
-        return 1;
+        throw_cli_error("E_UNKNOWN_COMMAND",
+                        "Comando desconocido: " + command,
+                        "Ejecuta 'eph --help' para ver la lista de comandos disponibles");
 
+    } catch (const CliException& ex) {
+        print_cli_error(ex);
+        return 1;
     } catch (const std::exception& ex) {
-        std::cerr << "Error: " << ex.what() << std::endl;
+        std::cerr << "Error [E_UNEXPECTED]: " << ex.what() << std::endl;
         return 1;
     }
 }

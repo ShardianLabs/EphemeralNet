@@ -18,6 +18,7 @@
 #include <sstream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -183,6 +184,22 @@ std::int64_t ttl_seconds_remaining(const std::chrono::steady_clock::time_point& 
     return std::chrono::duration_cast<std::chrono::seconds>(expires_at - now).count();
 }
 
+ControlFields make_ok(std::string_view code = "OK") {
+    ControlFields fields;
+    fields["CODE"] = std::string(code);
+    return fields;
+}
+
+ControlFields make_error(std::string_view code, std::string_view message, std::string_view hint = {}) {
+    ControlFields fields;
+    fields["CODE"] = std::string(code);
+    fields["MESSAGE"] = std::string(message);
+    if (!hint.empty()) {
+        fields["HINT"] = std::string(hint);
+    }
+    return fields;
+}
+
 }  // namespace
 
 class ControlServer::Impl {
@@ -318,14 +335,17 @@ private:
         const auto request = parse_request(client);
         const auto it = request.find("COMMAND");
         if (it == request.end()) {
-            ControlFields error{{"MESSAGE", "Falta COMMAND"}};
+            auto error = make_error("ERR_MISSING_COMMAND",
+                                    "Falta COMMAND",
+                                    "Incluye la cabecera COMMAND en la solicitud");
             send_response(client, error, false);
             return;
         }
 
         const auto command = to_upper(it->second);
         if (command == "PING") {
-            ControlFields fields{{"MESSAGE", "pong"}};
+            auto fields = make_ok("OK_PING");
+            fields["MESSAGE"] = "pong";
             send_response(client, fields, true);
             return;
         }
@@ -350,7 +370,9 @@ private:
             return;
         }
 
-        ControlFields error{{"MESSAGE", "Comando no soportado"}};
+        auto error = make_error("ERR_UNSUPPORTED_COMMAND",
+                                "Comando no soportado",
+                                "Verifica la documentación de la API de control");
         send_response(client, error, false);
     }
 
@@ -365,14 +387,16 @@ private:
             port = node_.transport_port();
         }
 
-        ControlFields fields{{"PEERS", std::to_string(peers)},
+        ControlFields fields{{"CODE", "OK_STATUS"},
+                             {"PEERS", std::to_string(peers)},
                              {"CHUNKS", std::to_string(chunks)},
                              {"TRANSPORT_PORT", std::to_string(port)}};
         send_response(client, fields, true);
     }
 
     void handle_stop(NativeSocket client) {
-        ControlFields fields{{"MESSAGE", "Deteniendo daemon"}};
+        auto fields = make_ok("OK_STOP");
+        fields["MESSAGE"] = "Deteniendo daemon";
         send_response(client, fields, true);
         if (stop_callback_) {
             stop_callback_();
@@ -386,7 +410,8 @@ private:
             snapshot = node_.stored_chunks();
         }
 
-        ControlFields fields;
+    ControlFields fields;
+    fields["CODE"] = "OK_LIST";
         fields["COUNT"] = std::to_string(snapshot.size());
 
         std::ostringstream entries;
@@ -405,14 +430,18 @@ private:
     void handle_store(NativeSocket client, const ControlFields& request) {
         const auto path_it = request.find("PATH");
         if (path_it == request.end()) {
-            ControlFields error{{"MESSAGE", "STORE requiere PATH"}};
+            auto error = make_error("ERR_STORE_PATH_REQUIRED",
+                                    "STORE requiere PATH",
+                                    "Incluye la cabecera PATH con la ruta absoluta del archivo");
             send_response(client, error, false);
             return;
         }
 
         const std::filesystem::path input = std::filesystem::absolute(std::filesystem::path(path_it->second));
         if (!std::filesystem::exists(input)) {
-            ControlFields error{{"MESSAGE", "El archivo no existe"}};
+            auto error = make_error("ERR_STORE_FILE_NOT_FOUND",
+                                    "El archivo no existe",
+                                    "Verifica PATH:" + input.string());
             send_response(client, error, false);
             return;
         }
@@ -428,7 +457,9 @@ private:
         if (ttl_it != request.end()) {
             const auto parsed = parse_uint64(ttl_it->second);
             if (!parsed.has_value()) {
-                ControlFields error{{"MESSAGE", "TTL inválido"}};
+                auto error = make_error("ERR_STORE_TTL_INVALID",
+                                        "TTL inválido",
+                                        "Usa un entero positivo en segundos");
                 send_response(client, error, false);
                 return;
             }
@@ -439,7 +470,9 @@ private:
         try {
             data = read_file_bytes(input);
         } catch (const std::exception& ex) {
-            ControlFields error{{"MESSAGE", ex.what()}};
+            auto error = make_error("ERR_STORE_READ_FAILED",
+                                    ex.what(),
+                                    "Comprueba permisos de lectura y espacio disponible");
             send_response(client, error, false);
             return;
         }
@@ -455,7 +488,8 @@ private:
         const auto manifest_uri = protocol::encode_manifest(manifest);
         const auto expires_in = std::max<std::int64_t>(0,
             std::chrono::duration_cast<std::chrono::seconds>(manifest.expires_at - std::chrono::system_clock::now()).count());
-        ControlFields fields{{"MANIFEST", manifest_uri},
+        ControlFields fields{{"CODE", "OK_STORE"},
+                             {"MANIFEST", manifest_uri},
                              {"SIZE", std::to_string(data_size)},
                              {"TTL", std::to_string(expires_in)}};
         send_response(client, fields, true);
@@ -464,7 +498,9 @@ private:
     void handle_fetch(NativeSocket client, const ControlFields& request) {
         const auto manifest_it = request.find("MANIFEST");
         if (manifest_it == request.end()) {
-            ControlFields error{{"MESSAGE", "FETCH requiere MANIFEST"}};
+            auto error = make_error("ERR_FETCH_MANIFEST_REQUIRED",
+                                    "FETCH requiere MANIFEST",
+                                    "Incluye MANIFEST:eph://... en la solicitud");
             send_response(client, error, false);
             return;
         }
@@ -473,7 +509,9 @@ private:
         try {
             manifest = protocol::decode_manifest(manifest_it->second);
         } catch (const std::exception&) {
-            ControlFields error{{"MESSAGE", "Manifiesto inválido"}};
+            auto error = make_error("ERR_FETCH_MANIFEST_INVALID",
+                                    "Manifiesto inválido",
+                                    "Verifica que el URI eph:// esté completo");
             send_response(client, error, false);
             return;
         }
@@ -485,7 +523,9 @@ private:
         }
 
         if (!output_path.has_value()) {
-            ControlFields error{{"MESSAGE", "FETCH requiere OUT"}};
+            auto error = make_error("ERR_FETCH_OUT_REQUIRED",
+                                    "FETCH requiere OUT",
+                                    "Añade OUT:ruta_destino en la solicitud");
             send_response(client, error, false);
             return;
         }
@@ -494,7 +534,9 @@ private:
         {
             std::scoped_lock lock(node_mutex_);
             if (!node_.ingest_manifest(manifest_it->second)) {
-                ControlFields error{{"MESSAGE", "No se pudo registrar el manifiesto"}};
+                auto error = make_error("ERR_FETCH_MANIFEST_REGISTRATION",
+                                        "No se pudo registrar el manifiesto",
+                                        "Puede haber expirado el TTL del chunk");
                 send_response(client, error, false);
                 return;
             }
@@ -502,7 +544,9 @@ private:
         }
 
         if (!chunk.has_value()) {
-            ControlFields error{{"MESSAGE", "Chunk no disponible localmente"}};
+            auto error = make_error("ERR_FETCH_CHUNK_MISSING",
+                                    "Chunk no disponible localmente",
+                                    "Espera a que llegue del swarm o comprueba la conectividad");
             send_response(client, error, false);
             return;
         }
@@ -510,12 +554,15 @@ private:
         try {
             write_file_bytes(*output_path, std::span<const std::uint8_t>(chunk->data(), chunk->size()));
         } catch (const std::exception& ex) {
-            ControlFields error{{"MESSAGE", ex.what()}};
+            auto error = make_error("ERR_FETCH_WRITE_FAILED",
+                                    ex.what(),
+                                    "Comprueba permisos de escritura y espacio libre");
             send_response(client, error, false);
             return;
         }
 
-        ControlFields fields{{"OUTPUT", output_path->string()},
+        ControlFields fields{{"CODE", "OK_FETCH"},
+                             {"OUTPUT", output_path->string()},
                              {"SIZE", std::to_string(chunk->size())}};
         send_response(client, fields, true);
     }
