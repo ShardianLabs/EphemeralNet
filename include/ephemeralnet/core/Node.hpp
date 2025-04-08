@@ -24,6 +24,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <mutex>
 
 namespace ephemeralnet {
 
@@ -158,6 +159,7 @@ private:
     std::unordered_map<std::string, std::size_t> active_uploads_per_peer_;
     std::chrono::steady_clock::time_point last_upload_rotation_{};
     std::unordered_map<std::string, SwarmRoleLedger> swarm_roles_;
+    mutable std::recursive_mutex scheduler_mutex_;
 
     void initialize_transport_handler();
     void handle_transport_message(const network::TransportMessage& message);

@@ -18,10 +18,13 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <mutex>
 
 namespace ephemeralnet {
 
 namespace {
+
+using SchedulerLock = std::unique_lock<std::recursive_mutex>;
 
 std::uint32_t generate_identity_scalar(const Config& config) {
     std::mt19937 generator;
@@ -126,6 +129,8 @@ void Node::schedule_assigned_fetch(const protocol::AnnouncePayload& payload) {
     const auto key = chunk_id_to_string(payload.chunk_id);
     const auto now = std::chrono::steady_clock::now();
 
+    SchedulerLock lock(scheduler_mutex_);
+
     auto [it, inserted] = pending_chunk_fetches_.try_emplace(key);
     auto& state = it->second;
 
@@ -213,6 +218,8 @@ void Node::schedule_next_fetch_attempt(PendingFetchState& state, bool success) {
 }
 
 bool Node::dispatch_pending_fetch(PendingFetchState& state) {
+    SchedulerLock lock(scheduler_mutex_);
+
     const auto dispatch_time = std::chrono::steady_clock::now();
 
     bool dispatched = send_chunk_request_direct(state.chunk_id, state.peer_id);
@@ -241,6 +248,8 @@ bool Node::dispatch_pending_fetch(PendingFetchState& state) {
 }
 
 void Node::process_pending_fetches() {
+    SchedulerLock lock(scheduler_mutex_);
+
     if (pending_chunk_fetches_.empty()) {
         return;
     }
@@ -361,6 +370,8 @@ void Node::process_pending_fetches() {
 }
 
 bool Node::can_dispatch_fetch(const PendingFetchState& state) const {
+    SchedulerLock lock(scheduler_mutex_);
+
     if (config_.fetch_max_parallel_requests == 0) {
         return true;
     }
@@ -374,11 +385,15 @@ bool Node::can_dispatch_fetch(const PendingFetchState& state) const {
 }
 
 void Node::note_dispatch_start(const PendingFetchState& state) {
+    SchedulerLock lock(scheduler_mutex_);
+
     const auto peer_key = peer_id_to_string(state.peer_id);
     active_peer_requests_[peer_key] += 1;
 }
 
 void Node::note_dispatch_end(const PendingFetchState& state) {
+    SchedulerLock lock(scheduler_mutex_);
+
     const auto peer_key = peer_id_to_string(state.peer_id);
     auto it = active_peer_requests_.find(peer_key);
     if (it == active_peer_requests_.end()) {
@@ -393,6 +408,8 @@ void Node::note_dispatch_end(const PendingFetchState& state) {
 }
 
 void Node::clear_pending_fetch(const std::string& key) {
+    SchedulerLock lock(scheduler_mutex_);
+
     auto it = pending_chunk_fetches_.find(key);
     if (it == pending_chunk_fetches_.end()) {
         return;
@@ -406,6 +423,8 @@ void Node::clear_pending_fetch(const std::string& key) {
 }
 
 std::size_t Node::count_known_providers(const ChunkId& chunk_id) {
+    SchedulerLock lock(scheduler_mutex_);
+
     auto providers = dht_.find_providers(chunk_id);
     if (providers.empty()) {
         return 0;
@@ -431,6 +450,8 @@ std::size_t Node::count_known_providers(const ChunkId& chunk_id) {
 void Node::enqueue_upload_request(const protocol::RequestPayload& payload,
                                   const PeerId& sender,
                                   std::size_t payload_size) {
+    SchedulerLock lock(scheduler_mutex_);
+
     PendingUploadRequest request{};
     request.chunk_id = payload.chunk_id;
     request.peer_id = sender;
@@ -440,6 +461,8 @@ void Node::enqueue_upload_request(const protocol::RequestPayload& payload,
 }
 
 bool Node::can_accept_more_uploads() const {
+    SchedulerLock lock(scheduler_mutex_);
+
     if (config_.upload_max_parallel_transfers == 0) {
         return true;
     }
@@ -447,6 +470,8 @@ bool Node::can_accept_more_uploads() const {
 }
 
 bool Node::can_dispatch_upload(const PeerId& peer_id) const {
+    SchedulerLock lock(scheduler_mutex_);
+
     if (!can_accept_more_uploads()) {
         return false;
     }
@@ -466,6 +491,8 @@ std::string Node::make_upload_key(const PeerId& peer_id, const ChunkId& chunk_id
 }
 
 void Node::note_upload_start(const PendingUploadRequest& request, std::size_t payload_size) {
+    SchedulerLock lock(scheduler_mutex_);
+
     const auto key = make_upload_key(request.peer_id, request.chunk_id);
     ActiveUploadState state{};
     state.chunk_id = request.chunk_id;
@@ -479,6 +506,8 @@ void Node::note_upload_start(const PendingUploadRequest& request, std::size_t pa
 }
 
 void Node::note_upload_end(const PeerId& peer_id, const ChunkId& chunk_id, bool /*success*/) {
+    SchedulerLock lock(scheduler_mutex_);
+
     const auto key = make_upload_key(peer_id, chunk_id);
     const auto it = active_uploads_.find(key);
     if (it == active_uploads_.end()) {
@@ -499,6 +528,8 @@ void Node::note_upload_end(const PeerId& peer_id, const ChunkId& chunk_id, bool 
 }
 
 void Node::prune_stale_uploads(std::chrono::steady_clock::time_point now) {
+    SchedulerLock lock(scheduler_mutex_);
+
     const auto timeout = config_.upload_transfer_timeout;
     if (timeout <= std::chrono::seconds::zero()) {
         return;
@@ -554,11 +585,15 @@ const Node::SwarmRoleLedger* Node::find_swarm_ledger(const ChunkId& chunk_id) co
 }
 
 void Node::retire_swarm_ledger(const ChunkId& chunk_id) {
+    SchedulerLock lock(scheduler_mutex_);
+
     const auto key = chunk_id_to_string(chunk_id);
     swarm_roles_.erase(key);
 }
 
 void Node::note_local_seed(const ChunkId& chunk_id) {
+    SchedulerLock lock(scheduler_mutex_);
+
     auto& ledger = ensure_swarm_ledger(chunk_id);
     const auto self_key = peer_id_to_string(id_);
     ledger.self_seed = true;
@@ -568,6 +603,8 @@ void Node::note_local_seed(const ChunkId& chunk_id) {
 }
 
 void Node::note_local_leecher(const ChunkId& chunk_id) {
+    SchedulerLock lock(scheduler_mutex_);
+
     auto& ledger = ensure_swarm_ledger(chunk_id);
     if (ledger.self_seed) {
         ledger.self_leecher = false;
@@ -579,6 +616,8 @@ void Node::note_local_leecher(const ChunkId& chunk_id) {
 }
 
 void Node::note_peer_seed(const ChunkId& chunk_id, const PeerId& peer_id) {
+    SchedulerLock lock(scheduler_mutex_);
+
     if (peer_id == id_) {
         note_local_seed(chunk_id);
         return;
@@ -590,6 +629,8 @@ void Node::note_peer_seed(const ChunkId& chunk_id, const PeerId& peer_id) {
 }
 
 void Node::note_peer_leecher(const ChunkId& chunk_id, const PeerId& peer_id) {
+    SchedulerLock lock(scheduler_mutex_);
+
     if (peer_id == id_) {
         note_local_leecher(chunk_id);
         return;
@@ -602,6 +643,8 @@ void Node::note_peer_leecher(const ChunkId& chunk_id, const PeerId& peer_id) {
 }
 
 SwarmPeerLoadMap Node::gather_peer_load() const {
+    SchedulerLock lock(scheduler_mutex_);
+
     SwarmPeerLoadMap loads;
 
     auto ensure_entry = [&](const PeerId& peer_id) -> SwarmPeerLoad& {
@@ -726,6 +769,8 @@ bool Node::dispatch_upload(const PendingUploadRequest& request) {
 }
 
 void Node::process_pending_uploads() {
+    SchedulerLock lock(scheduler_mutex_);
+
     if (pending_uploads_.empty()) {
         prune_stale_uploads(std::chrono::steady_clock::now());
         return;
@@ -771,6 +816,8 @@ void Node::process_pending_uploads() {
 void Node::refresh_provider_count(PendingFetchState& state,
                                   std::chrono::steady_clock::time_point now,
                                   bool force) {
+    SchedulerLock lock(scheduler_mutex_);
+
     const auto interval = config_.fetch_availability_refresh;
     if (!force && state.last_availability_check != std::chrono::steady_clock::time_point{}) {
         if (interval > std::chrono::seconds::zero()) {

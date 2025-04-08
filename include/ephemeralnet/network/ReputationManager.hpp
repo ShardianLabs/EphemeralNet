@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <mutex>
 
 namespace ephemeralnet::network {
 
@@ -31,6 +32,7 @@ private:
     int success_reward_;
     int failure_penalty_;
     std::unordered_map<std::string, Entry> entries_;
+    mutable std::mutex mutex_;
 
     static std::string key_for(const PeerId& peer_id);
 };
