@@ -1,86 +1,85 @@
 # EphemeralNet
 
-EphemeralNet es un proyecto de sistema de ficheros P2P efímero escrito en C++ cuyo objetivo es compartir datos con un tiempo de vida limitado. En lugar de replicar ficheros de forma indefinida como en BitTorrent o IPFS, cada nodo respeta un TTL (time-to-live) que obliga al borrado automático de los chunks una vez caducan.
+EphemeralNet is an ephemeral P2P filesystem written in C++ that focuses on sharing data with a limited lifetime. Instead of replicating files indefinitely, as BitTorrent or IPFS typically do, each node enforces a TTL (time to live) that requires chunks to be deleted automatically once they expire.
 
-## Características iniciales
+## Core capabilities
 
-- **Kernel de nodo modular**: componentes de almacenamiento, red y tabla DHT desacoplados.
-- **TTL configurable**: tiempos de caducidad por defecto y específicos por chunk.
-- **Tabla Kademlia con caducidad**: los anuncios incluyen información de expiración.
-- **Almacenamiento efímero en memoria**: los chunks se borran tras expirar.
-- **Cifrado simétrico**: los chunks se almacenan cifrados mediante ChaCha20 y claves efímeras.
-- **Buckets Kademlia**: gestión LRU por distancia XOR y consultas de vecinos más cercanos.
-- **Integridad de mensajes**: firma HMAC-SHA256 en los mensajes del protocolo.
-- **Rotación de claves**: gestor de sesiones que renueva claves derivadas mediante HMAC-SHA256.
-- **Intercambio de claves y reputación**: handshake Diffie-Hellman simplificado con seguimiento de reputación por par.
-- **Auditoría de TTL**: informes consistentes que detectan expiraciones pendientes en almacenamiento local y anuncios DHT.
-- **Coordinación de limpieza**: sincroniza expiraciones locales con retirada automática de anuncios en la DHT y emite eventos de notificación.
-- **Transporte seguro**: sesiones TCP cifradas con ChaCha20 reemplazan el gestor simulado y permiten mensajería punto a punto.
-- **Prueba de humo**: verificación básica del borrado tras el TTL.
-- **Coordinación de swarm**: replicación de manifiestos y shards entre múltiples proveedores simulados.
-- **Almacenamiento persistente opcional**: backend en disco con borrado seguro (wipe) al expirar el TTL.
-- **CLI de nodo**: comandos `serve`, `store`, `fetch` y `list` para operar el nodo sin código adicional.
+- **Modular node kernel**: clearly separated storage, networking, and DHT table components.
+- **Configurable TTL**: default and per-chunk expiration windows.
+- **Expiring Kademlia table**: announcements carry explicit expiration metadata.
+- **Ephemeral in-memory storage**: chunks are removed as soon as they expire.
+- **Symmetric encryption**: chunks are encrypted at rest with ChaCha20 and ephemeral keys.
+- **Kademlia buckets**: XOR distance, LRU management, and nearest-neighbour queries.
+- **Message integrity**: protocol messages are signed with HMAC-SHA256.
+- **Session key rotation**: a session manager refreshes derived keys via HMAC-SHA256.
+- **Handshake and reputation**: simplified Diffie-Hellman handshake with per-peer reputation tracking.
+- **TTL auditing**: consistent reports that surface expirations pending in local storage and the DHT.
+- **Cleanup coordination**: synchronises local expirations with automatic announcement withdrawal and emits notifications.
+- **Secure transport**: ChaCha20-encrypted TCP sessions replace the simulated manager and unlock peer-to-peer messaging.
+- **Smoke test**: baseline verification of post-TTL deletion.
+- **Swarm coordination**: manifest/shard replication across multiple simulated providers.
+- **Optional persistent layer**: disk backend with secure wiping when the TTL elapses.
+- **Node CLI**: `serve`, `store`, `fetch`, and `list` commands to operate a node with no additional code.
 
-## Requisitos
+## Requirements
 
 - CMake ≥ 3.20
-- Compilador con soporte para C++20 (MSVC 19.3+, Clang 13+, GCC 11+)
-- Windows con MinGW-w64 o toolchain equivalente (prototipo actual)
+- C++20-capable compiler (MSVC 19.3+, Clang 13+, GCC 11+)
+- Windows with MinGW-w64 or an equivalent toolchain (current prototype)
 
-
-## Compilación
+## Build
 
 ```powershell
 cmake -S . -B build
 cmake --build build
 ```
 
-Para ejecutar las pruebas de humo:
+Run smoke tests:
 
 ```powershell
 ctest --test-dir build
 ```
 
-> **Nota:** En la primera configuración `cmake` generará los proyectos y la carpeta `build/`. Añade la opción `-DEPHEMERALNET_BUILD_TESTS=OFF` si no deseas compilar los tests.
+> **Note:** The first `cmake` configure step generates the project files and the `build/` directory. Add `-DEPHEMERALNET_BUILD_TESTS=OFF` if you want to skip test targets.
 
-## Próximos pasos sugeridos
+## Suggested next steps
 
-1. Implementar una capa de red real para intercambio de chunks (UDP/TCP o QUIC).
-2. Diseñar reemplazo del `SessionManager` con transporte real y cifrado extremo a extremo.
-3. Añadir auditorías de TTL y coordinación de limpieza distribuida.
-4. Exponer API gRPC/REST para automatizar la orquestación de nodos.
-5. Implementar modo daemon con gestión de claves y control remoto de la CLI.
+1. Implement a full networking layer for chunk exchange (UDP/TCP or QUIC).
+2. Replace `SessionManager` with a production-grade transport and end-to-end encryption.
+3. Add distributed TTL audits and coordinated cleanup.
+4. Expose a gRPC/REST API for node orchestration.
+5. Introduce a daemon mode with key management and remote CLI control.
 
 ## CLI
 
-El binario `eph` actúa como cliente ligero del daemon y ofrece los comandos de control más habituales. Ejemplos básicos:
+The `eph` binary acts as a lightweight client for the daemon and exposes the most common control commands. Typical usage:
 
 ```powershell
-# Mostrar ayuda general
+# Display global help
 eph --help
 
-# Ejecutar el daemon en primer plano hasta Ctrl+C
+# Run the daemon in the foreground until Ctrl+C
 eph --storage-dir .\data serve
 
-# Lanzar el daemon en segundo plano (detached)
+# Launch the daemon in the background (detached)
 eph --storage-dir .\data start
 
-# Consultar estado del daemon en ejecución
+# Query the status of the running daemon
 eph status
 
-# Almacenar un archivo con TTL de 3600 segundos
+# Store a file with a 3600-second TTL
 eph store secrets.bin --ttl 3600
 
-# Recuperar un archivo usando un manifiesto eph://...
+# Retrieve a file using an eph:// manifest
 eph fetch eph://<manifest> --out recovered.bin
 
-# Listar chunks almacenados localmente y su TTL restante
+# List locally stored chunks and remaining TTL
 eph list
 
-# Detener el daemon de forma ordenada
+# Shut the daemon down gracefully
 eph stop
 ```
 
-Las opciones globales permiten controlar la persistencia (`--no-persistent`), la ruta de almacenamiento (`--storage-dir`), el número de pasadas del borrado seguro (`--wipe-passes`), la identidad determinista (`--identity-seed`), así como el host y puerto del plano de control (`--control-host`, `--control-port`).
+Global switches control persistence (`--no-persistent`), storage path (`--storage-dir`), secure wipe passes (`--wipe-passes`), deterministic identity (`--identity-seed`), and control-plane endpoint (`--control-host`, `--control-port`).
 
-> El comando `start` reutiliza las mismas opciones que `serve` para configurar el daemon antes de lanzarlo en segundo plano.
+> The `start` command reuses the same options as `serve` to configure the daemon before backgrounding it.

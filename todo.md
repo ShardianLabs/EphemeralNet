@@ -1,66 +1,66 @@
 # EphemeralNet TODO
 
-## Estado actual
-- Estructura CMake creada con bibliotecas y ejecutables base.
-- Implementación en memoria de `ChunkStore`, `Node` y `KademliaTable` con transporte seguro real.
-- Cifrado simétrico ChaCha20 integrado en `Node` y `ChunkStore` con gestión de claves efímeras.
-- Prueba de humo que valida la expiración local de chunks y la recuperación tras descifrar.
-- Capas de protocolo con mensajes Announce/Request/Chunk/Acknowledge y serialización binaria testeada.
-- Tabla Kademlia con buckets LRU, cálculo de distancia XOR y consultas de vecinos cercanos.
-- Autenticación de mensajes mediante HMAC-SHA256 y helpers de firma/validación.
-- Rotación automática de claves de sesión derivadas mediante HMAC-SHA256 (KeyManager).
-- Intercambio inicial de claves basado en Diffie-Hellman y reputación básica por par.
-- Auditoría de TTL con informes de caducidad cruzados entre almacenamiento y DHT.
-- Gestor de limpieza que coordina expiraciones locales y retirada de anuncios en la DHT.
-- Transporte TCP cifrado extremo a extremo que sustituye el `SessionManager` simulado.
-- Compilación y `ctest` funcionando con MinGW-w64.
-- Libreria de comparticion de claves de Shamir n-de-m con pruebas unitarias de reconstruccion.
-- Formato de manifiesto `eph://` con codificacion/decodificacion Base64 y prueba de round-trip.
-- Tabla Kademlia extendida para publicar y expirar metadatos de shards con TTL.
-- Flujo de compartición de claves Shamir integrado: generación de claves por chunk, manifiesto y publicación en la DHT.
-- Ingestión y validación de manifiestos `eph://` con reconstrucción de claves y almacenamiento local replicado.
-- Flujo de petición/entrega de chunks cifrados entre pares con transporte seguro y acuses firmados.
-- Bootstrapping de la DHT con nodos semilla y negociación inicial de llaves.
-- Simulación de NAT traversal con coordinación UPnP/STUN/hole punching y telemetría integrada en `Node`.
-- Estrategia de distribución coordinada de manifiestos y shards (SwarmCoordinator) con planes de replicación y rebalanceo.
-- Almacenamiento persistente opcional en disco con borrado seguro por TTL (wipe configurable).
-- CLI de nodo con comandos `serve`, `store`, `fetch` y `list` sobre la API de `Node`.
-- CLI/daemon desacoplados: `eph` actúa como cliente del plano de control con comandos `start`, `stop`, `status` y pruebas end-to-end para el arranque detenido.
-- Mensajes Announce propagan URI de manifiesto y asignaciones de shards con serialización/decodificación verificada.
-- Broadcast de manifiestos `eph://` coordinado via SwarmCoordinator con validación de metadatos e incorporación automática de contactos seguros.
-- Reintentos automáticos con backoff exponencial para fetches asignados tras Announce, gestionados en `tick()` y limpieza del estado pendiente.
-- Scheduler de fetch prioriza expiración de manifiestos, aplica límite de concurrencia configurable y equilibra solicitudes por par para mitigar backpressure.
-- Planificación `fetch` incorpora rarest-first apoyado en refrescos periódicos de disponibilidad y conteo de proveedores por chunk.
-- Subidas controladas por choking/unchoking respetan límites globales y por par con timeouts de transferencia y fair rotation.
-- Seguimiento de roles seed/leecher por chunk con ledger en `Node` y prueba de transición multi-nodo.
-- Planificación multi-peer pondera disponibilidad, carga y roles previos para distribuir shards con fairness cross-swarm y evita peers "choked".
-- CLI ahora incluye confirmaciones interactivas (con `--yes` para automatización), reporting de errores estructurado y códigos/hints provinientes del daemon.
-
-## Próximos hitos
+## Current status
+- CMake structure with base libraries and executables is in place.
+- In-memory implementations of `ChunkStore`, `Node`, and `KademliaTable` now operate over the real secure transport.
+- ChaCha20 symmetric encryption is integrated in `Node` and `ChunkStore` with ephemeral key management.
+- Smoke test validates local chunk expiration and recovery after decryption.
+- Protocol layers with Announce/Request/Chunk/Acknowledge messages and verified binary serialisation.
+- Kademlia table implements LRU buckets, XOR distance, and closest-neighbour queries.
+- Message authentication via HMAC-SHA256 with signing/verification helpers.
+- Automatic rotation of session keys derived with HMAC-SHA256 (`KeyManager`).
+- Initial key exchange based on Diffie-Hellman plus per-peer reputation tracking.
+- TTL audit reporting cross-checks storage and DHT expirations.
+- Cleanup manager synchronises local expirations and DHT announcement withdrawal.
+- End-to-end encrypted TCP transport replaces the simulated `SessionManager`.
+- Build and `ctest` succeed on MinGW-w64.
+- Shamir n-of-m key sharing library with reconstruction unit tests.
+- `eph://` manifest format with Base64 encode/decode and round-trip test.
+- Kademlia table extended to publish and expire shard metadata with TTL.
+- Shamir key sharing pipeline integrates chunk key generation, manifest creation, and DHT publication.
+- `eph://` manifest ingestion and validation with key reconstruction and replicated local storage.
+- Encrypted chunk request/delivery flow across peers with secure transport and signed acknowledgements.
+- DHT bootstrapping with seed nodes and initial key negotiation.
+- Simulated NAT traversal (UPnP/STUN/hole punching) with telemetry integrated into `Node`.
+- SwarmCoordinator distributes manifests/shards with replication and rebalance plans.
+- Optional persistent on-disk storage with secure TTL-driven wipe.
+- Node CLI exposes `serve`, `store`, `fetch`, and `list` over the `Node` API.
+- Decoupled CLI/daemon: `eph` drives the control plane with `start`, `stop`, `status`, and end-to-end launch/stop tests.
+- Announce messages propagate manifest URIs and shard assignments with verified serialisation/decoding.
+- SwarmCoordinator orchestrates `eph://` manifest broadcast with metadata validation and secure contact onboarding.
+- Assigned fetches retry with exponential backoff, scheduled from `tick()` with pending-state cleanup.
+- Fetch scheduler prioritises manifest expiry, enforces configurable concurrency, and balances per-peer requests.
+- Fetch planning applies rarest-first backed by periodic availability refresh and provider counts per chunk.
+- Upload choking/unchoking honours global and per-peer limits, transfer timeouts, and fair rotation.
+- Seed/leecher roles tracked per chunk via `Node` ledger with multi-node transition test coverage.
+- Multi-peer planning weighs availability, load, and historical roles to distribute shards fairly across the swarm and avoid choked peers.
+- CLI now includes interactive confirmations (`--yes` for automation), structured error reporting, and daemon-supplied hints/codes.
+- Added an MIT `LICENSE` file.
+- Translated public-facing documentation to English (README, this TODO).
+## Next milestones
 - **CORE & PROTO**
-	- Versionado de mensajes de protocolo y compatibilidad hacia atrás para nuevas capacidades.
-- **SEGURIDAD**
-	- Integrar fuzzing continuo sobre la capa de deserialización de mensajes y manifiestos.
-	- Revisar endurecimiento criptográfico (rotación de claves, límites de TTL y rate limiting de Announce).
-	- Diseñar e implementar estrategia anti-Sybil/spam (Proof-of-Work ligero u otras defensas para anuncios y peticiones costosas).
-- **TESTEO**
-	- Desplegar nodos de bootstrap y STUN en un VPS para pruebas "in-the-wild".
-	- Crear harness de pruebas de integración multi-nodo con simulación de latencia/pérdida.
-	- Automatizar escenarios end-to-end (store/fetch) con fallos inducidos y rotaciones de plan.
-- **OPS & OBSERVABILIDAD**
-	- Integrar logging estructurado y exportadores de métricas (prometheus/OpenTelemetry).
-	- Preparar scripts de despliegue y pipelines CI/CD para Windows/Linux/macOS (Docker, PPA/Copr, Homebrew).
-	- Gestionar empaquetado reproducible y firma de binarios.
-	- Definir política de gobernanza y abuso (AUP) para nodos públicos de bootstrap/STUN y procesos de cumplimiento.
+	- Protocol message versioning with backwards compatibility for new capabilities.
+- **SECURITY**
+	- Introduce continuous fuzzing for message and manifest deserialisation.
+	- Review crypto hardening (key rotation policy, TTL limits, Announce rate limiting).
+	- Design and implement anti-Sybil/spam defences (lightweight Proof-of-Work or equivalent for costly operations).
+- **TESTING**
+	- Deploy bootstrap and STUN nodes on a VPS for in-the-wild validation.
+	- Build a multi-node integration harness with latency/loss simulation.
+	- Automate end-to-end store/fetch scenarios with induced failures and plan rotation.
+- **OPS & OBSERVABILITY**
+	- Integrate structured logging and metrics exporters (Prometheus/OpenTelemetry).
+	- Prepare deployment scripts and CI/CD pipelines for Windows/Linux/macOS (Docker, PPA/Copr, Homebrew).
+	- Manage reproducible packaging and binary signing.
+	- Define governance and abuse policies (AUP) for public bootstrap/STUN nodes and enforcement processes.
 - **UX & CONFIG**
-	- Añadir soporte de configuración YAML/JSON con perfiles de red y overrides por entorno.
-	- Extender validaciones de entrada (paths/puertos) y surfacear hints del daemon en la CLI contextualizados en cada comando.
-- **PRODUCTO**
-	- Completar API pública `libephemeralnet` (versionado, documentación y ejemplos de uso).
-	- Finalizar `ephemeralnet-cli` incluyendo comandos de diagnóstico y soporte scripting.
-	- Prototipo inicial de `ephemeralnet-GUI` o panel de administración ligero.
+	- Add YAML/JSON configuration support with network profiles and per-environment overrides.
+	- Extend input validation (paths/ports) and expose daemon hints contextually in each CLI command.
+- **PRODUCT**
+	- Complete the public `libephemeralnet` API (versioning, documentation, usage examples).
+	- Finalise `ephemeralnet-cli` with diagnostics commands and scripting support.
+	- Prototype an initial `ephemeralnet-GUI` or lightweight admin panel.
 - **DOCS**
-	- Documentar protocolo, arquitectura y flujos operativos en `docs/` con diagramas.
-	- Elaborar guías de despliegue y troubleshooting para operadores.
-    - LICENSE.
-    - Hacer el proyecto en inglés.
+	- Document protocol, architecture, and operational flows in `docs/` with diagrams.
+	- Produce deployment and troubleshooting guides for operators.
+    - CLI languages
