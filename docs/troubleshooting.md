@@ -1,0 +1,28 @@
+# Troubleshooting
+
+Common operational issues and their recommended fixes.
+
+| Symptom | Possible Cause | Resolution |
+|---------|----------------|------------|
+| `Failed to contact the daemon.` | Daemon is not running or control port mismatch. | Start the daemon (`eph serve` or `eph start`) and ensure the CLI uses the same `--control-host` and `--control-port`. |
+| CLI stalls on `fetch`. | Chunk not yet replicated locally. | Wait for swarm propagation or verify peers via `eph status`; check network reachability. |
+| `ERR_FETCH_MANIFEST_REGISTRATION` hint about TTL expiry. | Manifest expired before ingestion. | Re-store the payload with a larger TTL or ensure peers remain online during replication. |
+| Secure wipe takes a long time. | High `--wipe-passes` value or large data sets. | Lower the pass count or disable wiping (`--no-wipe`) for non-sensitive data. |
+| `ERR_STORE_FILE_NOT_FOUND`. | Path typo or missing permissions. | Provide an absolute path and confirm the CLI process can read the file. |
+| Control socket creation failure. | Another daemon bound to the port or insufficient privileges. | Stop existing instances or choose a different `--control-port`. |
+| Mismatched peer IDs between restarts. | Random identity due to missing seed. | Supply `--identity-seed` or `--peer-id` for deterministic identity during automation. |
+| `Failed to register manifest` errors in daemon logs. | TTL expired or manifest invalid. | Regenerate the `eph://` manifest and ensure system clocks are synchronized. |
+
+## Diagnostic Tips
+
+- Increase verbosity by tailing the daemon log output (run `eph serve` in foreground during investigation).
+- Enable Windows Event Viewer or Linux `journalctl` to capture crashes.
+- Use `netstat -ano` (Windows) or `ss -ltnp` (Linux) to confirm the control port is listening.
+- Record control protocol sessions with `nc 127.0.0.1 47777` to isolate automation issues.
+
+## Support Scripts
+
+- `scripts/clean-storage.ps1`: Removes storage directory contents; run only when the daemon is stopped.
+- `scripts/check-peer.ps1`: Sample script to query `eph status` and emit metrics for monitoring systems.
+
+Keep this guide handy when operating EphemeralNet nodes to reduce turnaround during incident response.

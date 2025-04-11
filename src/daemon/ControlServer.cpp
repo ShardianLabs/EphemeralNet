@@ -220,7 +220,7 @@ public:
 
         NativeSocket server = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (server == kInvalidSocket) {
-            throw std::runtime_error("No se pudo crear el socket de control");
+            throw std::runtime_error("Failed to create control socket");
         }
 
         sockaddr_in addr{};
@@ -236,7 +236,7 @@ public:
 #endif
             {
                 close_socket(server);
-                throw std::runtime_error("Host de control inválido: " + host);
+                throw std::runtime_error("Invalid control host: " + host);
             }
         }
 
@@ -245,12 +245,12 @@ public:
 
         if (::bind(server, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) < 0) {
             close_socket(server);
-            throw std::runtime_error("No se pudo enlazar el socket de control");
+            throw std::runtime_error("Failed to bind control socket");
         }
 
         if (::listen(server, SOMAXCONN) < 0) {
             close_socket(server);
-            throw std::runtime_error("No se pudo escuchar en el socket de control");
+            throw std::runtime_error("Failed to listen on control socket");
         }
 
         listen_socket_ = server;
@@ -336,8 +336,8 @@ private:
         const auto it = request.find("COMMAND");
         if (it == request.end()) {
             auto error = make_error("ERR_MISSING_COMMAND",
-                                    "Falta COMMAND",
-                                    "Incluye la cabecera COMMAND en la solicitud");
+                                    "COMMAND header missing",
+                                    "Include the COMMAND header in the request");
             send_response(client, error, false);
             return;
         }
@@ -371,8 +371,8 @@ private:
         }
 
         auto error = make_error("ERR_UNSUPPORTED_COMMAND",
-                                "Comando no soportado",
-                                "Verifica la documentación de la API de control");
+                                "Unsupported command",
+                                "Check the control API documentation");
         send_response(client, error, false);
     }
 
@@ -396,7 +396,7 @@ private:
 
     void handle_stop(NativeSocket client) {
         auto fields = make_ok("OK_STOP");
-        fields["MESSAGE"] = "Deteniendo daemon";
+        fields["MESSAGE"] = "Stopping daemon";
         send_response(client, fields, true);
         if (stop_callback_) {
             stop_callback_();
@@ -410,8 +410,8 @@ private:
             snapshot = node_.stored_chunks();
         }
 
-    ControlFields fields;
-    fields["CODE"] = "OK_LIST";
+        ControlFields fields;
+        fields["CODE"] = "OK_LIST";
         fields["COUNT"] = std::to_string(snapshot.size());
 
         std::ostringstream entries;
@@ -431,8 +431,8 @@ private:
         const auto path_it = request.find("PATH");
         if (path_it == request.end()) {
             auto error = make_error("ERR_STORE_PATH_REQUIRED",
-                                    "STORE requiere PATH",
-                                    "Incluye la cabecera PATH con la ruta absoluta del archivo");
+                                    "STORE requires PATH",
+                                    "Include PATH with the absolute file path");
             send_response(client, error, false);
             return;
         }
@@ -440,8 +440,8 @@ private:
         const std::filesystem::path input = std::filesystem::absolute(std::filesystem::path(path_it->second));
         if (!std::filesystem::exists(input)) {
             auto error = make_error("ERR_STORE_FILE_NOT_FOUND",
-                                    "El archivo no existe",
-                                    "Verifica PATH:" + input.string());
+                                    "File does not exist",
+                                    "Check PATH:" + input.string());
             send_response(client, error, false);
             return;
         }
@@ -458,8 +458,8 @@ private:
             const auto parsed = parse_uint64(ttl_it->second);
             if (!parsed.has_value()) {
                 auto error = make_error("ERR_STORE_TTL_INVALID",
-                                        "TTL inválido",
-                                        "Usa un entero positivo en segundos");
+                                        "Invalid TTL",
+                                        "Use a positive integer value in seconds");
                 send_response(client, error, false);
                 return;
             }
@@ -472,7 +472,7 @@ private:
         } catch (const std::exception& ex) {
             auto error = make_error("ERR_STORE_READ_FAILED",
                                     ex.what(),
-                                    "Comprueba permisos de lectura y espacio disponible");
+                                    "Verify read permissions and available disk space");
             send_response(client, error, false);
             return;
         }
@@ -499,8 +499,8 @@ private:
         const auto manifest_it = request.find("MANIFEST");
         if (manifest_it == request.end()) {
             auto error = make_error("ERR_FETCH_MANIFEST_REQUIRED",
-                                    "FETCH requiere MANIFEST",
-                                    "Incluye MANIFEST:eph://... en la solicitud");
+                                    "FETCH requires MANIFEST",
+                                    "Include MANIFEST:eph://... in the request");
             send_response(client, error, false);
             return;
         }
@@ -510,8 +510,8 @@ private:
             manifest = protocol::decode_manifest(manifest_it->second);
         } catch (const std::exception&) {
             auto error = make_error("ERR_FETCH_MANIFEST_INVALID",
-                                    "Manifiesto inválido",
-                                    "Verifica que el URI eph:// esté completo");
+                                    "Invalid manifest",
+                                    "Ensure the eph:// URI is complete");
             send_response(client, error, false);
             return;
         }
@@ -524,8 +524,8 @@ private:
 
         if (!output_path.has_value()) {
             auto error = make_error("ERR_FETCH_OUT_REQUIRED",
-                                    "FETCH requiere OUT",
-                                    "Añade OUT:ruta_destino en la solicitud");
+                                    "FETCH requires OUT",
+                                    "Add OUT:destination_path to the request");
             send_response(client, error, false);
             return;
         }
@@ -535,8 +535,8 @@ private:
             std::scoped_lock lock(node_mutex_);
             if (!node_.ingest_manifest(manifest_it->second)) {
                 auto error = make_error("ERR_FETCH_MANIFEST_REGISTRATION",
-                                        "No se pudo registrar el manifiesto",
-                                        "Puede haber expirado el TTL del chunk");
+                                        "Failed to register manifest",
+                                        "The chunk TTL may have expired");
                 send_response(client, error, false);
                 return;
             }
@@ -545,8 +545,8 @@ private:
 
         if (!chunk.has_value()) {
             auto error = make_error("ERR_FETCH_CHUNK_MISSING",
-                                    "Chunk no disponible localmente",
-                                    "Espera a que llegue del swarm o comprueba la conectividad");
+                                    "Chunk not available locally",
+                                    "Wait for it to arrive from the swarm or verify connectivity");
             send_response(client, error, false);
             return;
         }
@@ -556,7 +556,7 @@ private:
         } catch (const std::exception& ex) {
             auto error = make_error("ERR_FETCH_WRITE_FAILED",
                                     ex.what(),
-                                    "Comprueba permisos de escritura y espacio libre");
+                                    "Verify write permissions and free disk space");
             send_response(client, error, false);
             return;
         }

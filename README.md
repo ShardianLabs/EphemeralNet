@@ -83,3 +83,10 @@ eph stop
 Global switches control persistence (`--no-persistent`), storage path (`--storage-dir`), secure wipe passes (`--wipe-passes`), deterministic identity (`--identity-seed`), and control-plane endpoint (`--control-host`, `--control-port`).
 
 > The `start` command reuses the same options as `serve` to configure the daemon before backgrounding it.
+
+## Documentation
+
+- [Architecture](docs/architecture.md): component map and concurrency model.
+- [Control & Data Protocol](docs/protocol.md): control socket semantics and TTL lifecycle.
+- [Deployment Guide](docs/deployment-guide.md): build, configuration, and runtime operations.
+- [Troubleshooting](docs/troubleshooting.md): common failures and remediation steps.

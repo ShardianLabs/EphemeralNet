@@ -37,6 +37,9 @@
 - CLI now includes interactive confirmations (`--yes` for automation), structured error reporting, and daemon-supplied hints/codes.
 - Added an MIT `LICENSE` file.
 - Translated public-facing documentation to English (README, this TODO).
+- CLI output, hints, and tests localised to English with compatibility for scripted confirmations.
+- Authored architecture, protocol, deployment, and troubleshooting guides under `docs/`.
+
 ## Next milestones
 - **CORE & PROTO**
 	- Protocol message versioning with backwards compatibility for new capabilities.
@@ -61,6 +64,5 @@
 	- Finalise `ephemeralnet-cli` with diagnostics commands and scripting support.
 	- Prototype an initial `ephemeralnet-GUI` or lightweight admin panel.
 - **DOCS**
-	- Document protocol, architecture, and operational flows in `docs/` with diagrams.
-	- Produce deployment and troubleshooting guides for operators.
-    - CLI languages
+	- Publish a versioned API reference for developers embedding `libephemeralnet`.
+	- Expand operator runbooks with performance tuning and capacity planning guidance.

@@ -18,7 +18,7 @@
 
 #if !defined(_WIN32)
 int main() {
-    std::cout << "CLI control flow test omitido (solo disponible en Windows)." << std::endl;
+    std::cout << "CLI control flow test skipped (Windows only)." << std::endl;
     return 0;
 }
 #else
@@ -32,7 +32,7 @@ CommandResult run_cli(const std::string& executable, const std::string& argument
     const std::string command = "cmd /C \"\"" + executable + "\" " + arguments + " 2>&1\"";
     FILE* pipe = _popen(command.c_str(), "r");
     if (!pipe) {
-        throw std::runtime_error("No se pudo abrir un pipe hacia la CLI");
+        throw std::runtime_error("Failed to open a pipe to the CLI");
     }
 
     std::string output;
@@ -64,7 +64,7 @@ bool wait_for_status(const std::string& executable,
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
         const auto status = run_cli(executable, base_options + " status");
-        const bool up = status.exit_code == 0 && expect_contains(status.output, "Daemon activo");
+        const bool up = status.exit_code == 0 && expect_contains(status.output, "Daemon online");
         if (expect_up == up) {
             return true;
         }
@@ -76,7 +76,7 @@ bool wait_for_status(const std::string& executable,
 int main() {
     const char* executable_env = std::getenv("EPH_CLI_EXECUTABLE");
     if (!executable_env) {
-        std::cerr << "EPH_CLI_EXECUTABLE no está definido" << std::endl;
+        std::cerr << "EPH_CLI_EXECUTABLE is not defined" << std::endl;
         return 1;
     }
 
@@ -114,23 +114,23 @@ int main() {
     try {
         const std::string start_command = base_options + " start";
         const auto start_res = run_cli(executable_path.string(), start_command);
-        if (start_res.exit_code != 0 || !expect_contains(start_res.output, "Daemon iniciado")) {
-            std::cerr << "Fallo al iniciar daemon\n" << start_res.output << "Comando: " << start_command << std::endl;
+        if (start_res.exit_code != 0 || !expect_contains(start_res.output, "Daemon started in the background")) {
+            std::cerr << "Failed to start daemon\n" << start_res.output << "Command: " << start_command << std::endl;
             cleanup();
             return 1;
         }
         daemon_started = true;
 
         if (!wait_for_status(executable_path.string(), base_options, std::chrono::seconds(10), true)) {
-            std::cerr << "El daemon no respondió en el tiempo esperado" << std::endl;
+            std::cerr << "Daemon did not respond within the expected time" << std::endl;
             ensure_stop();
             cleanup();
             return 1;
         }
 
         const auto list_initial = run_cli(executable_path.string(), base_options + " list");
-        if (list_initial.exit_code != 0 || !expect_contains(list_initial.output, "Chunks locales: 0")) {
-            std::cerr << "Listado inicial inesperado\n" << list_initial.output << std::endl;
+        if (list_initial.exit_code != 0 || !expect_contains(list_initial.output, "Local chunks: 0")) {
+            std::cerr << "Unexpected initial listing\n" << list_initial.output << std::endl;
             ensure_stop();
             cleanup();
             return 1;
@@ -144,17 +144,17 @@ int main() {
         }
 
         const auto store_res = run_cli(executable_path.string(), base_options + " store " + quote(input_file));
-        if (store_res.exit_code != 0 || !expect_contains(store_res.output, "Archivo almacenado")) {
-            std::cerr << "Fallo al almacenar\n" << store_res.output << std::endl;
+        if (store_res.exit_code != 0 || !expect_contains(store_res.output, "File stored")) {
+            std::cerr << "Failed to store payload\n" << store_res.output << std::endl;
             ensure_stop();
             cleanup();
             return 1;
         }
 
-        const std::string manifest_prefix = "Manifiesto: ";
+        const std::string manifest_prefix = "  Manifest: ";
         const auto manifest_pos = store_res.output.find(manifest_prefix);
         if (manifest_pos == std::string::npos) {
-            std::cerr << "No se encontró el manifiesto en la salida\n" << store_res.output << std::endl;
+            std::cerr << "Manifest not found in output\n" << store_res.output << std::endl;
             ensure_stop();
             cleanup();
             return 1;
@@ -165,8 +165,8 @@ int main() {
             manifest_end == std::string::npos ? std::string::npos : manifest_end - manifest_pos - manifest_prefix.size());
 
         const auto list_after_store = run_cli(executable_path.string(), base_options + " list");
-        if (list_after_store.exit_code != 0 || !expect_contains(list_after_store.output, "Chunks locales: 1")) {
-            std::cerr << "Listado tras almacenar inesperado\n" << list_after_store.output << std::endl;
+        if (list_after_store.exit_code != 0 || !expect_contains(list_after_store.output, "Local chunks: 1")) {
+            std::cerr << "Unexpected listing after store\n" << list_after_store.output << std::endl;
             ensure_stop();
             cleanup();
             return 1;
@@ -175,8 +175,8 @@ int main() {
         const auto output_file = test_dir / "recovery.bin";
         const auto fetch_res = run_cli(executable_path.string(),
                                        base_options + " fetch " + quote(manifest) + " --out " + quote(output_file));
-        if (fetch_res.exit_code != 0 || !expect_contains(fetch_res.output, "Archivo recuperado")) {
-            std::cerr << "Fallo al recuperar\n" << fetch_res.output << std::endl;
+        if (fetch_res.exit_code != 0 || !expect_contains(fetch_res.output, "File retrieved")) {
+            std::cerr << "Failed to fetch payload\n" << fetch_res.output << std::endl;
             ensure_stop();
             cleanup();
             return 1;
@@ -186,16 +186,16 @@ int main() {
         std::string recovered_data(
             (std::istreambuf_iterator<char>(recovered)),
             std::istreambuf_iterator<char>());
-    if (recovered_data != payload) {
-            std::cerr << "Contenido recuperado diferente" << std::endl;
+        if (recovered_data != payload) {
+            std::cerr << "Recovered content differs" << std::endl;
             ensure_stop();
             cleanup();
             return 1;
         }
 
         const auto stop_res = run_cli(executable_path.string(), base_options + " stop");
-        if (stop_res.exit_code != 0 || !expect_contains(stop_res.output, "Daemon detenido")) {
-            std::cerr << "Fallo al detener daemon\n" << stop_res.output << std::endl;
+        if (stop_res.exit_code != 0 || !expect_contains(stop_res.output, "Daemon stopped.")) {
+            std::cerr << "Failed to stop daemon\n" << stop_res.output << std::endl;
             ensure_stop();
             cleanup();
             return 1;
@@ -203,7 +203,7 @@ int main() {
         daemon_started = false;
 
         if (!wait_for_status(executable_path.string(), base_options, std::chrono::seconds(5), false)) {
-            std::cerr << "El daemon no se detuvo correctamente" << std::endl;
+            std::cerr << "Daemon did not stop cleanly" << std::endl;
             cleanup();
             return 1;
         }
@@ -212,7 +212,7 @@ int main() {
         return 0;
 
     } catch (const std::exception& ex) {
-        std::cerr << "Excepción durante la prueba de flujo CLI: " << ex.what() << std::endl;
+        std::cerr << "Exception during CLI flow test: " << ex.what() << std::endl;
         ensure_stop();
         cleanup();
         return 1;

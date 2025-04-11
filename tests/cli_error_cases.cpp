@@ -26,7 +26,7 @@ CommandResult run_cli(const std::string& executable, const std::string& argument
     FILE* pipe = popen(command.c_str(), "r");
 #endif
     if (!pipe) {
-        throw std::runtime_error("No se pudo abrir un pipe hacia la CLI");
+        throw std::runtime_error("Failed to open a pipe to the CLI");
     }
 
     std::string output;
@@ -58,7 +58,7 @@ bool expect_contains(const std::string& haystack, const std::string& needle) {
 int main() {
     const char* executable_env = std::getenv("EPH_CLI_EXECUTABLE");
     if (!executable_env) {
-        std::cerr << "EPH_CLI_EXECUTABLE no está definido" << std::endl;
+        std::cerr << "EPH_CLI_EXECUTABLE is not defined" << std::endl;
         return 1;
     }
 
@@ -66,31 +66,31 @@ int main() {
 
     try {
         const auto help = run_cli(executable, "--help");
-        if (help.exit_code != 0 || !expect_contains(help.output, "Uso: eph")) {
-            std::cerr << "Fallo en --help. Código=" << help.exit_code << "\n" << help.output << std::endl;
+        if (help.exit_code != 0 || !expect_contains(help.output, "Usage: eph")) {
+            std::cerr << "Failure on --help. exit=" << help.exit_code << "\n" << help.output << std::endl;
             return 1;
         }
 
         const auto status = run_cli(executable, "status");
-        if (status.exit_code == 0 || !expect_contains(status.output, "No se pudo contactar con el daemon")) {
-            std::cerr << "Fallo en status sin daemon. Código=" << status.exit_code << "\n" << status.output << std::endl;
+        if (status.exit_code == 0 || !expect_contains(status.output, "Failed to contact the daemon")) {
+            std::cerr << "Failure on status without daemon. exit=" << status.exit_code << "\n" << status.output << std::endl;
             return 1;
         }
 
         const auto store = run_cli(executable, "store");
-        if (store.exit_code == 0 || !expect_contains(store.output, "store requiere la ruta de un archivo")) {
-            std::cerr << "Fallo en store sin argumentos. Código=" << store.exit_code << "\n" << store.output << std::endl;
+        if (store.exit_code == 0 || !expect_contains(store.output, "store requires a file path")) {
+            std::cerr << "Failure on store without arguments. exit=" << store.exit_code << "\n" << store.output << std::endl;
             return 1;
         }
 
         const auto fetch = run_cli(executable, "fetch eph://deadbeef");
-        if (fetch.exit_code == 0 || !expect_contains(fetch.output, "fetch requiere --out")) {
-            std::cerr << "Fallo en fetch sin --out. Código=" << fetch.exit_code << "\n" << fetch.output << std::endl;
+        if (fetch.exit_code == 0 || !expect_contains(fetch.output, "fetch requires --out")) {
+            std::cerr << "Failure on fetch without --out. exit=" << fetch.exit_code << "\n" << fetch.output << std::endl;
             return 1;
         }
 
     } catch (const std::exception& ex) {
-        std::cerr << "Excepción durante las pruebas de la CLI: " << ex.what() << std::endl;
+        std::cerr << "Exception during CLI tests: " << ex.what() << std::endl;
         return 1;
     }
 
