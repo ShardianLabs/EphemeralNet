@@ -63,8 +63,8 @@ bool wait_for_status(const std::string& executable,
                      bool expect_up) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
-        const auto status = run_cli(executable, base_options + " status");
-        const bool up = status.exit_code == 0 && expect_contains(status.output, "Daemon online");
+    const auto status = run_cli(executable, base_options + " status");
+    const bool up = status.exit_code == 0 && expect_contains(status.output, "Daemon active");
         if (expect_up == up) {
             return true;
         }
@@ -194,7 +194,7 @@ int main() {
         }
 
         const auto stop_res = run_cli(executable_path.string(), base_options + " stop");
-        if (stop_res.exit_code != 0 || !expect_contains(stop_res.output, "Daemon stopped.")) {
+    if (stop_res.exit_code != 0 || !expect_contains(stop_res.output, "Daemon stopped")) {
             std::cerr << "Failed to stop daemon\n" << stop_res.output << std::endl;
             ensure_stop();
             cleanup();

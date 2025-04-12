@@ -521,12 +521,12 @@ if(EPHEMERALNET_BUILD_TESTS)
 
     add_test(NAME EphemeralNet.CLIUsage COMMAND $<TARGET_FILE:ephemeralnet> --help)
     set_tests_properties(EphemeralNet.CLIUsage PROPERTIES
-        PASS_REGULAR_EXPRESSION "Uso: eph"
+        PASS_REGULAR_EXPRESSION "Usage: eph"
     )
 
     add_test(NAME EphemeralNet.CLIHelpAlias COMMAND $<TARGET_FILE:ephemeralnet> help)
     set_tests_properties(EphemeralNet.CLIHelpAlias PROPERTIES
-        PASS_REGULAR_EXPRESSION "Uso: eph"
+        PASS_REGULAR_EXPRESSION "Usage: eph"
     )
 
     add_executable(ephemeralnet_cli_tests

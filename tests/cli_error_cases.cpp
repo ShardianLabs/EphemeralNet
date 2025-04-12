@@ -72,13 +72,13 @@ int main() {
         }
 
         const auto status = run_cli(executable, "status");
-        if (status.exit_code == 0 || !expect_contains(status.output, "Failed to contact the daemon")) {
+        if (status.exit_code == 0 || !expect_contains(status.output, "Could not contact the daemon.")) {
             std::cerr << "Failure on status without daemon. exit=" << status.exit_code << "\n" << status.output << std::endl;
             return 1;
         }
 
         const auto store = run_cli(executable, "store");
-        if (store.exit_code == 0 || !expect_contains(store.output, "store requires a file path")) {
+        if (store.exit_code == 0 || !expect_contains(store.output, "store expects the path to a file")) {
             std::cerr << "Failure on store without arguments. exit=" << store.exit_code << "\n" << store.output << std::endl;
             return 1;
         }
