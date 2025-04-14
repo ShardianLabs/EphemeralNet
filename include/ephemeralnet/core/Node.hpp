@@ -159,6 +159,8 @@ private:
     std::unordered_map<std::string, std::size_t> active_uploads_per_peer_;
     std::chrono::steady_clock::time_point last_upload_rotation_{};
     std::unordered_map<std::string, SwarmRoleLedger> swarm_roles_;
+    std::unordered_map<std::string, std::uint8_t> peer_message_versions_;
+    std::unordered_map<std::string, std::deque<std::chrono::steady_clock::time_point>> peer_announce_history_;
     mutable std::recursive_mutex scheduler_mutex_;
 
     void initialize_transport_handler();
@@ -217,6 +219,12 @@ private:
     void note_local_leecher(const ChunkId& chunk_id);
     void note_peer_seed(const ChunkId& chunk_id, const PeerId& peer_id);
     void note_peer_leecher(const ChunkId& chunk_id, const PeerId& peer_id);
+    std::uint8_t preferred_message_version() const;
+    std::uint8_t outbound_message_version_for(const PeerId& peer_id) const;
+    bool is_message_version_supported(std::uint8_t version) const;
+    void note_peer_message_version(const PeerId& peer_id, std::uint8_t version);
+    bool register_incoming_announce(const PeerId& peer_id, std::chrono::steady_clock::time_point now);
+    void rotate_session_keys(std::chrono::steady_clock::time_point now);
     SwarmPeerLoadMap gather_peer_load() const;
 };
 

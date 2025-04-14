@@ -119,6 +119,8 @@ int main() {
     background_payload.assigned_shards.push_back(background_manifest.shards.front().index);
 
     ephemeralnet::test::NodeTestAccess::handle_announce(consumer, urgent_payload, producer_id);
+    // Allow announce throttle window to elapse so the second announce is accepted.
+    std::this_thread::sleep_for(3s);
     ephemeralnet::test::NodeTestAccess::handle_announce(consumer, background_payload, producer_id);
 
     const auto extra_peer = make_peer_id(0xC0);

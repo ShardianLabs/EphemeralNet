@@ -34,18 +34,18 @@
 - Upload choking/unchoking honours global and per-peer limits, transfer timeouts, and fair rotation.
 - Seed/leecher roles tracked per chunk via `Node` ledger with multi-node transition test coverage.
 - Multi-peer planning weighs availability, load, and historical roles to distribute shards fairly across the swarm and avoid choked peers.
+- Protocol message version negotiation with downgrade handling and regression tests.
+- Deterministic fuzz harnesses guard protocol message and manifest deserialisation paths under `ctest`.
 - CLI now includes interactive confirmations (`--yes` for automation), structured error reporting, and daemon-supplied hints/codes.
 - Added an MIT `LICENSE` file.
 - Translated public-facing documentation to English (README, this TODO).
 - CLI output, hints, and tests localised to English with compatibility for scripted confirmations.
 - Authored architecture, protocol, deployment, and troubleshooting guides under `docs/`.
+- Review crypto hardening (key rotation policy, TTL limits, Announce rate limiting).
 
 ## Next milestones
 - **CORE & PROTO**
-	- Protocol message versioning with backwards compatibility for new capabilities.
 - **SECURITY**
-	- Introduce continuous fuzzing for message and manifest deserialisation.
-	- Review crypto hardening (key rotation policy, TTL limits, Announce rate limiting).
 	- Design and implement anti-Sybil/spam defences (lightweight Proof-of-Work or equivalent for costly operations).
 - **TESTING**
 	- Deploy bootstrap and STUN nodes on a VPS for in-the-wild validation.

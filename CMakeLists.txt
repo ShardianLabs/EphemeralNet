@@ -128,6 +128,23 @@ if(EPHEMERALNET_BUILD_TESTS)
 
     add_test(NAME EphemeralNet.ProtocolMessages COMMAND ephemeralnet_protocol_tests)
 
+    add_executable(ephemeralnet_protocol_fuzz_tests
+        tests/protocol_fuzz.cpp
+    )
+
+    target_link_libraries(ephemeralnet_protocol_fuzz_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_protocol_fuzz_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_protocol_fuzz_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.ProtocolFuzz COMMAND ephemeralnet_protocol_fuzz_tests)
+
     add_executable(ephemeralnet_protocol_auth_tests
         tests/protocol_auth.cpp
     )
@@ -178,6 +195,23 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.KeySchedule COMMAND ephemeralnet_key_schedule_tests)
+
+    add_executable(ephemeralnet_crypto_hardening_tests
+        tests/crypto_hardening.cpp
+    )
+
+    target_link_libraries(ephemeralnet_crypto_hardening_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_crypto_hardening_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_crypto_hardening_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.CryptoHardening COMMAND ephemeralnet_crypto_hardening_tests)
 
     add_executable(ephemeralnet_handshake_tests
         tests/handshake.cpp
@@ -263,6 +297,23 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.Manifest COMMAND ephemeralnet_manifest_tests)
+
+    add_executable(ephemeralnet_manifest_fuzz_tests
+        tests/manifest_fuzz.cpp
+    )
+
+    target_link_libraries(ephemeralnet_manifest_fuzz_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_manifest_fuzz_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_manifest_fuzz_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.ManifestFuzz COMMAND ephemeralnet_manifest_fuzz_tests)
 
     add_executable(ephemeralnet_manifest_flow_tests
         tests/manifest_flow.cpp

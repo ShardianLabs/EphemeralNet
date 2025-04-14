@@ -85,6 +85,10 @@ int main() {
     };
     round_trip(request);
 
+    Message legacy_request = request;
+    legacy_request.version = kMinimumMessageVersion;
+    round_trip(legacy_request);
+
     Message chunk{};
     chunk.type = MessageType::Chunk;
     chunk.payload = ChunkPayload{
@@ -102,6 +106,18 @@ int main() {
         .accepted = true,
     };
     round_trip(ack);
+
+    {
+        auto encoded = encode(request);
+        encoded[0] = static_cast<std::uint8_t>(kMinimumMessageVersion - 1);
+        assert(!decode(encoded).has_value());
+    }
+
+    {
+        auto encoded = encode(request);
+        encoded[0] = static_cast<std::uint8_t>(kCurrentMessageVersion + 1);
+        assert(!decode(encoded).has_value());
+    }
 
     return 0;
 }

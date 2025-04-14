@@ -10,6 +10,7 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace ephemeralnet::network {
 
@@ -32,6 +33,7 @@ public:
     std::optional<std::array<std::uint8_t, 32>> current_key(const PeerId& peer_id) const;
     std::optional<std::array<std::uint8_t, 32>> rotate_if_needed(const PeerId& peer_id,
                                                                  std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+    std::vector<PeerId> known_peers() const;
 
 private:
     std::chrono::seconds rotation_interval_;

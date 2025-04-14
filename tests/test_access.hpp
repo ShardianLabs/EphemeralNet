@@ -128,6 +128,12 @@ public:
         }
         return snapshot;
     }
+
+    static std::optional<std::array<std::uint8_t, 32>> rotate_key(Node& node,
+                                                                  const PeerId& peer_id,
+                                                                  std::chrono::steady_clock::time_point when) {
+        return node.key_manager_.rotate_if_needed(peer_id, when);
+    }
 };
 
 }  // namespace ephemeralnet::test

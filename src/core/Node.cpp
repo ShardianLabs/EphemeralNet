@@ -26,6 +26,13 @@ namespace {
 
 using SchedulerLock = std::unique_lock<std::recursive_mutex>;
 
+constexpr std::chrono::seconds kMinKeyRotationInterval{std::chrono::seconds{5}};
+constexpr std::chrono::seconds kMaxKeyRotationInterval{std::chrono::hours{1}};
+constexpr std::chrono::seconds kMinAllowedManifestTtl{std::chrono::seconds{1}};
+constexpr std::chrono::seconds kMaxAllowedManifestTtl{std::chrono::hours{24}};
+constexpr std::chrono::seconds kMinAnnounceInterval{std::chrono::seconds{1}};
+constexpr std::chrono::seconds kMaxAnnounceWindow{std::chrono::hours{1}};
+
 std::uint32_t generate_identity_scalar(const Config& config) {
     std::mt19937 generator;
     if (config.identity_seed.has_value()) {
@@ -55,17 +62,119 @@ std::array<std::uint8_t, 8> make_handshake_material(std::uint32_t local_public,
     return material;
 }
 
-std::optional<std::chrono::seconds> manifest_ttl(const protocol::Manifest& manifest) {
+std::chrono::seconds sanitize_key_rotation_interval(std::chrono::seconds interval) {
+    if (interval <= std::chrono::seconds::zero()) {
+        interval = kMinKeyRotationInterval;
+    }
+    if (interval < kMinKeyRotationInterval) {
+        interval = kMinKeyRotationInterval;
+    }
+    if (interval > kMaxKeyRotationInterval) {
+        interval = kMaxKeyRotationInterval;
+    }
+    return interval;
+}
+
+std::chrono::seconds sanitize_manifest_min(std::chrono::seconds value) {
+    if (value < kMinAllowedManifestTtl) {
+        return kMinAllowedManifestTtl;
+    }
+    if (value > kMaxAllowedManifestTtl) {
+        return kMaxAllowedManifestTtl;
+    }
+    return value;
+}
+
+std::chrono::seconds sanitize_manifest_max(std::chrono::seconds value, std::chrono::seconds min_value) {
+    if (value < min_value) {
+        value = min_value;
+    }
+    if (value < kMinAllowedManifestTtl) {
+        value = kMinAllowedManifestTtl;
+    }
+    if (value > kMaxAllowedManifestTtl) {
+        value = kMaxAllowedManifestTtl;
+    }
+    return value;
+}
+
+std::chrono::seconds sanitize_announce_interval(std::chrono::seconds value) {
+    if (value <= std::chrono::seconds::zero()) {
+        return kMinAnnounceInterval;
+    }
+    if (value < kMinAnnounceInterval) {
+        return kMinAnnounceInterval;
+    }
+    return value;
+}
+
+std::chrono::seconds sanitize_announce_window(std::chrono::seconds value) {
+    if (value <= std::chrono::seconds::zero()) {
+        return kMinAnnounceInterval;
+    }
+    if (value > kMaxAnnounceWindow) {
+        return kMaxAnnounceWindow;
+    }
+    return value;
+}
+
+std::chrono::seconds clamp_chunk_ttl(std::chrono::seconds ttl,
+                                     std::chrono::seconds min_ttl,
+                                     std::chrono::seconds max_ttl) {
+    if (ttl < min_ttl) {
+        ttl = min_ttl;
+    }
+    if (ttl > max_ttl) {
+        ttl = max_ttl;
+    }
+    if (ttl <= std::chrono::seconds::zero()) {
+        ttl = kMinAllowedManifestTtl;
+    }
+    return ttl;
+}
+
+std::optional<std::chrono::seconds> enforce_manifest_ttl(std::chrono::seconds ttl,
+                                                          std::chrono::seconds min_ttl,
+                                                          std::chrono::seconds max_ttl) {
+    if (ttl < min_ttl) {
+        return std::nullopt;
+    }
+    if (ttl > max_ttl) {
+        ttl = max_ttl;
+    }
+    if (ttl <= std::chrono::seconds::zero()) {
+        return std::nullopt;
+    }
+    return ttl;
+}
+
+std::optional<std::chrono::seconds> manifest_ttl(const protocol::Manifest& manifest,
+                                                  const Config& config) {
     const auto now = std::chrono::system_clock::now();
     if (manifest.expires_at <= now) {
         return std::nullopt;
     }
 
     auto ttl = std::chrono::duration_cast<std::chrono::seconds>(manifest.expires_at - now);
-    if (ttl <= std::chrono::seconds{0}) {
-        ttl = std::chrono::seconds{1};
+    if (ttl <= std::chrono::seconds::zero()) {
+        return std::nullopt;
     }
-    return ttl;
+
+    const auto min_ttl = config.min_manifest_ttl;
+    const auto max_ttl = config.max_manifest_ttl;
+    return enforce_manifest_ttl(ttl, min_ttl, max_ttl);
+}
+
+Config sanitize_config(Config config) {
+    config.key_rotation_interval = sanitize_key_rotation_interval(config.key_rotation_interval);
+    config.min_manifest_ttl = sanitize_manifest_min(config.min_manifest_ttl);
+    config.max_manifest_ttl = sanitize_manifest_max(config.max_manifest_ttl, config.min_manifest_ttl);
+    config.announce_min_interval = sanitize_announce_interval(config.announce_min_interval);
+    if (config.announce_burst_limit == 0) {
+        config.announce_burst_limit = 1;
+    }
+    config.announce_burst_window = sanitize_announce_window(config.announce_burst_window);
+    return config;
 }
 
 bool validate_shards(const protocol::Manifest& manifest) {
@@ -166,7 +275,7 @@ bool Node::send_chunk_request_direct(const ChunkId& chunk_id, const PeerId& peer
     }
 
     protocol::Message message{};
-    message.version = 1;
+    message.version = outbound_message_version_for(peer_id);
     message.type = protocol::MessageType::Request;
     protocol::RequestPayload request{};
     request.chunk_id = chunk_id;
@@ -556,7 +665,7 @@ void Node::send_negative_ack(const PeerId& peer_id, const ChunkId& chunk_id) {
     }
 
     protocol::Message response{};
-    response.version = 1;
+    response.version = outbound_message_version_for(peer_id);
     response.type = protocol::MessageType::Acknowledge;
     protocol::AcknowledgePayload ack{};
     ack.chunk_id = chunk_id;
@@ -639,6 +748,87 @@ void Node::note_peer_leecher(const ChunkId& chunk_id, const PeerId& peer_id) {
     const auto peer_key = peer_id_to_string(peer_id);
     if (!ledger.seeds.contains(peer_key)) {
         ledger.leechers.insert(peer_key);
+    }
+}
+
+std::uint8_t Node::preferred_message_version() const {
+    const auto minimum = std::max<std::uint8_t>(config_.protocol_min_supported_version, protocol::kMinimumMessageVersion);
+    std::uint8_t version = config_.protocol_message_version;
+    if (version == 0) {
+        version = protocol::kCurrentMessageVersion;
+    }
+    if (!protocol::is_supported_message_version(version)) {
+        version = protocol::kCurrentMessageVersion;
+    }
+    if (version < minimum) {
+        version = minimum;
+    }
+    return version;
+}
+
+std::uint8_t Node::outbound_message_version_for(const PeerId& peer_id) const {
+    SchedulerLock lock(scheduler_mutex_);
+    const auto preferred = preferred_message_version();
+    const auto minimum = std::max<std::uint8_t>(config_.protocol_min_supported_version, protocol::kMinimumMessageVersion);
+    const auto key = peer_id_to_string(peer_id);
+    const auto it = peer_message_versions_.find(key);
+    if (it != peer_message_versions_.end()) {
+        const auto remote_version = it->second;
+        if (remote_version < preferred) {
+            return std::max(remote_version, minimum);
+        }
+    }
+    return preferred;
+}
+
+bool Node::is_message_version_supported(std::uint8_t version) const {
+    const auto minimum = std::max<std::uint8_t>(config_.protocol_min_supported_version, protocol::kMinimumMessageVersion);
+    return version >= minimum && protocol::is_supported_message_version(version);
+}
+
+void Node::note_peer_message_version(const PeerId& peer_id, std::uint8_t version) {
+    if (!is_message_version_supported(version)) {
+        return;
+    }
+    SchedulerLock lock(scheduler_mutex_);
+    const auto key = peer_id_to_string(peer_id);
+    peer_message_versions_[key] = std::max<std::uint8_t>(version, config_.protocol_min_supported_version);
+}
+
+bool Node::register_incoming_announce(const PeerId& peer_id, std::chrono::steady_clock::time_point now) {
+    SchedulerLock lock(scheduler_mutex_);
+
+    const auto key = peer_id_to_string(peer_id);
+    auto& history = peer_announce_history_[key];
+
+    if (config_.announce_burst_window > std::chrono::seconds::zero()) {
+        const auto window_start = now - config_.announce_burst_window;
+        while (!history.empty() && history.front() < window_start) {
+            history.pop_front();
+        }
+    }
+
+    if (!history.empty() && config_.announce_min_interval > std::chrono::seconds::zero()) {
+        const auto since_last = now - history.back();
+        if (since_last < config_.announce_min_interval) {
+            return false;
+        }
+    }
+
+    if (config_.announce_burst_limit > 0 && history.size() >= config_.announce_burst_limit) {
+        return false;
+    }
+
+    history.push_back(now);
+    return true;
+}
+
+void Node::rotate_session_keys(std::chrono::steady_clock::time_point now) {
+    const auto peers = key_manager_.known_peers();
+    for (const auto& peer : peers) {
+        if (const auto rotated = key_manager_.rotate_if_needed(peer, now)) {
+            sessions_.register_peer_key(peer, *rotated);
+        }
     }
 }
 
@@ -735,14 +925,14 @@ bool Node::dispatch_upload(const PendingUploadRequest& request) {
         return false;
     }
 
-    const auto ttl_opt = manifest_ttl(*manifest);
+    const auto ttl_opt = manifest_ttl(*manifest, config_);
     if (!ttl_opt.has_value()) {
         send_negative_ack(request.peer_id, request.chunk_id);
         return false;
     }
 
     protocol::Message response{};
-    response.version = 1;
+    response.version = outbound_message_version_for(request.peer_id);
     response.type = protocol::MessageType::Chunk;
     protocol::ChunkPayload chunk_payload{};
     chunk_payload.chunk_id = request.chunk_id;
@@ -834,16 +1024,16 @@ void Node::refresh_provider_count(PendingFetchState& state,
 
 Node::Node(PeerId id, Config config)
         : id_(id),
-            config_(config),
-            chunk_store_(config),
-            dht_(id, config),
-            key_manager_(config.announce_interval),
+            config_(sanitize_config(config)),
+            chunk_store_(config_),
+            dht_(id, config_),
+            key_manager_(config_.key_rotation_interval),
             reputation_(),
             sessions_(id),
-            nat_manager_(config),
-            swarm_(config),
+            nat_manager_(config_),
+            swarm_(config_),
             crypto_(),
-            identity_scalar_(generate_identity_scalar(config)),
+            identity_scalar_(generate_identity_scalar(config_)),
             identity_public_(network::KeyExchange::compute_public(identity_scalar_)),
             handshake_state_(),
             cleanup_notifications_(),
@@ -871,7 +1061,7 @@ protocol::Manifest Node::store_chunk(const ChunkId& chunk_id, ChunkData data, st
     const auto total_shares = std::max(threshold, config_.shard_total);
 
     const auto effective_ttl = ttl.count() > 0 ? ttl : config_.default_chunk_ttl;
-    const auto sanitized_ttl = std::max(effective_ttl, std::chrono::seconds{1});
+    const auto sanitized_ttl = clamp_chunk_ttl(effective_ttl, config_.min_manifest_ttl, config_.max_manifest_ttl);
 
     const auto chunk_hash = crypto::Sha256::digest(std::span<const std::uint8_t>{data});
 
@@ -925,7 +1115,7 @@ bool Node::ingest_manifest(const std::string& manifest_uri) {
         return false;
     }
 
-    const auto ttl = manifest_ttl(manifest);
+    const auto ttl = manifest_ttl(manifest, config_);
     if (!ttl.has_value()) {
         return false;
     }
@@ -948,7 +1138,7 @@ std::optional<ChunkData> Node::receive_chunk(const std::string& manifest_uri, Ch
         return std::nullopt;
     }
 
-    const auto ttl = manifest_ttl(manifest);
+    const auto ttl = manifest_ttl(manifest, config_);
     if (!ttl.has_value()) {
         return std::nullopt;
     }
@@ -1046,7 +1236,7 @@ bool Node::request_chunk(const PeerId& peer_id,
     }
 
     protocol::Message message{};
-    message.version = 1;
+    message.version = outbound_message_version_for(peer_id);
     message.type = protocol::MessageType::Request;
     message.payload = protocol::RequestPayload{manifest.chunk_id, id_};
 
@@ -1245,6 +1435,7 @@ void Node::tick() {
     rebalance_swarm_plans();
     process_pending_uploads();
     process_pending_fetches();
+    rotate_session_keys(now);
 }
 
 void Node::start_transport(std::uint16_t port) {
@@ -1310,6 +1501,12 @@ void Node::handle_transport_message(const network::TransportMessage& message) {
         return;
     }
 
+    if (!is_message_version_supported(decoded->version)) {
+        return;
+    }
+
+    note_peer_message_version(message.peer_id, decoded->version);
+
     handle_protocol_message(*decoded, message);
 }
 
@@ -1356,7 +1553,7 @@ void Node::handle_request(const protocol::RequestPayload& payload, const PeerId&
     const auto record = chunk_store_.get_record(payload.chunk_id);
     bool accepted = manifest.has_value() && record.has_value();
     if (manifest.has_value()) {
-        const auto ttl_opt = manifest_ttl(*manifest);
+        const auto ttl_opt = manifest_ttl(*manifest, config_);
         if (!ttl_opt.has_value()) {
             accepted = false;
         }
@@ -1391,7 +1588,7 @@ void Node::handle_chunk(const protocol::ChunkPayload& payload, const PeerId& sen
     }
 
     protocol::Message ack_message{};
-    ack_message.version = 1;
+    ack_message.version = outbound_message_version_for(sender);
     ack_message.type = protocol::MessageType::Acknowledge;
     protocol::AcknowledgePayload ack{};
     ack.chunk_id = payload.chunk_id;
@@ -1428,6 +1625,12 @@ void Node::handle_announce(const protocol::AnnouncePayload& payload, const PeerI
         return;
     }
 
+    const auto now = std::chrono::steady_clock::now();
+    if (!register_incoming_announce(sender, now)) {
+        reputation_.record_failure(sender);
+        return;
+    }
+
     protocol::Manifest manifest{};
     try {
         manifest = protocol::decode_manifest(payload.manifest_uri);
@@ -1446,7 +1649,7 @@ void Node::handle_announce(const protocol::AnnouncePayload& payload, const PeerI
         return;
     }
 
-    const auto ttl_opt = manifest_ttl(manifest);
+    const auto ttl_opt = manifest_ttl(manifest, config_);
     if (!ttl_opt.has_value()) {
         reputation_.record_failure(sender);
         return;
@@ -1470,13 +1673,17 @@ void Node::handle_announce(const protocol::AnnouncePayload& payload, const PeerI
     update_swarm_plan(manifest);
     note_peer_seed(manifest.chunk_id, sender);
 
-    const auto ttl = payload.ttl.count() > 0 ? payload.ttl : *ttl_opt;
+    auto advertised_ttl = payload.ttl.count() > 0 ? payload.ttl : *ttl_opt;
+    if (advertised_ttl > *ttl_opt) {
+        advertised_ttl = *ttl_opt;
+    }
+    advertised_ttl = clamp_chunk_ttl(advertised_ttl, config_.min_manifest_ttl, config_.max_manifest_ttl);
     if (!payload.endpoint.empty()) {
         PeerContact contact{};
         contact.id = sender;
         contact.address = payload.endpoint;
-        contact.expires_at = std::chrono::steady_clock::now() + ttl;
-        dht_.add_contact(payload.chunk_id, std::move(contact), ttl);
+        contact.expires_at = now + advertised_ttl;
+        dht_.add_contact(payload.chunk_id, std::move(contact), advertised_ttl);
     }
 
     schedule_assigned_fetch(payload);
@@ -1561,7 +1768,7 @@ void Node::broadcast_manifest(const protocol::Manifest& manifest) {
         return;
     }
 
-    const auto ttl_opt = manifest_ttl(manifest);
+    const auto ttl_opt = manifest_ttl(manifest, config_);
     if (!ttl_opt.has_value()) {
         return;
     }
@@ -1627,7 +1834,7 @@ bool Node::deliver_manifest(const protocol::Manifest& manifest,
     connect_peer(assignment.peer.id, host, port);
 
     protocol::Message announce{};
-    announce.version = 1;
+    announce.version = outbound_message_version_for(assignment.peer.id);
     announce.type = protocol::MessageType::Announce;
 
     protocol::AnnouncePayload payload{};

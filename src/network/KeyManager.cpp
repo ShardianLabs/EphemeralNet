@@ -91,4 +91,16 @@ std::array<std::uint8_t, 32> KeyManager::derive_key(const crypto::Key& shared_se
     return mac;
 }
 
+std::vector<PeerId> KeyManager::known_peers() const {
+    std::vector<PeerId> peers;
+    peers.reserve(contexts_.size());
+    for (const auto& [key, context] : contexts_) {
+        (void)context;
+        if (const auto peer = peer_id_from_string(key)) {
+            peers.push_back(*peer);
+        }
+    }
+    return peers;
+}
+
 }  // namespace ephemeralnet::network
