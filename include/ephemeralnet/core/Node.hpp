@@ -169,7 +169,9 @@ private:
     void handle_request(const protocol::RequestPayload& payload, const PeerId& sender);
     void handle_chunk(const protocol::ChunkPayload& payload, const PeerId& sender);
     void handle_acknowledge(const protocol::AcknowledgePayload& payload, const PeerId& sender);
-    void handle_announce(const protocol::AnnouncePayload& payload, const PeerId& sender);
+    void handle_announce(const protocol::AnnouncePayload& payload,
+                         const PeerId& sender,
+                         std::uint8_t message_version);
     std::optional<std::array<std::uint8_t, 32>> session_shared_key(const PeerId& peer_id) const;
     std::optional<protocol::Manifest> manifest_for_chunk(const ChunkId& chunk_id) const;
     void seed_bootstrap_contacts();
@@ -226,6 +228,8 @@ private:
     bool register_incoming_announce(const PeerId& peer_id, std::chrono::steady_clock::time_point now);
     void rotate_session_keys(std::chrono::steady_clock::time_point now);
     SwarmPeerLoadMap gather_peer_load() const;
+    bool apply_announce_pow(protocol::AnnouncePayload& payload) const;
+    bool verify_announce_pow(const protocol::AnnouncePayload& payload, std::uint8_t message_version) const;
 };
 
 }  

@@ -46,6 +46,7 @@ void round_trip(const Message& message) {
                 assert(actual_payload->ttl == expected_payload.ttl);
                 assert(actual_payload->manifest_uri == expected_payload.manifest_uri);
                 assert(actual_payload->assigned_shards == expected_payload.assigned_shards);
+                assert(actual_payload->work_nonce == expected_payload.work_nonce);
             } else if constexpr (std::is_same_v<PayloadType, RequestPayload>) {
                 assert(actual_payload->chunk_id == expected_payload.chunk_id);
                 assert(actual_payload->requester == expected_payload.requester);
@@ -74,6 +75,7 @@ int main() {
         .ttl = std::chrono::seconds{3600},
         .manifest_uri = "eph://chunk/abc123",
         .assigned_shards = std::vector<std::uint8_t>{1, 7, 9},
+        .work_nonce = 0,
     };
     round_trip(announce);
 

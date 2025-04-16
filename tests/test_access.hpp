@@ -21,8 +21,13 @@ public:
 
     static void handle_announce(Node& node,
                                 const protocol::AnnouncePayload& payload,
-                                const PeerId& sender) {
-        node.handle_announce(payload, sender);
+                                const PeerId& sender,
+                                std::uint8_t version = protocol::kCurrentMessageVersion) {
+        node.handle_announce(payload, sender, version);
+    }
+
+    static bool apply_pow(Node& node, protocol::AnnouncePayload& payload) {
+        return node.apply_announce_pow(payload);
     }
 
     static std::optional<std::size_t> pending_attempts(const Node& node, const ChunkId& chunk_id) {

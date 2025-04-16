@@ -32,6 +32,8 @@ constexpr std::chrono::seconds kMinAllowedManifestTtl{std::chrono::seconds{1}};
 constexpr std::chrono::seconds kMaxAllowedManifestTtl{std::chrono::hours{24}};
 constexpr std::chrono::seconds kMinAnnounceInterval{std::chrono::seconds{1}};
 constexpr std::chrono::seconds kMaxAnnounceWindow{std::chrono::hours{1}};
+constexpr std::uint8_t kMaxAnnouncePowDifficulty{24};
+constexpr std::uint64_t kMaxAnnouncePowAttempts{500'000};
 
 std::uint32_t generate_identity_scalar(const Config& config) {
     std::mt19937 generator;
@@ -118,6 +120,105 @@ std::chrono::seconds sanitize_announce_window(std::chrono::seconds value) {
     return value;
 }
 
+std::array<std::uint8_t, 8> to_big_endian_bytes(std::uint64_t value) {
+    std::array<std::uint8_t, 8> bytes{};
+    for (int index = 0; index < 8; ++index) {
+        const int shift = 56 - index * 8;
+        bytes[index] = static_cast<std::uint8_t>((value >> shift) & 0xFFu);
+    }
+    return bytes;
+}
+
+void update_with_span(crypto::Sha256& hasher, std::span<const std::uint8_t> data) {
+    if (data.empty()) {
+        return;
+    }
+    hasher.update(data);
+}
+
+void update_length_prefixed(crypto::Sha256& hasher, std::span<const std::uint8_t> data) {
+    const auto length_bytes = to_big_endian_bytes(static_cast<std::uint64_t>(data.size()));
+    hasher.update(length_bytes);
+    update_with_span(hasher, data);
+}
+
+std::array<std::uint8_t, 32> announce_pow_digest(const protocol::AnnouncePayload& payload) {
+    crypto::Sha256 hasher;
+    update_length_prefixed(hasher, std::span<const std::uint8_t>(payload.chunk_id.data(), payload.chunk_id.size()));
+    update_length_prefixed(hasher, std::span<const std::uint8_t>(payload.peer_id.data(), payload.peer_id.size()));
+
+    update_length_prefixed(hasher,
+        std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(payload.endpoint.data()), payload.endpoint.size()));
+    update_length_prefixed(hasher,
+        std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(payload.manifest_uri.data()), payload.manifest_uri.size()));
+    update_length_prefixed(hasher, std::span<const std::uint8_t>(payload.assigned_shards.data(), payload.assigned_shards.size()));
+
+    const auto ttl_bytes = to_big_endian_bytes(static_cast<std::uint64_t>(payload.ttl.count()));
+    hasher.update(ttl_bytes);
+
+    const auto nonce_bytes = to_big_endian_bytes(payload.work_nonce);
+    hasher.update(nonce_bytes);
+
+    return hasher.finalize();
+}
+
+std::size_t count_leading_zero_bits(const std::array<std::uint8_t, 32>& digest) {
+    std::size_t total = 0;
+    for (const auto byte : digest) {
+        if (byte == 0) {
+            total += 8;
+            continue;
+        }
+        for (int bit = 7; bit >= 0; --bit) {
+            if ((byte >> bit) & 0x1u) {
+                return total;
+            }
+            ++total;
+        }
+        return total;
+    }
+    return total;
+}
+
+bool announce_pow_valid(const protocol::AnnouncePayload& payload, std::uint8_t difficulty) {
+    if (difficulty == 0) {
+        return true;
+    }
+    const auto digest = announce_pow_digest(payload);
+    return count_leading_zero_bits(digest) >= difficulty;
+}
+
+std::uint64_t derive_pow_seed(const protocol::AnnouncePayload& payload) {
+    protocol::AnnouncePayload seed_payload = payload;
+    seed_payload.work_nonce = 0;
+    const auto digest = announce_pow_digest(seed_payload);
+    std::uint64_t seed = 0;
+    for (int index = 0; index < 8; ++index) {
+        seed = (seed << 8) | static_cast<std::uint64_t>(digest[index]);
+    }
+    return seed;
+}
+
+bool compute_announce_pow(protocol::AnnouncePayload& payload, std::uint8_t difficulty) {
+    if (difficulty == 0) {
+        payload.work_nonce = 0;
+        return true;
+    }
+
+    const auto seed = derive_pow_seed(payload);
+    std::mt19937_64 generator(seed);
+    std::uniform_int_distribution<std::uint64_t> distribution(0, std::numeric_limits<std::uint64_t>::max());
+    const auto start = distribution(generator);
+
+    for (std::uint64_t attempt = 0; attempt < kMaxAnnouncePowAttempts; ++attempt) {
+        payload.work_nonce = start + attempt;
+        if (announce_pow_valid(payload, difficulty)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::chrono::seconds clamp_chunk_ttl(std::chrono::seconds ttl,
                                      std::chrono::seconds min_ttl,
                                      std::chrono::seconds max_ttl) {
@@ -174,6 +275,9 @@ Config sanitize_config(Config config) {
         config.announce_burst_limit = 1;
     }
     config.announce_burst_window = sanitize_announce_window(config.announce_burst_window);
+    if (config.announce_pow_difficulty > kMaxAnnouncePowDifficulty) {
+        config.announce_pow_difficulty = kMaxAnnouncePowDifficulty;
+    }
     return config;
 }
 
@@ -821,6 +925,20 @@ bool Node::register_incoming_announce(const PeerId& peer_id, std::chrono::steady
 
     history.push_back(now);
     return true;
+}
+
+bool Node::apply_announce_pow(protocol::AnnouncePayload& payload) const {
+    return compute_announce_pow(payload, config_.announce_pow_difficulty);
+}
+
+bool Node::verify_announce_pow(const protocol::AnnouncePayload& payload, std::uint8_t message_version) const {
+    if (config_.announce_pow_difficulty == 0) {
+        return true;
+    }
+    if (message_version < 3) {
+        return false;
+    }
+    return announce_pow_valid(payload, config_.announce_pow_difficulty);
 }
 
 void Node::rotate_session_keys(std::chrono::steady_clock::time_point now) {
@@ -1532,7 +1650,7 @@ void Node::handle_protocol_message(const protocol::Message& message, const netwo
         }
         case protocol::MessageType::Announce: {
             if (const auto* payload = std::get_if<protocol::AnnouncePayload>(&message.payload)) {
-                handle_announce(*payload, transport.peer_id);
+                handle_announce(*payload, transport.peer_id, message.version);
             }
             break;
         }
@@ -1614,13 +1732,20 @@ void Node::handle_acknowledge(const protocol::AcknowledgePayload& payload, const
     process_pending_uploads();
 }
 
-void Node::handle_announce(const protocol::AnnouncePayload& payload, const PeerId& sender) {
+void Node::handle_announce(const protocol::AnnouncePayload& payload,
+                           const PeerId& sender,
+                           std::uint8_t message_version) {
     if (payload.peer_id != sender) {
         reputation_.record_failure(sender);
         return;
     }
 
     if (payload.manifest_uri.empty()) {
+        reputation_.record_failure(sender);
+        return;
+    }
+
+    if (!verify_announce_pow(payload, message_version)) {
         reputation_.record_failure(sender);
         return;
     }
@@ -1834,7 +1959,11 @@ bool Node::deliver_manifest(const protocol::Manifest& manifest,
     connect_peer(assignment.peer.id, host, port);
 
     protocol::Message announce{};
-    announce.version = outbound_message_version_for(assignment.peer.id);
+    auto announce_version = outbound_message_version_for(assignment.peer.id);
+    if (config_.announce_pow_difficulty > 0 && announce_version < 3) {
+        return false;
+    }
+    announce.version = announce_version;
     announce.type = protocol::MessageType::Announce;
 
     protocol::AnnouncePayload payload{};
@@ -1844,6 +1973,9 @@ bool Node::deliver_manifest(const protocol::Manifest& manifest,
     payload.ttl = ttl;
     payload.manifest_uri = manifest_uri;
     payload.assigned_shards = assignment.shard_indices;
+    if (!apply_announce_pow(payload)) {
+        return false;
+    }
     announce.payload = std::move(payload);
 
     const auto key_span = std::span<const std::uint8_t>(key->data(), key->size());

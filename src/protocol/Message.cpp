@@ -5,6 +5,7 @@
 #include <array>
 #include <cstring>
 #include <span>
+#include <utility>
 
 namespace ephemeralnet::protocol {
 
@@ -57,46 +58,78 @@ std::uint32_t read_u32(const std::uint8_t* data) {
            static_cast<std::uint32_t>(data[3]);
 }
 
+void write_u64(std::vector<std::uint8_t>& out, std::uint64_t value) {
+    for (int shift = 56; shift >= 0; shift -= 8) {
+        out.push_back(static_cast<std::uint8_t>((value >> shift) & 0xFFu));
+    }
+}
+
+std::uint64_t read_u64(const std::uint8_t* data) {
+    std::uint64_t value = 0;
+    for (int index = 0; index < 8; ++index) {
+        value = (value << 8) | static_cast<std::uint64_t>(data[index]);
+    }
+    return value;
+}
+
+std::optional<AnnouncePayload> parse_announce_payload(const std::uint8_t* data,
+                                                      std::size_t remaining,
+                                                      bool include_pow) {
+    const auto header_bytes = 4u * 4u;
+    const auto extra_bytes = include_pow ? static_cast<std::size_t>(8) : static_cast<std::size_t>(0);
+    if (remaining < header_bytes + kChunkIdSize + kPeerIdSize + extra_bytes) {
+        return std::nullopt;
+    }
+
+    std::size_t cursor = 0;
+    const auto ttl = read_u32(data + cursor);
+    cursor += 4;
+    const auto endpoint_len = read_u32(data + cursor);
+    cursor += 4;
+    const auto manifest_len = read_u32(data + cursor);
+    cursor += 4;
+    const auto assignments_len = read_u32(data + cursor);
+    cursor += 4;
+
+    const auto expected_size = cursor + kChunkIdSize + kPeerIdSize + endpoint_len + manifest_len + assignments_len + extra_bytes;
+    if (remaining < expected_size) {
+        return std::nullopt;
+    }
+
+    AnnouncePayload payload{};
+    payload.ttl = std::chrono::seconds(ttl);
+    payload.chunk_id = parse_chunk_id(data + cursor);
+    cursor += kChunkIdSize;
+    payload.peer_id = parse_peer_id(data + cursor);
+    cursor += kPeerIdSize;
+
+    payload.endpoint.assign(reinterpret_cast<const char*>(data + cursor), endpoint_len);
+    cursor += endpoint_len;
+
+    payload.manifest_uri.assign(reinterpret_cast<const char*>(data + cursor), manifest_len);
+    cursor += manifest_len;
+
+    payload.assigned_shards.assign(data + cursor, data + cursor + assignments_len);
+    cursor += assignments_len;
+
+    if (include_pow) {
+        payload.work_nonce = read_u64(data + cursor);
+        cursor += 8;
+    }
+
+    return payload;
+}
+
 std::optional<Payload> decode_payload_v1(MessageType type,
                                          const std::uint8_t* data,
                                          std::size_t remaining) {
     switch (type) {
         case MessageType::Announce: {
-            const auto header_bytes = 4u * 4u;
-            if (remaining < header_bytes + kChunkIdSize + kPeerIdSize) {
+            auto parsed = parse_announce_payload(data, remaining, false);
+            if (!parsed.has_value()) {
                 return std::nullopt;
             }
-
-            std::size_t cursor = 0;
-            const auto ttl = read_u32(data + cursor);
-            cursor += 4;
-            const auto endpoint_len = read_u32(data + cursor);
-            cursor += 4;
-            const auto manifest_len = read_u32(data + cursor);
-            cursor += 4;
-            const auto assignments_len = read_u32(data + cursor);
-            cursor += 4;
-
-            const auto expected_size = cursor + kChunkIdSize + kPeerIdSize + endpoint_len + manifest_len + assignments_len;
-            if (remaining < expected_size) {
-                return std::nullopt;
-            }
-
-            AnnouncePayload payload{};
-            payload.ttl = std::chrono::seconds(ttl);
-            payload.chunk_id = parse_chunk_id(data + cursor);
-            cursor += kChunkIdSize;
-            payload.peer_id = parse_peer_id(data + cursor);
-            cursor += kPeerIdSize;
-
-            payload.endpoint.assign(reinterpret_cast<const char*>(data + cursor), endpoint_len);
-            cursor += endpoint_len;
-
-            payload.manifest_uri.assign(reinterpret_cast<const char*>(data + cursor), manifest_len);
-            cursor += manifest_len;
-
-            payload.assigned_shards.assign(data + cursor, data + cursor + assignments_len);
-            return Payload{std::move(payload)};
+            return Payload{std::move(*parsed)};
         }
         case MessageType::Request: {
             const auto needed = kChunkIdSize + kPeerIdSize;
@@ -149,7 +182,8 @@ bool is_supported_message_version(std::uint8_t version) noexcept {
 std::vector<std::uint8_t> encode(const Message& message) {
     std::vector<std::uint8_t> out{};
     out.reserve(128);
-    out.push_back(clamp_version(message.version));
+    const auto version = clamp_version(message.version);
+    out.push_back(version);
     out.push_back(static_cast<std::uint8_t>(message.type));
 
     std::visit(
@@ -162,6 +196,7 @@ std::vector<std::uint8_t> encode(const Message& message) {
                 const auto endpoint_len = static_cast<std::uint32_t>(payload.endpoint.size());
                 const auto manifest_len = static_cast<std::uint32_t>(payload.manifest_uri.size());
                 const auto assignments_len = static_cast<std::uint32_t>(payload.assigned_shards.size());
+                const bool include_pow = version >= kCurrentMessageVersion;
 
                 write_u32(out, static_cast<std::uint32_t>(payload.ttl.count()));
                 write_u32(out, endpoint_len);
@@ -173,6 +208,9 @@ std::vector<std::uint8_t> encode(const Message& message) {
                 out.insert(out.end(), payload.endpoint.begin(), payload.endpoint.end());
                 out.insert(out.end(), payload.manifest_uri.begin(), payload.manifest_uri.end());
                 out.insert(out.end(), payload.assigned_shards.begin(), payload.assigned_shards.end());
+                if (include_pow) {
+                    write_u64(out, payload.work_nonce);
+                }
             } else if constexpr (std::is_same_v<PayloadType, RequestPayload>) {
                 const auto chunk_bytes = serialize_chunk_id(payload.chunk_id);
                 const auto peer_bytes = serialize_peer_id(payload.requester);
@@ -213,14 +251,14 @@ std::optional<Message> decode(std::span<const std::uint8_t> buffer) {
     const auto remaining = buffer.size() - 2;
 
     std::optional<Payload> payload{};
-    switch (version) {
-        case kMinimumMessageVersion:
-            [[fallthrough]];
-        case kCurrentMessageVersion:
-            payload = decode_payload_v1(type, data, remaining);
-            break;
-        default:
+    if (version >= 3 && type == MessageType::Announce) {
+        auto parsed = parse_announce_payload(data, remaining, true);
+        if (!parsed.has_value()) {
             return std::nullopt;
+        }
+        payload = Payload{std::move(*parsed)};
+    } else {
+        payload = decode_payload_v1(type, data, remaining);
     }
 
     if (!payload.has_value()) {

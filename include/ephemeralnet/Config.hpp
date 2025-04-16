@@ -43,7 +43,7 @@ struct Config {
     std::uint8_t shard_threshold{3};
     std::uint8_t shard_total{5};
     std::chrono::seconds bootstrap_contact_ttl{std::chrono::minutes(15)};
-    std::uint8_t protocol_message_version{1};
+    std::uint8_t protocol_message_version{0};
     std::uint8_t protocol_min_supported_version{1};
     std::chrono::seconds min_manifest_ttl{std::chrono::seconds(1)};
     std::chrono::seconds max_manifest_ttl{std::chrono::hours(24)};
@@ -51,6 +51,7 @@ struct Config {
     std::chrono::seconds announce_min_interval{std::chrono::seconds(2)};
     std::size_t announce_burst_limit{8};
     std::chrono::seconds announce_burst_window{std::chrono::seconds(30)};
+    std::uint8_t announce_pow_difficulty{0};
 
     struct BootstrapNode {
         PeerId id{};

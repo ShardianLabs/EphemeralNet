@@ -95,5 +95,26 @@ int main() {
     assert(second_providers.has_value());
     assert(*second_providers == 1);
 
+    ephemeralnet::Config pow_config = config;
+    pow_config.announce_pow_difficulty = 12;
+    const auto pow_node_id = make_peer_id(0x61);
+    ephemeralnet::Node pow_node_fail(pow_node_id, pow_config);
+    const auto pow_peer_id = make_peer_id(0x62);
+
+    ephemeralnet::protocol::AnnouncePayload pow_announce = announce;
+    pow_announce.peer_id = pow_peer_id;
+
+    ephemeralnet::test::NodeTestAccess::handle_announce(pow_node_fail, pow_announce, pow_peer_id);
+    assert(pow_node_fail.reputation_score(pow_peer_id) < 0);
+
+    ephemeralnet::Node pow_node_success(make_peer_id(0x63), pow_config);
+    auto valid_announce = pow_announce;
+    const bool pow_ready = ephemeralnet::test::NodeTestAccess::apply_pow(pow_node_success, valid_announce);
+    assert(pow_ready);
+    const auto before_success = pow_node_success.reputation_score(pow_peer_id);
+    ephemeralnet::test::NodeTestAccess::handle_announce(pow_node_success, valid_announce, pow_peer_id);
+    const auto after_success = pow_node_success.reputation_score(pow_peer_id);
+    assert(after_success > before_success);
+
     return 0;
 }

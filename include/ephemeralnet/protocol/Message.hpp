@@ -16,7 +16,7 @@
 namespace ephemeralnet::protocol {
 
 inline constexpr std::uint8_t kMinimumMessageVersion = 1;
-inline constexpr std::uint8_t kCurrentMessageVersion = 2;
+inline constexpr std::uint8_t kCurrentMessageVersion = 3;
 
 bool is_supported_message_version(std::uint8_t version) noexcept;
 
@@ -34,6 +34,7 @@ struct AnnouncePayload {
     std::chrono::seconds ttl{0};
     std::string manifest_uri;
     std::vector<std::uint8_t> assigned_shards;
+    std::uint64_t work_nonce{0};
 };
 
 struct RequestPayload {

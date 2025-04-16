@@ -42,11 +42,11 @@
 - CLI output, hints, and tests localised to English with compatibility for scripted confirmations.
 - Authored architecture, protocol, deployment, and troubleshooting guides under `docs/`.
 - Review crypto hardening (key rotation policy, TTL limits, Announce rate limiting).
+- Design and implement anti-Sybil/spam defences (lightweight Proof-of-Work or equivalent for costly operations).
 
 ## Next milestones
 - **CORE & PROTO**
 - **SECURITY**
-	- Design and implement anti-Sybil/spam defences (lightweight Proof-of-Work or equivalent for costly operations).
 - **TESTING**
 	- Deploy bootstrap and STUN nodes on a VPS for in-the-wild validation.
 	- Build a multi-node integration harness with latency/loss simulation.
