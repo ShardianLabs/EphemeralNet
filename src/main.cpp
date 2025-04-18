@@ -10,6 +10,7 @@
 #include <charconv>
 #include <chrono>
 #include <csignal>
+#include <cctype>
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -77,6 +78,12 @@ private:
     throw CliException(std::move(code), std::move(message), std::move(hint));
 }
 
+[[noreturn]] void throw_daemon_unreachable() {
+    throw_cli_error("E_DAEMON_UNREACHABLE",
+                    "Could not contact the daemon.",
+                    "Start it with 'eph start' (Windows) or 'eph serve' in another terminal, and verify --control-host/--control-port");
+}
+
 std::string trim(std::string value) {
     const auto is_space = [](unsigned char ch) { return std::isspace(ch) != 0; };
     value.erase(value.begin(), std::find_if(value.begin(), value.end(), [&](unsigned char ch) { return !is_space(ch); }));
@@ -85,6 +92,10 @@ std::string trim(std::string value) {
 }
 
 std::string to_lower(std::string value);
+
+bool has_whitespace(std::string_view text) {
+    return text.find_first_of(" \t\r\n") != std::string_view::npos;
+}
 
 bool stdin_is_interactive() {
 #ifdef _WIN32
@@ -251,12 +262,85 @@ std::string strip_quotes(std::string value) {
     return value;
 }
 
+void validate_global_options(GlobalOptions& options) {
+    if (options.storage_dir) {
+        auto raw = strip_quotes(*options.storage_dir);
+        raw = trim(raw);
+        if (raw.empty()) {
+            throw_cli_error("E_INVALID_STORAGE_DIR",
+                            "--storage-dir cannot be empty",
+                            "Provide a directory path, e.g. --storage-dir ./data");
+        }
+        if (has_whitespace(raw)) {
+            throw_cli_error("E_INVALID_STORAGE_DIR",
+                            "--storage-dir must not contain whitespace",
+                            "Wrap the path in quotes or use a path without spaces");
+        }
+        std::filesystem::path absolute;
+        try {
+            absolute = std::filesystem::absolute(std::filesystem::path(raw));
+        } catch (const std::exception&) {
+            throw_cli_error("E_INVALID_STORAGE_DIR",
+                            "Failed to resolve --storage-dir",
+                            "Ensure the path is valid on this platform and try again");
+        }
+        if (std::filesystem::exists(absolute) && !std::filesystem::is_directory(absolute)) {
+            throw_cli_error("E_INVALID_STORAGE_DIR",
+                            "--storage-dir points to a file",
+                            "Select a directory or remove the existing file at " + absolute.string());
+        }
+        const auto parent = absolute.parent_path();
+        if (!parent.empty() && !std::filesystem::exists(parent)) {
+            throw_cli_error("E_INVALID_STORAGE_DIR",
+                            "Parent directory does not exist for --storage-dir",
+                            "Create " + parent.string() + " first or choose an existing location");
+        }
+        options.storage_dir = absolute.string();
+    }
+
+    if (options.control_host) {
+        auto host = strip_quotes(*options.control_host);
+        host = trim(host);
+        if (host.empty()) {
+            throw_cli_error("E_INVALID_CONTROL_HOST",
+                            "--control-host cannot be empty",
+                            "Use an IP address or hostname, e.g. --control-host 127.0.0.1");
+        }
+        if (has_whitespace(host)) {
+            throw_cli_error("E_INVALID_CONTROL_HOST",
+                            "--control-host must not contain spaces",
+                            "If you need to specify an IPv6 address, wrap it in [brackets]");
+        }
+        options.control_host = host;
+    }
+
+    if (options.peer_id_hex) {
+        auto candidate = strip_quotes(*options.peer_id_hex);
+        candidate = trim(candidate);
+        if (candidate.size() != ephemeralnet::PeerId{}.size() * 2) {
+            throw_cli_error("E_INVALID_PEER_ID",
+                            "--peer-id must be exactly 64 hexadecimal characters",
+                            "Example: --peer-id 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
+        }
+        for (char ch : candidate) {
+            if (!std::isxdigit(static_cast<unsigned char>(ch))) {
+                throw_cli_error("E_INVALID_PEER_ID",
+                                "--peer-id accepts hexadecimal characters only",
+                                "Remove invalid characters or omit --peer-id to auto-generate one");
+            }
+        }
+        options.peer_id_hex = candidate;
+    }
+}
+
 ephemeralnet::PeerId make_peer_id(const GlobalOptions& options) {
     if (options.peer_id_hex) {
         if (auto parsed = parse_hex_array<ephemeralnet::PeerId>(*options.peer_id_hex)) {
             return *parsed;
         }
-        throw std::runtime_error("Invalid peer ID: expected 64-character hexadecimal string");
+        throw_cli_error("E_INVALID_PEER_ID",
+                        "--peer-id must be exactly 64 hexadecimal characters",
+                        "Example: --peer-id 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
     }
 
     if (options.identity_seed) {
@@ -675,6 +759,8 @@ int main(int argc, char** argv) {
                             "Run 'eph --help' to view available options");
         }
 
+        validate_global_options(options);
+
         if (index >= args.size()) {
             print_usage();
             return 1;
@@ -757,8 +843,7 @@ int main(int argc, char** argv) {
         if (command == "stop") {
             const auto response = client.send("STOP");
             if (!response) {
-                std::cerr << "Could not contact the daemon." << std::endl;
-                return 1;
+                throw_daemon_unreachable();
             }
             if (!response->success) {
                 print_daemon_failure(*response);
@@ -781,8 +866,7 @@ int main(int argc, char** argv) {
         if (command == "status") {
             const auto response = client.send("STATUS");
             if (!response) {
-                std::cerr << "Could not contact the daemon." << std::endl;
-                return 1;
+                throw_daemon_unreachable();
             }
             if (!response->success) {
                 print_daemon_failure(*response);
@@ -801,8 +885,7 @@ int main(int argc, char** argv) {
         if (command == "list") {
             const auto response = client.send("LIST");
             if (!response) {
-                std::cerr << "Could not contact the daemon." << std::endl;
-                return 1;
+                throw_daemon_unreachable();
             }
             if (!response->success) {
                 print_daemon_failure(*response);
@@ -823,6 +906,11 @@ int main(int argc, char** argv) {
                 throw_cli_error("E_STORE_FILE_NOT_FOUND",
                                 "File not found: " + input_path.string(),
                                 "Check the path or provide an absolute path");
+            }
+            if (!std::filesystem::is_regular_file(input_path)) {
+                throw_cli_error("E_STORE_INVALID_FILE",
+                                "store expects a regular file",
+                                "Provide a path to a readable file, not a directory or device");
             }
 
             std::optional<std::uint64_t> ttl_override;
@@ -864,8 +952,7 @@ int main(int argc, char** argv) {
 
             const auto response = client.send("STORE", fields);
             if (!response) {
-                std::cerr << "Could not contact the daemon." << std::endl;
-                return 1;
+                throw_daemon_unreachable();
             }
             if (!response->success) {
                 print_daemon_failure(*response);
@@ -918,6 +1005,18 @@ int main(int argc, char** argv) {
                                 "Use --out ./file.bin");
             }
 
+            if (std::filesystem::exists(*output_path) && std::filesystem::is_directory(*output_path)) {
+                throw_cli_error("E_FETCH_OUT_IS_DIRECTORY",
+                                "--out must point to a file, not a directory",
+                                "Choose a filename such as --out ./output.bin");
+            }
+
+            if (const auto parent = output_path->parent_path(); !parent.empty() && !std::filesystem::exists(parent)) {
+                throw_cli_error("E_FETCH_OUT_PARENT_MISSING",
+                                "Destination directory does not exist",
+                                "Create " + parent.string() + " or choose an existing path");
+            }
+
             if (std::filesystem::exists(*output_path) &&
                 !confirm_action("File " + output_path->string() + " already exists. Overwrite?",
                                 false,
@@ -931,8 +1030,7 @@ int main(int argc, char** argv) {
 
             const auto response = client.send("FETCH", fields);
             if (!response) {
-                std::cerr << "Could not contact the daemon." << std::endl;
-                return 1;
+                throw_daemon_unreachable();
             }
             if (!response->success) {
                 print_daemon_failure(*response);

@@ -89,6 +89,26 @@ int main() {
             return 1;
         }
 
+#if !defined(_WIN32)
+        const auto invalid_dir = run_cli(executable, "--storage-dir \"\" status");
+        if (invalid_dir.exit_code == 0 || !expect_contains(invalid_dir.output, "--storage-dir cannot be empty")) {
+            std::cerr << "Failure on empty --storage-dir. exit=" << invalid_dir.exit_code << "\n" << invalid_dir.output << std::endl;
+            return 1;
+        }
+#endif
+
+        const auto store_dir = run_cli(executable, "store .");
+        if (store_dir.exit_code == 0 || !expect_contains(store_dir.output, "store expects a regular file")) {
+            std::cerr << "Failure on store directory. exit=" << store_dir.exit_code << "\n" << store_dir.output << std::endl;
+            return 1;
+        }
+
+        const auto fetch_dir_out = run_cli(executable, "fetch eph://deadbeef --out .");
+        if (fetch_dir_out.exit_code == 0 || !expect_contains(fetch_dir_out.output, "--out must point to a file")) {
+            std::cerr << "Failure on fetch with directory output. exit=" << fetch_dir_out.exit_code << "\n" << fetch_dir_out.output << std::endl;
+            return 1;
+        }
+
     } catch (const std::exception& ex) {
         std::cerr << "Exception during CLI tests: " << ex.what() << std::endl;
         return 1;

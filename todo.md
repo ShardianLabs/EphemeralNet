@@ -37,6 +37,7 @@
 - Protocol message version negotiation with downgrade handling and regression tests.
 - Deterministic fuzz harnesses guard protocol message and manifest deserialisation paths under `ctest`.
 - CLI now includes interactive confirmations (`--yes` for automation), structured error reporting, and daemon-supplied hints/codes.
+- CLI validates storage directory, control host, peer id, and fetch/store paths with actionable errors and regression coverage.
 - Added an MIT `LICENSE` file.
 - Translated public-facing documentation to English (README, this TODO).
 - CLI output, hints, and tests localised to English with compatibility for scripted confirmations.
