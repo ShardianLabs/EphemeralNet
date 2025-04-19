@@ -109,6 +109,18 @@ int main() {
             return 1;
         }
 
+        const auto invalid_port = run_cli(executable, "--control-port 0 status");
+        if (invalid_port.exit_code == 0 || !expect_contains(invalid_port.output, "--control-port must be between 1 and 65535")) {
+            std::cerr << "Failure on invalid --control-port. exit=" << invalid_port.exit_code << "\n" << invalid_port.output << std::endl;
+            return 1;
+        }
+
+        const auto invalid_default_ttl = run_cli(executable, "--default-ttl 0 status");
+        if (invalid_default_ttl.exit_code == 0 || !expect_contains(invalid_default_ttl.output, "--default-ttl must be a positive integer")) {
+            std::cerr << "Failure on invalid --default-ttl. exit=" << invalid_default_ttl.exit_code << "\n" << invalid_default_ttl.output << std::endl;
+            return 1;
+        }
+
     } catch (const std::exception& ex) {
         std::cerr << "Exception during CLI tests: " << ex.what() << std::endl;
         return 1;

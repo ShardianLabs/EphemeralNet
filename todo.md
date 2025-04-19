@@ -37,7 +37,7 @@
 - Protocol message version negotiation with downgrade handling and regression tests.
 - Deterministic fuzz harnesses guard protocol message and manifest deserialisation paths under `ctest`.
 - CLI now includes interactive confirmations (`--yes` for automation), structured error reporting, and daemon-supplied hints/codes.
-- CLI validates storage directory, control host, peer id, and fetch/store paths with actionable errors and regression coverage.
+- CLI validates storage directory, control host/port, peer id, default TTL, and fetch/store paths with actionable errors and regression coverage.
 - Added an MIT `LICENSE` file.
 - Translated public-facing documentation to English (README, this TODO).
 - CLI output, hints, and tests localised to English with compatibility for scripted confirmations.
@@ -59,7 +59,7 @@
 	- Define governance and abuse policies (AUP) for public bootstrap/STUN nodes and enforcement processes.
 - **UX & CONFIG**
 	- Add YAML/JSON configuration support with network profiles and per-environment overrides.
-	- Extend input validation (paths/ports) and expose daemon hints contextually in each CLI command.
+	- Expose daemon hints contextually in each CLI command.
 - **PRODUCT**
 	- Complete the public `libephemeralnet` API (versioning, documentation, usage examples).
 	- Finalise `ephemeralnet-cli` with diagnostics commands and scripting support.

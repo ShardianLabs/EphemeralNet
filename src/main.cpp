@@ -314,6 +314,14 @@ void validate_global_options(GlobalOptions& options) {
         options.control_host = host;
     }
 
+    if (options.control_port) {
+        if (*options.control_port == 0) {
+            throw_cli_error("E_INVALID_CONTROL_PORT",
+                            "--control-port must be between 1 and 65535",
+                            "Choose a TCP port greater than zero, e.g. --control-port 47777");
+        }
+    }
+
     if (options.peer_id_hex) {
         auto candidate = strip_quotes(*options.peer_id_hex);
         candidate = trim(candidate);
@@ -730,7 +738,7 @@ int main(int argc, char** argv) {
             if (opt == "--default-ttl") {
                 const auto value = require_value(opt);
                 std::uint64_t ttl{};
-                if (!parse_uint64(value, ttl)) {
+                if (!parse_uint64(value, ttl) || ttl == 0) {
                     throw_cli_error("E_INVALID_DEFAULT_TTL",
                                     "--default-ttl must be a positive integer",
                                     "Provide the TTL in seconds, for example --default-ttl 3600");
