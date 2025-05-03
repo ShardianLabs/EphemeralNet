@@ -161,6 +161,13 @@ void print_daemon_failure(const ephemeralnet::daemon::ControlResponse& response)
     }
 }
 
+void print_daemon_hint(const ephemeralnet::daemon::ControlResponse& response) {
+    const auto hint_it = response.fields.find("HINT");
+    if (hint_it != response.fields.end() && !hint_it->second.empty()) {
+        std::cout << "Hint: " << hint_it->second << std::endl;
+    }
+}
+
 std::atomic_bool g_run_loop{true};
 
 void signal_handler(int) {
@@ -862,6 +869,8 @@ int main(int argc, char** argv) {
                 std::cout << message_it->second << std::endl;
             }
 
+            print_daemon_hint(*response);
+
             if (!wait_for_daemon_shutdown(client, 5s)) {
                 std::cerr << "Daemon did not shut down cleanly." << std::endl;
                 return 1;
@@ -887,6 +896,7 @@ int main(int argc, char** argv) {
             std::cout << "  Connected peers:  " << peers << std::endl;
             std::cout << "  Local chunks:     " << chunks << std::endl;
             std::cout << "  Transport port:   " << port << std::endl;
+            print_daemon_hint(*response);
             return 0;
         }
 
@@ -900,6 +910,7 @@ int main(int argc, char** argv) {
                 return 1;
             }
             print_list_response(*response);
+            print_daemon_hint(*response);
             return 0;
         }
 
@@ -974,6 +985,7 @@ int main(int argc, char** argv) {
             std::cout << "  Size: " << size << " bytes" << std::endl;
             std::cout << "  Remaining TTL: " << ttl << " seconds" << std::endl;
             std::cout << "  Manifest: " << manifest << std::endl;
+            print_daemon_hint(*response);
             return 0;
         }
 
@@ -1048,6 +1060,7 @@ int main(int argc, char** argv) {
             const auto output = response->fields.contains("OUTPUT") ? response->fields.at("OUTPUT") : output_path->string();
             const auto size = response->fields.contains("SIZE") ? response->fields.at("SIZE") : "0";
             std::cout << "File retrieved to " << output << " (" << size << " bytes)" << std::endl;
+            print_daemon_hint(*response);
             return 0;
         }
 
