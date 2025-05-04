@@ -39,6 +39,7 @@
 - CLI now includes interactive confirmations (`--yes` for automation), structured error reporting, and daemon-supplied hints/codes.
 - CLI validates storage directory, control host/port, peer id, default TTL, and fetch/store paths with actionable errors and regression coverage.
 - CLI surfaces daemon-provided hints after successful commands to guide follow-up actions.
+- CLI loads layered JSON/YAML configuration files with profile inheritance and per-environment overrides, backed by regression tests.
 - Added an MIT `LICENSE` file.
 - Translated public-facing documentation to English (README, this TODO).
 - CLI output, hints, and tests localised to English with compatibility for scripted confirmations.
@@ -47,8 +48,6 @@
 - Design and implement anti-Sybil/spam defences (lightweight Proof-of-Work or equivalent for costly operations).
 
 ## Next milestones
-- **CORE & PROTO**
-- **SECURITY**
 - **TESTING**
 	- Deploy bootstrap and STUN nodes on a VPS for in-the-wild validation.
 	- Build a multi-node integration harness with latency/loss simulation.
@@ -58,8 +57,6 @@
 	- Prepare deployment scripts and CI/CD pipelines for Windows/Linux/macOS (Docker, PPA/Copr, Homebrew).
 	- Manage reproducible packaging and binary signing.
 	- Define governance and abuse policies (AUP) for public bootstrap/STUN nodes and enforcement processes.
-- **UX & CONFIG**
-	- Add YAML/JSON configuration support with network profiles and per-environment overrides.
 - **PRODUCT**
 	- Complete the public `libephemeralnet` API (versioning, documentation, usage examples).
 	- Finalise `ephemeralnet-cli` with diagnostics commands and scripting support.

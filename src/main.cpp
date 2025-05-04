@@ -11,12 +11,20 @@
 #include <chrono>
 #include <csignal>
 #include <cctype>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <exception>
+#include <fstream>
 #include <filesystem>
+#include <initializer_list>
 #include <iostream>
+#include <map>
 #include <limits>
 #include <mutex>
 #include <optional>
 #include <random>
+#include <set>
 #include <span>
 #include <sstream>
 #include <string>
@@ -25,9 +33,8 @@
 #include <vector>
 
 #ifdef _WIN32
-#include <process.h>
-#include <windows.h>
 #include <io.h>
+#include <windows.h>
 #else
 #include <unistd.h>
 #endif
@@ -50,6 +57,10 @@ struct GlobalOptions {
     std::optional<std::string> control_host{};
     std::optional<std::uint16_t> control_port{};
     bool assume_yes{false};
+    bool assume_yes_set{false};
+    std::optional<std::string> config_path{};
+    std::optional<std::string> profile_name{};
+    std::optional<std::string> environment{};
 };
 
 class CliException : public std::exception {
@@ -105,6 +116,7 @@ bool stdin_is_interactive() {
 #endif
 }
 
+
 bool confirm_action(const std::string& prompt, bool default_yes, bool assume_yes) {
     if (assume_yes || !stdin_is_interactive()) {
         return default_yes;
@@ -129,17 +141,6 @@ bool confirm_action(const std::string& prompt, bool default_yes, bool assume_yes
             return false;
         }
         std::cout << "Unrecognized answer. Type 'y' for yes or 'n' for no." << std::endl;
-    }
-}
-
-void print_cli_error(const CliException& ex) {
-    std::cerr << "Error";
-    if (!ex.code().empty()) {
-        std::cerr << " [" << ex.code() << ']';
-    }
-    std::cerr << ": " << ex.message() << std::endl;
-    if (!ex.hint().empty()) {
-        std::cerr << "Hint: " << ex.hint() << std::endl;
     }
 }
 
@@ -168,6 +169,943 @@ void print_daemon_hint(const ephemeralnet::daemon::ControlResponse& response) {
     }
 }
 
+void print_cli_error(const CliException& ex) {
+    std::cerr << ex.what() << std::endl;
+    if (!ex.hint().empty()) {
+        std::cerr << "Hint: " << ex.hint() << std::endl;
+    }
+}
+
+namespace config {
+
+enum class ValueType {
+    Null,
+    Boolean,
+    Integer,
+    Double,
+    String,
+    Object,
+    Array
+};
+
+struct Value {
+    ValueType type{ValueType::Null};
+    bool boolean_value{false};
+    std::int64_t integer_value{0};
+    double double_value{0.0};
+    std::string string_value;
+    std::map<std::string, Value> object_value;
+    std::vector<Value> array_value;
+
+    Value() = default;
+    explicit Value(bool value) : type(ValueType::Boolean), boolean_value(value) {}
+    explicit Value(std::int64_t value) : type(ValueType::Integer), integer_value(value) {}
+    explicit Value(double value) : type(ValueType::Double), double_value(value) {}
+    explicit Value(std::string value) : type(ValueType::String), string_value(std::move(value)) {}
+    Value(const char* value) : Value(std::string(value)) {}
+
+    static Value make_object() {
+        Value value;
+        value.type = ValueType::Object;
+        return value;
+    }
+
+    static Value make_array() {
+        Value value;
+        value.type = ValueType::Array;
+        return value;
+    }
+
+    bool is_null() const { return type == ValueType::Null; }
+    bool is_boolean() const { return type == ValueType::Boolean; }
+    bool is_integer() const { return type == ValueType::Integer; }
+    bool is_double() const { return type == ValueType::Double; }
+    bool is_number() const { return is_integer() || is_double(); }
+    bool is_string() const { return type == ValueType::String; }
+    bool is_object() const { return type == ValueType::Object; }
+    bool is_array() const { return type == ValueType::Array; }
+
+    std::map<std::string, Value>& ensure_object() {
+        if (type != ValueType::Object) {
+            type = ValueType::Object;
+            object_value.clear();
+            array_value.clear();
+            string_value.clear();
+        }
+        return object_value;
+    }
+
+    std::vector<Value>& ensure_array() {
+        if (type != ValueType::Array) {
+            type = ValueType::Array;
+            array_value.clear();
+            object_value.clear();
+            string_value.clear();
+        }
+        return array_value;
+    }
+
+    const std::map<std::string, Value>& as_object() const {
+        static const std::map<std::string, Value> empty{};
+        return type == ValueType::Object ? object_value : empty;
+    }
+
+    std::map<std::string, Value>& as_object() { return ensure_object(); }
+
+    const std::vector<Value>& as_array() const {
+        static const std::vector<Value> empty{};
+        return type == ValueType::Array ? array_value : empty;
+    }
+
+    std::vector<Value>& as_array() { return ensure_array(); }
+};
+
+struct ConfigError : public std::exception {
+    std::string code;
+    std::string message;
+    std::string hint;
+    std::string formatted;
+
+    ConfigError(std::string c, std::string m, std::string h = {})
+        : code(std::move(c)), message(std::move(m)), hint(std::move(h)) {
+        if (!code.empty()) {
+            formatted = "[" + code + "] " + message;
+        } else {
+            formatted = message;
+        }
+    }
+
+    const char* what() const noexcept override { return formatted.c_str(); }
+};
+
+class JsonParser {
+public:
+    explicit JsonParser(const std::string& text) : text_(text) {}
+
+    Value parse() {
+        skip_whitespace();
+        Value value = parse_value();
+        skip_whitespace();
+        if (!at_end()) {
+            throw ConfigError("E_CONFIG_PARSE", "Unexpected trailing content in JSON config");
+        }
+        return value;
+    }
+
+private:
+    const std::string& text_;
+    std::size_t position_{0};
+
+    bool at_end() const { return position_ >= text_.size(); }
+
+    char peek() const { return at_end() ? '\0' : text_[position_]; }
+
+    char get() { return at_end() ? '\0' : text_[position_++]; }
+
+    void skip_whitespace() {
+        while (!at_end()) {
+            const char ch = peek();
+            if (ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t') {
+                ++position_;
+            } else {
+                break;
+            }
+        }
+    }
+
+    Value parse_value() {
+        skip_whitespace();
+        if (at_end()) {
+            throw ConfigError("E_CONFIG_PARSE", "Unexpected end of JSON while parsing value");
+        }
+
+        const char ch = peek();
+        if (ch == '{') {
+            return parse_object();
+        }
+        if (ch == '[') {
+            return parse_array();
+        }
+        if (ch == '"') {
+            return Value(parse_string());
+        }
+        if (ch == 't' || ch == 'f') {
+            return Value(parse_boolean());
+        }
+        if (ch == 'n') {
+            parse_null();
+            return Value();
+        }
+        if (ch == '-' || std::isdigit(static_cast<unsigned char>(ch))) {
+            return parse_number();
+        }
+        throw ConfigError("E_CONFIG_PARSE", "Unexpected token in JSON value");
+    }
+
+    Value parse_object() {
+        Value object = Value::make_object();
+        get();  // consume '{'
+        skip_whitespace();
+        if (peek() == '}') {
+            get();
+            return object;
+        }
+
+        while (true) {
+            skip_whitespace();
+            if (peek() != '"') {
+                throw ConfigError("E_CONFIG_PARSE", "Expected string key in JSON object");
+            }
+            std::string key = parse_string();
+            skip_whitespace();
+            if (get() != ':') {
+                throw ConfigError("E_CONFIG_PARSE", "Expected ':' after key in JSON object");
+            }
+            Value value = parse_value();
+            object.as_object()[std::move(key)] = std::move(value);
+            skip_whitespace();
+            const char ch = get();
+            if (ch == '}') {
+                break;
+            }
+            if (ch != ',') {
+                throw ConfigError("E_CONFIG_PARSE", "Expected ',' or '}' in JSON object");
+            }
+        }
+        return object;
+    }
+
+    Value parse_array() {
+        Value array = Value::make_array();
+        get();  // consume '['
+        skip_whitespace();
+        if (peek() == ']') {
+            get();
+            return array;
+        }
+
+        while (true) {
+            Value value = parse_value();
+            array.as_array().push_back(std::move(value));
+            skip_whitespace();
+            const char ch = get();
+            if (ch == ']') {
+                break;
+            }
+            if (ch != ',') {
+                throw ConfigError("E_CONFIG_PARSE", "Expected ',' or ']' in JSON array");
+            }
+        }
+        return array;
+    }
+
+    std::string parse_string() {
+        if (get() != '"') {
+            throw ConfigError("E_CONFIG_PARSE", "Expected opening quote for JSON string");
+        }
+
+        std::string result;
+        while (!at_end()) {
+            char ch = get();
+            if (ch == '"') {
+                return result;
+            }
+
+            if (ch == '\\') {
+                if (at_end()) {
+                    throw ConfigError("E_CONFIG_PARSE", "Incomplete escape sequence in JSON string");
+                }
+
+                const char esc = get();
+                switch (esc) {
+                case '"':
+                case '\\':
+                case '/':
+                    result.push_back(esc);
+                    break;
+                case 'b':
+                    result.push_back('\b');
+                    break;
+                case 'f':
+                    result.push_back('\f');
+                    break;
+                case 'n':
+                    result.push_back('\n');
+                    break;
+                case 'r':
+                    result.push_back('\r');
+                    break;
+                case 't':
+                    result.push_back('\t');
+                    break;
+                case 'u':
+                    result += parse_unicode_escape();
+                    break;
+                default:
+                    throw ConfigError("E_CONFIG_PARSE", "Unsupported escape sequence in JSON string");
+                }
+            } else {
+                if (static_cast<unsigned char>(ch) < 0x20) {
+                    throw ConfigError("E_CONFIG_PARSE", "Control characters must be escaped in JSON strings");
+                }
+                result.push_back(ch);
+            }
+        }
+
+        throw ConfigError("E_CONFIG_PARSE", "Unterminated JSON string literal");
+    }
+
+    std::string parse_unicode_escape() {
+        if (position_ + 4 > text_.size()) {
+            throw ConfigError("E_CONFIG_PARSE", "Incomplete unicode escape in JSON string");
+        }
+        unsigned int code_point = 0;
+        for (int i = 0; i < 4; ++i) {
+            const char ch = text_[position_++];
+            code_point <<= 4;
+            if (ch >= '0' && ch <= '9') {
+                code_point += static_cast<unsigned int>(ch - '0');
+            } else if (ch >= 'a' && ch <= 'f') {
+                code_point += 10u + static_cast<unsigned int>(ch - 'a');
+            } else if (ch >= 'A' && ch <= 'F') {
+                code_point += 10u + static_cast<unsigned int>(ch - 'A');
+            } else {
+                throw ConfigError("E_CONFIG_PARSE", "Invalid hex digit in unicode escape");
+            }
+        }
+
+        std::string utf8;
+        if (code_point <= 0x7F) {
+            utf8.push_back(static_cast<char>(code_point));
+        } else if (code_point <= 0x7FF) {
+            utf8.push_back(static_cast<char>(0xC0 | ((code_point >> 6) & 0x1F)));
+            utf8.push_back(static_cast<char>(0x80 | (code_point & 0x3F)));
+        } else {
+            utf8.push_back(static_cast<char>(0xE0 | ((code_point >> 12) & 0x0F)));
+            utf8.push_back(static_cast<char>(0x80 | ((code_point >> 6) & 0x3F)));
+            utf8.push_back(static_cast<char>(0x80 | (code_point & 0x3F)));
+        }
+        return utf8;
+    }
+
+    Value parse_number() {
+        const std::size_t start = position_;
+        if (peek() == '-') {
+            ++position_;
+        }
+        while (std::isdigit(static_cast<unsigned char>(peek()))) {
+            ++position_;
+        }
+        bool is_fractional = false;
+        if (peek() == '.') {
+            is_fractional = true;
+            ++position_;
+            while (std::isdigit(static_cast<unsigned char>(peek()))) {
+                ++position_;
+            }
+        }
+        if (peek() == 'e' || peek() == 'E') {
+            is_fractional = true;
+            ++position_;
+            if (peek() == '+' || peek() == '-') {
+                ++position_;
+            }
+            while (std::isdigit(static_cast<unsigned char>(peek()))) {
+                ++position_;
+            }
+        }
+        const std::string_view token(text_.data() + start, position_ - start);
+        if (is_fractional) {
+            double value{};
+            auto result = std::from_chars(token.begin(), token.end(), value);
+            if (result.ec != std::errc{}) {
+                throw ConfigError("E_CONFIG_PARSE", "Invalid floating point number in JSON");
+            }
+            return Value(value);
+        }
+        std::int64_t int_value{};
+        auto result = std::from_chars(token.begin(), token.end(), int_value);
+        if (result.ec != std::errc{}) {
+            throw ConfigError("E_CONFIG_PARSE", "Invalid integer number in JSON");
+        }
+        return Value(int_value);
+    }
+
+    bool parse_boolean() {
+        if (text_.compare(position_, 4, "true") == 0) {
+            position_ += 4;
+            return true;
+        }
+        if (text_.compare(position_, 5, "false") == 0) {
+            position_ += 5;
+            return false;
+        }
+        throw ConfigError("E_CONFIG_PARSE", "Invalid boolean literal in JSON");
+    }
+
+    void parse_null() {
+        if (text_.compare(position_, 4, "null") != 0) {
+            throw ConfigError("E_CONFIG_PARSE", "Invalid null literal in JSON");
+        }
+        position_ += 4;
+    }
+};
+
+static std::string trim_left(std::string value) {
+    value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char ch) {
+                    return !std::isspace(ch);
+                }));
+    return value;
+}
+
+static std::string trim_right(std::string value) {
+    value.erase(std::find_if(value.rbegin(), value.rend(), [](unsigned char ch) {
+                    return !std::isspace(ch);
+                }).base(),
+                value.end());
+    return value;
+}
+
+static std::string trim_copy(const std::string& value) {
+    std::string result = trim_left(value);
+    return trim_right(result);
+}
+
+Value parse_yaml_scalar(const std::string& text) {
+    const std::string trimmed = trim_copy(text);
+    if (trimmed.empty()) {
+        return Value();
+    }
+    if ((trimmed.front() == '"' && trimmed.back() == '"') || (trimmed.front() == '\'' && trimmed.back() == '\'')) {
+        const char quote = trimmed.front();
+        std::string inner = trimmed.substr(1, trimmed.size() - 2);
+        if (quote == '\'') {
+            return Value(inner);
+        }
+        std::string synthetic = "\"" + inner + "\"";
+        JsonParser parser(synthetic);
+        Value parsed = parser.parse();
+        if (!parsed.is_string()) {
+            throw ConfigError("E_CONFIG_PARSE", "Expected string literal in YAML value");
+        }
+        return Value(parsed.string_value);
+    }
+    if (trimmed == "true" || trimmed == "True") {
+        return Value(true);
+    }
+    if (trimmed == "false" || trimmed == "False") {
+        return Value(false);
+    }
+    if (trimmed == "null" || trimmed == "~") {
+        return Value();
+    }
+    bool is_number = true;
+    bool fractional = false;
+    std::size_t index = 0;
+    if (trimmed[0] == '-' || trimmed[0] == '+') {
+        index = 1;
+    }
+    for (; index < trimmed.size(); ++index) {
+        const char ch = trimmed[index];
+        if (ch == '.') {
+            fractional = true;
+            continue;
+        }
+        if (!std::isdigit(static_cast<unsigned char>(ch))) {
+            is_number = false;
+            break;
+        }
+    }
+    if (is_number) {
+        if (fractional) {
+            double value{};
+            auto result = std::from_chars(trimmed.data(), trimmed.data() + trimmed.size(), value);
+            if (result.ec == std::errc{} && result.ptr == trimmed.data() + trimmed.size()) {
+                return Value(value);
+            }
+        } else {
+            std::int64_t value{};
+            auto result = std::from_chars(trimmed.data(), trimmed.data() + trimmed.size(), value);
+            if (result.ec == std::errc{} && result.ptr == trimmed.data() + trimmed.size()) {
+                return Value(value);
+            }
+        }
+    }
+    return Value(trimmed);
+}
+
+Value parse_yaml(const std::string& text) {
+    Value root = Value::make_object();
+    struct Context {
+        std::size_t indent;
+        Value* node;
+    };
+    std::vector<Context> stack;
+    stack.push_back({0, &root});
+
+    std::istringstream input(text);
+    std::string line;
+    while (std::getline(input, line)) {
+        std::string trimmed_line = trim_right(line);
+        std::size_t comment_pos = std::string::npos;
+        bool in_single = false;
+        bool in_double = false;
+        for (std::size_t i = 0; i < trimmed_line.size(); ++i) {
+            char ch = trimmed_line[i];
+            if (ch == '"' && !in_single) {
+                in_double = !in_double;
+            } else if (ch == '\'' && !in_double) {
+                in_single = !in_single;
+            } else if (ch == '#' && !in_single && !in_double) {
+                comment_pos = i;
+                break;
+            }
+        }
+        if (comment_pos != std::string::npos) {
+            trimmed_line = trimmed_line.substr(0, comment_pos);
+        }
+        trimmed_line = trim_right(trimmed_line);
+        if (trimmed_line.empty()) {
+            continue;
+        }
+
+        std::size_t indent = 0;
+        while (indent < trimmed_line.size() && trimmed_line[indent] == ' ') {
+            ++indent;
+        }
+        if (indent % 2 != 0) {
+            throw ConfigError("E_CONFIG_PARSE", "YAML indentation must be multiples of two spaces");
+        }
+        std::string content = trim_left(trimmed_line.substr(indent));
+
+        while (!stack.empty() && indent < stack.back().indent) {
+            stack.pop_back();
+        }
+        if (stack.empty()) {
+            throw ConfigError("E_CONFIG_PARSE", "Invalid indentation in YAML config");
+        }
+
+        Value* current_node = stack.back().node;
+        if (!content.empty() && content.front() == '-') {
+            std::string item = trim_copy(content.substr(1));
+            auto& array = current_node->ensure_array();
+            if (item.empty()) {
+                array.emplace_back(Value::make_object());
+                stack.push_back({indent + 2, &array.back()});
+                continue;
+            }
+            const auto colon = item.find(':');
+            if (colon != std::string::npos) {
+                std::string key = trim_copy(item.substr(0, colon));
+                std::string value_part = trim_copy(item.substr(colon + 1));
+                Value object_item = Value::make_object();
+                if (!value_part.empty()) {
+                    object_item.as_object()[key] = parse_yaml_scalar(value_part);
+                } else {
+                    object_item.as_object()[key] = Value::make_object();
+                    stack.push_back({indent + 2, &object_item.as_object()[key]});
+                }
+                array.push_back(std::move(object_item));
+                if (!value_part.empty()) {
+                    stack.push_back({indent + 2, &array.back()});
+                }
+                continue;
+            }
+            array.push_back(parse_yaml_scalar(item));
+            continue;
+        }
+
+        const auto colon = content.find(':');
+        if (colon == std::string::npos) {
+            throw ConfigError("E_CONFIG_PARSE", "Expected ':' in YAML mapping entry");
+        }
+        std::string key = trim_copy(content.substr(0, colon));
+        std::string value_part = trim_copy(content.substr(colon + 1));
+
+        auto& object = current_node->ensure_object();
+        if (value_part.empty()) {
+            Value& child = object[key];
+            if (child.is_null()) {
+                child = Value::make_object();
+            }
+            stack.push_back({indent + 2, &child});
+        } else {
+            object[key] = parse_yaml_scalar(value_part);
+        }
+    }
+
+    return root;
+}
+
+Value merge_objects(const Value& base, const Value& overlay) {
+    if (!overlay.is_object()) {
+        return overlay;
+    }
+    Value result = base;
+    if (!result.is_object()) {
+        result = Value::make_object();
+    }
+    for (const auto& [key, value] : overlay.as_object()) {
+        if (value.is_object() && result.as_object().contains(key) && result.as_object()[key].is_object()) {
+            result.as_object()[key] = merge_objects(result.as_object()[key], value);
+        } else {
+            result.as_object()[key] = value;
+        }
+    }
+    return result;
+}
+
+const Value* find_path(const Value& root, const std::vector<std::string>& path) {
+    const Value* node = &root;
+    for (const auto& segment : path) {
+        if (!node->is_object()) {
+            return nullptr;
+        }
+        const auto it = node->as_object().find(segment);
+        if (it == node->as_object().end()) {
+            return nullptr;
+        }
+        node = &it->second;
+    }
+    return node;
+}
+
+Value remove_key(const Value& object, const std::string& key) {
+    if (!object.is_object()) {
+        return object;
+    }
+    Value filtered = Value::make_object();
+    for (const auto& [k, v] : object.as_object()) {
+        if (k == key) {
+            continue;
+        }
+        filtered.as_object()[k] = v;
+    }
+    return filtered;
+}
+
+Value resolve_profile(const Value& profiles, const std::string& profile_name, std::set<std::string>& visiting);
+
+Value resolve_profile(const Value& profiles, const std::string& profile_name) {
+    std::set<std::string> visiting;
+    return resolve_profile(profiles, profile_name, visiting);
+}
+
+Value resolve_profile(const Value& profiles, const std::string& profile_name, std::set<std::string>& visiting) {
+    if (!profiles.is_object()) {
+        throw ConfigError("E_CONFIG_STRUCTURE", "'profiles' section must be a mapping");
+    }
+    const auto it = profiles.as_object().find(profile_name);
+    if (it == profiles.as_object().end()) {
+        throw ConfigError("E_CONFIG_PROFILE", "Profile not found: " + profile_name,
+                          "Available profiles: " + [&]() {
+                              std::string names;
+                              bool first = true;
+                              for (const auto& [name, _] : profiles.as_object()) {
+                                  if (!first) {
+                                      names += ", ";
+                                  }
+                                  names += name;
+                                  first = false;
+                              }
+                              return names.empty() ? std::string{"<none>"} : names;
+                          }());
+    }
+    if (!it->second.is_object()) {
+        throw ConfigError("E_CONFIG_STRUCTURE", "Profile must be a mapping: " + profile_name);
+    }
+    if (visiting.contains(profile_name)) {
+        throw ConfigError("E_CONFIG_PROFILE", "Profile inheritance cycle detected at " + profile_name);
+    }
+    visiting.insert(profile_name);
+
+    Value result = Value::make_object();
+    const auto extends_it = it->second.as_object().find("extends");
+    if (extends_it != it->second.as_object().end()) {
+        if (!extends_it->second.is_string()) {
+            throw ConfigError("E_CONFIG_PROFILE", "'extends' must be a string in profile " + profile_name);
+        }
+        result = resolve_profile(profiles, extends_it->second.string_value, visiting);
+    }
+
+    Value filtered = remove_key(it->second, "extends");
+    result = merge_objects(result, filtered);
+    visiting.erase(profile_name);
+    return result;
+}
+
+Value collect_environment_overrides(const Value& environment_node) {
+    if (!environment_node.is_object()) {
+        return Value();
+    }
+    Value overrides = Value::make_object();
+    for (const auto& [key, value] : environment_node.as_object()) {
+        if (key == "profile") {
+            continue;
+        }
+        if (key == "overrides" && value.is_object()) {
+            overrides = merge_objects(overrides, value);
+            continue;
+        }
+        overrides.as_object()[key] = value;
+    }
+    return overrides;
+}
+
+std::string join_path(const std::vector<std::string>& path) {
+    if (path.empty()) {
+        return "<root>";
+    }
+    std::string combined;
+    for (std::size_t i = 0; i < path.size(); ++i) {
+        combined += path[i];
+        if (i + 1 < path.size()) {
+            combined += '.';
+        }
+    }
+    return combined;
+}
+
+std::optional<std::string> get_string(const Value& root, const std::vector<std::string>& path) {
+    const Value* node = find_path(root, path);
+    if (!node) {
+        return std::nullopt;
+    }
+    if (node->is_string()) {
+        return node->string_value;
+    }
+    throw ConfigError("E_CONFIG_TYPE", "Expected string at config path " + join_path(path));
+}
+
+std::optional<bool> get_bool(const Value& root, const std::vector<std::string>& path) {
+    const Value* node = find_path(root, path);
+    if (!node) {
+        return std::nullopt;
+    }
+    if (node->is_boolean()) {
+        return node->boolean_value;
+    }
+    if (node->is_string()) {
+        std::string lowered = node->string_value;
+        std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        if (lowered == "true" || lowered == "yes" || lowered == "on") {
+            return true;
+        }
+        if (lowered == "false" || lowered == "no" || lowered == "off") {
+            return false;
+        }
+    }
+    throw ConfigError("E_CONFIG_TYPE", "Expected boolean at config path " + join_path(path));
+}
+
+std::optional<std::int64_t> get_int64(const Value& root, const std::vector<std::string>& path) {
+    const Value* node = find_path(root, path);
+    if (!node) {
+        return std::nullopt;
+    }
+    if (node->is_integer()) {
+        return node->integer_value;
+    }
+    if (node->is_double()) {
+        const double value = node->double_value;
+        const double rounded = std::floor(value + 0.5);
+        if (std::abs(value - rounded) < 1e-9) {
+            return static_cast<std::int64_t>(rounded);
+        }
+    }
+    throw ConfigError("E_CONFIG_TYPE", "Expected integer at config path " + join_path(path));
+}
+
+std::optional<std::vector<Value>> get_array(const Value& root, const std::vector<std::string>& path) {
+    const Value* node = find_path(root, path);
+    if (!node) {
+        return std::nullopt;
+    }
+    if (!node->is_array()) {
+        throw ConfigError("E_CONFIG_TYPE", "Expected array at config path " + join_path(path));
+    }
+    return node->as_array();
+}
+
+std::optional<std::string> get_string_any(const Value& root, std::initializer_list<std::vector<std::string>> paths) {
+    for (const auto& path : paths) {
+        if (auto value = get_string(root, path)) {
+            return value;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<bool> get_bool_any(const Value& root, std::initializer_list<std::vector<std::string>> paths) {
+    for (const auto& path : paths) {
+        if (auto value = get_bool(root, path)) {
+            return value;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::int64_t> get_int64_any(const Value& root, std::initializer_list<std::vector<std::string>> paths) {
+    for (const auto& path : paths) {
+        if (auto value = get_int64(root, path)) {
+            return value;
+        }
+    }
+    return std::nullopt;
+}
+
+Value load_document(const std::filesystem::path& path) {
+    std::filesystem::path absolute = std::filesystem::absolute(path);
+    std::ifstream input(absolute);
+    if (!input) {
+        throw ConfigError("E_CONFIG_NOT_FOUND", "Configuration file not found: " + absolute.string(),
+                          "Verify the path or provide an absolute path");
+    }
+    std::stringstream buffer;
+    buffer << input.rdbuf();
+    const std::string contents = buffer.str();
+
+    const auto first_non_space = std::find_if(contents.begin(), contents.end(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    });
+    const bool looks_like_json = path.extension() == ".json" ||
+                                 (first_non_space != contents.end() && (*first_non_space == '{' || *first_non_space == '['));
+    Value document = looks_like_json ? JsonParser(contents).parse() : parse_yaml(contents);
+    if (!document.is_object()) {
+        throw ConfigError("E_CONFIG_STRUCTURE", "Configuration root must be an object");
+    }
+    return document;
+}
+
+}  // namespace config
+
+void apply_profile_to_options(const config::Value& profile, GlobalOptions& options) {
+    if (!profile.is_object()) {
+        throw config::ConfigError("E_CONFIG_STRUCTURE", "Profile configuration must be a mapping");
+    }
+
+    if (!options.storage_dir) {
+        if (auto storage_dir = config::get_string_any(profile, { {"storage", "directory"}, {"storage-directory"} })) {
+            options.storage_dir = *storage_dir;
+        }
+    }
+
+    if (!options.persistent_set) {
+        if (auto persistent = config::get_bool_any(profile, { {"storage", "persistent"}, {"storage", "enable_persistent"} })) {
+            options.persistent = *persistent;
+            options.persistent_set = true;
+        }
+    }
+
+    if (!options.wipe_set) {
+        if (auto wipe = config::get_bool_any(profile, { {"storage", "wipe_on_expiry"}, {"storage", "wipe-on-expiry"} })) {
+            options.wipe = *wipe;
+            options.wipe_set = true;
+        }
+    }
+
+    if (!options.wipe_passes_set) {
+        if (auto passes = config::get_int64_any(profile, { {"storage", "wipe_passes"}, {"storage", "wipe-passes"} })) {
+            if (*passes <= 0 || *passes > 255) {
+                throw config::ConfigError("E_CONFIG_VALUE", "storage.wipe_passes must be between 1 and 255");
+            }
+            options.wipe_passes = static_cast<std::uint8_t>(*passes);
+            options.wipe_passes_set = true;
+        }
+    }
+
+    if (!options.control_host) {
+        if (auto host = config::get_string_any(profile, { {"control", "host"}, {"network", "control_host"} })) {
+            options.control_host = *host;
+        }
+    }
+
+    if (!options.control_port) {
+        if (auto port = config::get_int64_any(profile, { {"control", "port"}, {"network", "control_port"} })) {
+            if (*port <= 0 || *port > std::numeric_limits<std::uint16_t>::max()) {
+                throw config::ConfigError("E_CONFIG_VALUE", "control.port must be between 1 and 65535");
+            }
+            options.control_port = static_cast<std::uint16_t>(*port);
+        }
+    }
+
+    if (!options.identity_seed) {
+        if (auto seed = config::get_int64_any(profile, { {"node", "identity_seed"}, {"identity", "seed"} })) {
+            if (*seed < 0 || *seed > std::numeric_limits<std::uint32_t>::max()) {
+                throw config::ConfigError("E_CONFIG_VALUE", "node.identity_seed must fit within 32 bits");
+            }
+            options.identity_seed = static_cast<std::uint32_t>(*seed);
+        }
+    }
+
+    if (!options.default_ttl_seconds) {
+        if (auto ttl = config::get_int64_any(profile, { {"node", "default_ttl_seconds"}, {"node", "default_ttl"} })) {
+            if (*ttl <= 0) {
+                throw config::ConfigError("E_CONFIG_VALUE", "node.default_ttl_seconds must be positive");
+            }
+            options.default_ttl_seconds = static_cast<std::uint64_t>(*ttl);
+        }
+    }
+
+    if (!options.peer_id_hex) {
+        if (auto peer_id = config::get_string_any(profile, { {"node", "peer_id"}, {"node", "peer-id"} })) {
+            options.peer_id_hex = *peer_id;
+        }
+    }
+
+    if (!options.assume_yes_set) {
+        if (auto assume = config::get_bool_any(profile, { {"cli", "assume_yes"}, {"cli", "assume-yes"}, {"assume_yes"} })) {
+            options.assume_yes = *assume;
+            options.assume_yes_set = true;
+        }
+    }
+}
+
+void load_configuration(GlobalOptions& options) {
+    if (!options.config_path) {
+        return;
+    }
+
+    config::Value document = config::load_document(*options.config_path);
+    const auto* profiles = config::find_path(document, {"profiles"});
+    if (!profiles) {
+        throw config::ConfigError("E_CONFIG_STRUCTURE", "Configuration file is missing 'profiles' section",
+                                  "Define at least a 'default' profile under 'profiles'");
+    }
+
+    std::string selected_profile = options.profile_name.value_or("default");
+    config::Value overrides = config::Value::make_object();
+    if (options.environment) {
+        const auto* environments = config::find_path(document, {"environments"});
+        if (!environments || environments->is_null()) {
+            throw config::ConfigError("E_CONFIG_ENVIRONMENT",
+                                      "Environment section not defined while --env was provided",
+                                      "Add an 'environments' map to the configuration file");
+        }
+        if (!environments->is_object()) {
+            throw config::ConfigError("E_CONFIG_ENVIRONMENT", "'environments' section must be a mapping");
+        }
+        const auto it = environments->as_object().find(*options.environment);
+        if (it == environments->as_object().end()) {
+            throw config::ConfigError("E_CONFIG_ENVIRONMENT", "Environment not found: " + *options.environment);
+        }
+        if (!it->second.is_object()) {
+            throw config::ConfigError("E_CONFIG_ENVIRONMENT", "Environment entry must be a mapping: " + *options.environment);
+        }
+        if (!options.profile_name) {
+            if (auto env_profile = config::get_string(it->second, std::vector<std::string>{"profile"})) {
+                selected_profile = *env_profile;
+            }
+        }
+        overrides = config::collect_environment_overrides(it->second);
+    }
+
+    config::Value base_profile = config::resolve_profile(*profiles, selected_profile);
+    config::Value effective_profile = config::merge_objects(base_profile, overrides);
+    apply_profile_to_options(effective_profile, options);
+}
 std::atomic_bool g_run_loop{true};
 
 void signal_handler(int) {
@@ -188,6 +1126,9 @@ void print_usage() {
               << "  --default-ttl <sec>       Default TTL for new chunks\n"
               << "  --control-host <host>     Control socket host (default 127.0.0.1)\n"
               << "  --control-port <port>     Control socket port (default 47777)\n"
+              << "  --config <file>          Load configuration from YAML/JSON file\n"
+              << "  --profile <name>        Select configuration profile (default: default)\n"
+              << "  --env <name>            Apply environment overrides from config\n"
               << "  --help                    Print this help message\n\n";
     std::cout << "Commands:\n"
               << "  start                     Launch the daemon in the background\n"
@@ -694,6 +1635,19 @@ int main(int argc, char** argv) {
             }
             if (opt == "--yes" || opt == "-y") {
                 options.assume_yes = true;
+                options.assume_yes_set = true;
+                continue;
+            }
+            if (opt == "--config") {
+                options.config_path = require_value(opt);
+                continue;
+            }
+            if (opt == "--profile") {
+                options.profile_name = require_value(opt);
+                continue;
+            }
+            if (opt == "--env") {
+                options.environment = require_value(opt);
                 continue;
             }
             if (opt == "--storage-dir") {
@@ -772,6 +1726,12 @@ int main(int argc, char** argv) {
             throw_cli_error("E_UNKNOWN_OPTION",
                             "Unknown option: " + std::string(opt),
                             "Run 'eph --help' to view available options");
+        }
+
+        try {
+            load_configuration(options);
+        } catch (const config::ConfigError& ex) {
+            throw_cli_error(ex.code, ex.message, ex.hint);
         }
 
         validate_global_options(options);

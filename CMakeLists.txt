@@ -281,6 +281,23 @@ if(EPHEMERALNET_BUILD_TESTS)
 
     add_test(NAME EphemeralNet.Shamir COMMAND ephemeralnet_shamir_tests)
 
+    add_executable(ephemeralnet_cli_config_tests
+        tests/cli_config.cpp
+    )
+
+    target_link_libraries(ephemeralnet_cli_config_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_cli_config_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_cli_config_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.CLIConfig COMMAND ephemeralnet_cli_config_tests)
+
     add_executable(ephemeralnet_manifest_tests
         tests/manifest.cpp
     )
@@ -607,6 +624,10 @@ if(EPHEMERALNET_BUILD_TESTS)
 
     add_test(NAME EphemeralNet.CLIControlFlow COMMAND ephemeralnet_cli_flow_tests)
     set_tests_properties(EphemeralNet.CLIControlFlow PROPERTIES
+        ENVIRONMENT "EPH_CLI_EXECUTABLE=$<TARGET_FILE:ephemeralnet>"
+    )
+
+    set_tests_properties(EphemeralNet.CLIConfig PROPERTIES
         ENVIRONMENT "EPH_CLI_EXECUTABLE=$<TARGET_FILE:ephemeralnet>"
     )
 endif()
