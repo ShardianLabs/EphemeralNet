@@ -2,9 +2,14 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
+#include <cstdint>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
+#include <system_error>
+#include <vector>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -69,7 +74,6 @@ void close_socket(NativeSocket socket) {
 #endif
 
 constexpr std::size_t kMaxLineLength = 16 * 1024;
-
 std::string to_upper(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
         return static_cast<char>(std::toupper(ch));
@@ -119,10 +123,29 @@ bool recv_line(NativeSocket socket, std::string& line) {
     return true;
 }
 
+bool recv_exact(NativeSocket socket, std::uint8_t* buffer, std::size_t length) {
+    std::size_t received_total = 0;
+    while (received_total < length) {
+#ifdef _WIN32
+        const auto received = recv(socket, reinterpret_cast<char*>(buffer) + received_total,
+                                   static_cast<int>(length - received_total), 0);
+#else
+        const auto received = recv(socket, reinterpret_cast<char*>(buffer) + received_total,
+                                   length - received_total, 0);
+#endif
+        if (received <= 0) {
+            return false;
+        }
+        received_total += static_cast<std::size_t>(received);
+    }
+    return true;
+}
+
 ControlResponse parse_response(NativeSocket socket) {
     ControlResponse response{};
     std::string line;
     bool status_seen = false;
+    std::optional<std::size_t> payload_length;
 
     while (recv_line(socket, line)) {
         if (line.empty()) {
@@ -137,6 +160,19 @@ ControlResponse parse_response(NativeSocket socket) {
         if (key == "STATUS") {
             status_seen = true;
             response.success = (to_upper(value) == "OK");
+        } else if (key == "PAYLOAD-LENGTH") {
+            std::uint64_t length = 0;
+            const auto* start = value.data();
+            const auto* end = value.data() + value.size();
+            const auto result = std::from_chars(start, end, length);
+            if (result.ec == std::errc() && result.ptr == end) {
+                response.fields[key] = value;
+                payload_length = static_cast<std::size_t>(length);
+            } else {
+                response.success = false;
+                response.fields["MESSAGE"] = "Invalid payload length";
+                break;
+            }
         } else {
             response.fields[key] = value;
         }
@@ -147,6 +183,27 @@ ControlResponse parse_response(NativeSocket socket) {
         response.fields["MESSAGE"] = "Respuesta incompleta del daemon";
     }
 
+    if (payload_length.has_value()) {
+    if (*payload_length > kMaxControlStreamBytes) {
+            response.success = false;
+            response.has_payload = false;
+            response.payload.clear();
+            response.fields["MESSAGE"] = "Payload exceeds client limit";
+            return response;
+        }
+
+        response.has_payload = true;
+        response.payload.resize(*payload_length);
+        if (*payload_length > 0) {
+            if (!recv_exact(socket, response.payload.data(), *payload_length)) {
+                response.success = false;
+                response.has_payload = false;
+                response.payload.clear();
+                response.fields["MESSAGE"] = "Truncated control payload";
+            }
+        }
+    }
+
     return response;
 }
 
@@ -154,12 +211,19 @@ ControlResponse parse_response(NativeSocket socket) {
 
 class ControlClient::Impl {
 public:
-    Impl(std::string host, std::uint16_t port)
-        : host_(std::move(host)), port_(port) {
+    Impl(std::string host, std::uint16_t port, std::optional<std::string> token)
+        : host_(std::move(host)), port_(port), token_(std::move(token)) {
         winsock_runtime();
     }
 
-    std::optional<ControlResponse> send(const std::string& command, const ControlFields& fields) {
+    std::optional<ControlResponse> send(const std::string& command,
+                                        const ControlFields& fields,
+                                        std::span<const std::uint8_t> payload) {
+        const bool include_payload = payload.data() != nullptr || payload.size() > 0;
+        if (include_payload && payload.size() > kMaxControlStreamBytes) {
+            return std::nullopt;
+        }
+
         const auto socket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (socket == kInvalidSocket) {
             return std::nullopt;
@@ -189,8 +253,14 @@ public:
 
         std::ostringstream request;
         request << "COMMAND:" << to_upper(command) << "\n";
+        if (token_.has_value()) {
+            request << "TOKEN:" << *token_ << "\n";
+        }
         for (const auto& [key, value] : fields) {
             request << to_upper(key) << ':' << value << "\n";
+        }
+        if (include_payload) {
+            request << "PAYLOAD-LENGTH:" << payload.size() << "\n";
         }
         request << "\n";
 
@@ -198,6 +268,15 @@ public:
         if (!send_all(socket, serialized.c_str(), serialized.size())) {
             close_socket(socket);
             return std::nullopt;
+        }
+
+        if (include_payload && payload.size() > 0) {
+            if (!send_all(socket,
+                          reinterpret_cast<const char*>(payload.data()),
+                          payload.size())) {
+                close_socket(socket);
+                return std::nullopt;
+            }
         }
 
         const auto response = parse_response(socket);
@@ -208,15 +287,18 @@ public:
 private:
     std::string host_;
     std::uint16_t port_;
+    std::optional<std::string> token_;
 };
 
-ControlClient::ControlClient(std::string host, std::uint16_t port)
-    : impl_(std::make_unique<Impl>(std::move(host), port)) {}
+ControlClient::ControlClient(std::string host, std::uint16_t port, std::optional<std::string> token)
+    : impl_(std::make_unique<Impl>(std::move(host), port, std::move(token))) {}
 
 ControlClient::~ControlClient() = default;
 
-std::optional<ControlResponse> ControlClient::send(const std::string& command, const ControlFields& fields) {
-    return impl_->send(command, fields);
+std::optional<ControlResponse> ControlClient::send(const std::string& command,
+                                                   const ControlFields& fields,
+                                                   std::span<const std::uint8_t> payload) {
+    return impl_->send(command, fields, payload);
 }
 
 }  // namespace ephemeralnet::daemon

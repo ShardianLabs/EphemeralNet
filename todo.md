@@ -40,23 +40,32 @@
 - CLI validates storage directory, control host/port, peer id, default TTL, and fetch/store paths with actionable errors and regression coverage.
 - CLI surfaces daemon-provided hints after successful commands to guide follow-up actions.
 - CLI loads layered JSON/YAML configuration files with profile inheritance and per-environment overrides, backed by regression tests.
+- Ops playbooks for bootstrap and STUN deployment via systemd on Ubuntu VPS (config, service unit, hardening guidance).
+- Control-plane streaming enforces authentication tokens and per-identity rate limits across `store` uploads and `fetch` downloads.
+- CLI commands expose dedicated `--help` summaries (`store`, `fetch`, `list`, `status`, `start`, `stop`, `serve`).
 - Added an MIT `LICENSE` file.
 - Translated public-facing documentation to English (README, this TODO).
 - CLI output, hints, and tests localised to English with compatibility for scripted confirmations.
 - Authored architecture, protocol, deployment, and troubleshooting guides under `docs/`.
-- Review crypto hardening (key rotation policy, TTL limits, Announce rate limiting).
-- Design and implement anti-Sybil/spam defences (lightweight Proof-of-Work or equivalent for costly operations).
 
 ## Next milestones
 - **TESTING**
-	- Deploy bootstrap and STUN nodes on a VPS for in-the-wild validation.
 	- Build a multi-node integration harness with latency/loss simulation.
 	- Automate end-to-end store/fetch scenarios with induced failures and plan rotation.
+- **SECURITY**
+	- Review crypto hardening (key rotation policy, TTL limits, Announce rate limiting).
+		- Existing controls: Automatic session key rotation via `KeyManager`, TTL audit cross-checks for storage/DHT, CLI validation of TTL defaults.
+		- Outstanding: Document rotation cadence, enforce configurable TTL bounds, introduce Announce rate limiting in the SwarmCoordinator/CLI pipeline.
+	- Design and implement anti-Sybil/spam defences (lightweight Proof-of-Work or equivalent for costly operations).
+		- Existing controls: Per-peer reputation tracking, HMAC-authenticated transport, rate-aware fetch scheduler and chunk ledger accounting.
+		- Outstanding: Define a proof-of-work or stake cost for Announce/store operations, integrate challenge verification in handshake, extend reputation penalties for failed or abusive attempts.
 - **OPS & OBSERVABILITY**
 	- Integrate structured logging and metrics exporters (Prometheus/OpenTelemetry).
 	- Prepare deployment scripts and CI/CD pipelines for Windows/Linux/macOS (Docker, PPA/Copr, Homebrew).
 	- Manage reproducible packaging and binary signing.
 	- Define governance and abuse policies (AUP) for public bootstrap/STUN nodes and enforcement processes.
+    - Add --version, man commands.
+    - Add default option commands (default TTl and more)
 - **PRODUCT**
 	- Complete the public `libephemeralnet` API (versioning, documentation, usage examples).
 	- Finalise `ephemeralnet-cli` with diagnostics commands and scripting support.

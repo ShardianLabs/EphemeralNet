@@ -43,6 +43,8 @@ namespace {
 
 using namespace std::chrono_literals;
 
+constexpr std::size_t kMaxControlUploadBytes = 32 * 1024 * 1024;
+
 struct GlobalOptions {
     bool persistent{false};
     bool persistent_set{false};
@@ -56,6 +58,7 @@ struct GlobalOptions {
     std::optional<std::uint64_t> default_ttl_seconds{};
     std::optional<std::string> control_host{};
     std::optional<std::uint16_t> control_port{};
+    std::optional<std::string> control_token{};
     bool assume_yes{false};
     bool assume_yes_set{false};
     std::optional<std::string> config_path{};
@@ -1021,13 +1024,18 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
             options.control_host = *host;
         }
     }
-
     if (!options.control_port) {
         if (auto port = config::get_int64_any(profile, { {"control", "port"}, {"network", "control_port"} })) {
             if (*port <= 0 || *port > std::numeric_limits<std::uint16_t>::max()) {
                 throw config::ConfigError("E_CONFIG_VALUE", "control.port must be between 1 and 65535");
             }
             options.control_port = static_cast<std::uint16_t>(*port);
+        }
+    }
+
+    if (!options.control_token) {
+        if (auto token = config::get_string_any(profile, { {"control", "token"}, {"control-token"} })) {
+            options.control_token = *token;
         }
     }
 
@@ -1126,6 +1134,7 @@ void print_usage() {
               << "  --default-ttl <sec>       Default TTL for new chunks\n"
               << "  --control-host <host>     Control socket host (default 127.0.0.1)\n"
               << "  --control-port <port>     Control socket port (default 47777)\n"
+              << "  --control-token <secret>  Pre-shared token for control-plane authentication\n"
               << "  --config <file>          Load configuration from YAML/JSON file\n"
               << "  --profile <name>        Select configuration profile (default: default)\n"
               << "  --env <name>            Apply environment overrides from config\n"
@@ -1141,6 +1150,45 @@ void print_usage() {
               << "  list                      List chunks stored locally\n"
               << "  serve                     Start the daemon in the foreground (Ctrl+C to exit)\n"
               << "  help                      Alias for --help\n";
+}
+
+bool is_help_flag(std::string_view value) {
+    return value == "--help" || value == "-h";
+}
+
+void print_start_usage() {
+    std::cout << "Usage: eph start\n"
+              << "Launch the daemon in the background on Windows and wait for readiness." << std::endl;
+}
+
+void print_stop_usage() {
+    std::cout << "Usage: eph stop\n"
+              << "Request a graceful shutdown of the running daemon." << std::endl;
+}
+
+void print_status_usage() {
+    std::cout << "Usage: eph status\n"
+              << "Display connected peers, stored chunks, and the transport port." << std::endl;
+}
+
+void print_list_usage() {
+    std::cout << "Usage: eph list\n"
+              << "List locally stored chunks with size, encryption flag, and TTL." << std::endl;
+}
+
+void print_store_usage() {
+    std::cout << "Usage: eph store <file> [--ttl <seconds>]\n"
+              << "Stream a local file to the daemon and receive an eph:// manifest." << std::endl;
+}
+
+void print_fetch_usage() {
+    std::cout << "Usage: eph fetch <eph://...> --out <path>\n"
+              << "Download a manifest's payload to the given path (prompts before overwrite)." << std::endl;
+}
+
+void print_serve_usage() {
+    std::cout << "Usage: eph serve\n"
+              << "Run the daemon in the foreground until interrupted." << std::endl;
 }
 
 bool parse_uint64(std::string_view text, std::uint64_t& value) {
@@ -1270,6 +1318,22 @@ void validate_global_options(GlobalOptions& options) {
         }
     }
 
+    if (options.control_token) {
+        auto token = strip_quotes(*options.control_token);
+        token = trim(token);
+        if (token.empty()) {
+            throw_cli_error("E_INVALID_CONTROL_TOKEN",
+                            "--control-token cannot be empty",
+                            "Provide a non-empty secret or omit the flag to disable authentication");
+        }
+        if (has_whitespace(token)) {
+            throw_cli_error("E_INVALID_CONTROL_TOKEN",
+                            "--control-token must not contain whitespace",
+                            "Use a token without spaces or encode it (e.g. base64)");
+        }
+        options.control_token = token;
+    }
+
     if (options.peer_id_hex) {
         auto candidate = strip_quotes(*options.peer_id_hex);
         candidate = trim(candidate);
@@ -1349,6 +1413,9 @@ ephemeralnet::Config build_config(const GlobalOptions& options) {
     if (options.control_port) {
         config.control_port = *options.control_port;
     }
+    if (options.control_token) {
+        config.control_token = strip_quotes(*options.control_token);
+    }
     return config;
 }
 
@@ -1387,6 +1454,10 @@ std::vector<std::string> build_daemon_arguments(const GlobalOptions& options) {
     if (options.control_port) {
         args.emplace_back("--control-port");
         args.emplace_back(std::to_string(*options.control_port));
+    }
+    if (options.control_token) {
+        args.emplace_back("--control-token");
+        args.emplace_back(strip_quotes(*options.control_token));
     }
     args.emplace_back("serve");
     return args;
@@ -1722,6 +1793,10 @@ int main(int argc, char** argv) {
                 options.control_port = port;
                 continue;
             }
+            if (opt == "--control-token") {
+                options.control_token = require_value(opt);
+                continue;
+            }
 
             throw_cli_error("E_UNKNOWN_OPTION",
                             "Unknown option: " + std::string(opt),
@@ -1750,6 +1825,15 @@ int main(int argc, char** argv) {
         const auto config = build_config(options);
 
         if (command == "serve") {
+            if (index < args.size()) {
+                if (is_help_flag(args[index])) {
+                    print_serve_usage();
+                    return 0;
+                }
+                throw_cli_error("E_SERVE_UNKNOWN_OPTION",
+                                "Unknown option for serve: " + std::string(args[index]),
+                                "Run 'eph serve --help' to view usage");
+            }
             const auto peer_id = make_peer_id(options);
             ephemeralnet::Node node(peer_id, config);
 
@@ -1786,9 +1870,18 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        ephemeralnet::daemon::ControlClient client(config.control_host, config.control_port);
+    ephemeralnet::daemon::ControlClient client(config.control_host, config.control_port, config.control_token);
 
         if (command == "start") {
+            if (index < args.size()) {
+                if (is_help_flag(args[index])) {
+                    print_start_usage();
+                    return 0;
+                }
+                throw_cli_error("E_START_UNKNOWN_OPTION",
+                                "Unknown option for start: " + std::string(args[index]),
+                                "Run 'eph start --help' to view usage");
+            }
             if (auto ping = client.send("PING"); ping && ping->success) {
                 std::cout << "Daemon is already running." << std::endl;
                 return 0;
@@ -1816,6 +1909,15 @@ int main(int argc, char** argv) {
         }
 
         if (command == "stop") {
+            if (index < args.size()) {
+                if (is_help_flag(args[index])) {
+                    print_stop_usage();
+                    return 0;
+                }
+                throw_cli_error("E_STOP_UNKNOWN_OPTION",
+                                "Unknown option for stop: " + std::string(args[index]),
+                                "Run 'eph stop --help' to view usage");
+            }
             const auto response = client.send("STOP");
             if (!response) {
                 throw_daemon_unreachable();
@@ -1841,6 +1943,15 @@ int main(int argc, char** argv) {
         }
 
         if (command == "status") {
+            if (index < args.size()) {
+                if (is_help_flag(args[index])) {
+                    print_status_usage();
+                    return 0;
+                }
+                throw_cli_error("E_STATUS_UNKNOWN_OPTION",
+                                "Unknown option for status: " + std::string(args[index]),
+                                "Run 'eph status --help' to view usage");
+            }
             const auto response = client.send("STATUS");
             if (!response) {
                 throw_daemon_unreachable();
@@ -1861,6 +1972,15 @@ int main(int argc, char** argv) {
         }
 
         if (command == "list") {
+            if (index < args.size()) {
+                if (is_help_flag(args[index])) {
+                    print_list_usage();
+                    return 0;
+                }
+                throw_cli_error("E_LIST_UNKNOWN_OPTION",
+                                "Unknown option for list: " + std::string(args[index]),
+                                "Run 'eph list --help' to view usage");
+            }
             const auto response = client.send("LIST");
             if (!response) {
                 throw_daemon_unreachable();
@@ -1875,6 +1995,10 @@ int main(int argc, char** argv) {
         }
 
         if (command == "store") {
+            if (index < args.size() && is_help_flag(args[index])) {
+                print_store_usage();
+                return 0;
+            }
             if (index >= args.size()) {
                 throw_cli_error("E_STORE_MISSING_PATH",
                                 "store expects the path to a file",
@@ -1910,12 +2034,22 @@ int main(int argc, char** argv) {
                     ttl_override = ttl;
                     continue;
                 }
+                if (is_help_flag(opt)) {
+                    print_store_usage();
+                    return 0;
+                }
                 throw_cli_error("E_STORE_UNKNOWN_OPTION",
                                 "Unknown option for store: " + std::string(opt),
                                 "Run 'eph store --help' to see valid modifiers");
             }
 
             const auto file_size = std::filesystem::file_size(input_path);
+            if (file_size > kMaxControlUploadBytes) {
+                throw_cli_error("E_STORE_PAYLOAD_TOO_LARGE",
+                                "File exceeds the control-plane upload limit",
+                                "Reduce the file size below " + std::to_string(kMaxControlUploadBytes) + " bytes");
+            }
+
             if (!confirm_action("Store " + input_path.filename().string() + " (" + std::to_string(file_size) +
                                     " bytes). Continue?",
                                 true,
@@ -1924,12 +2058,30 @@ int main(int argc, char** argv) {
                 return 0;
             }
 
+            std::vector<std::uint8_t> payload(static_cast<std::size_t>(file_size));
+            if (file_size > 0) {
+                std::ifstream input_stream(input_path, std::ios::binary);
+                if (!input_stream) {
+                    throw_cli_error("E_STORE_READ_FAILED",
+                                    "Failed to open file for reading",
+                                    "Verify permissions and that the path is accessible");
+                }
+                input_stream.read(reinterpret_cast<char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
+                if (input_stream.gcount() != static_cast<std::streamsize>(payload.size())) {
+                    throw_cli_error("E_STORE_READ_FAILED",
+                                    "Could not read the entire file",
+                                    "Ensure the file is not locked and try again");
+                }
+            }
+
             ephemeralnet::daemon::ControlFields fields{{"PATH", input_path.string()}};
             if (ttl_override) {
                 fields["TTL"] = std::to_string(*ttl_override);
             }
 
-            const auto response = client.send("STORE", fields);
+            const auto response = client.send("STORE",
+                                              fields,
+                                              std::span<const std::uint8_t>(payload.data(), payload.size()));
             if (!response) {
                 throw_daemon_unreachable();
             }
@@ -1950,6 +2102,10 @@ int main(int argc, char** argv) {
         }
 
         if (command == "fetch") {
+            if (index < args.size() && is_help_flag(args[index])) {
+                print_fetch_usage();
+                return 0;
+            }
             if (index >= args.size()) {
                 throw_cli_error("E_FETCH_MISSING_MANIFEST",
                                 "fetch expects an eph:// manifest",
@@ -1973,6 +2129,10 @@ int main(int argc, char** argv) {
                     }
                     output_path = std::filesystem::absolute(std::filesystem::path(args[index++]));
                     continue;
+                }
+                if (is_help_flag(opt)) {
+                    print_fetch_usage();
+                    return 0;
                 }
                 throw_cli_error("E_FETCH_UNKNOWN_OPTION",
                                 "Unknown option for fetch: " + std::string(opt),
@@ -2006,7 +2166,7 @@ int main(int argc, char** argv) {
             }
 
             ephemeralnet::daemon::ControlFields fields{{"MANIFEST", manifest_uri},
-                                                        {"OUT", output_path->string()}};
+                                                       {"STREAM", "client"}};
 
             const auto response = client.send("FETCH", fields);
             if (!response) {
@@ -2017,9 +2177,39 @@ int main(int argc, char** argv) {
                 return 1;
             }
 
-            const auto output = response->fields.contains("OUTPUT") ? response->fields.at("OUTPUT") : output_path->string();
-            const auto size = response->fields.contains("SIZE") ? response->fields.at("SIZE") : "0";
-            std::cout << "File retrieved to " << output << " (" << size << " bytes)" << std::endl;
+            const auto reported_size = response->fields.contains("SIZE") ? response->fields.at("SIZE") : "0";
+            if (response->has_payload) {
+                try {
+                    std::ofstream out(*output_path, std::ios::binary | std::ios::trunc);
+                    if (!out) {
+                        throw std::runtime_error("Failed to open output file");
+                    }
+                    if (!response->payload.empty()) {
+                        out.write(reinterpret_cast<const char*>(response->payload.data()),
+                                  static_cast<std::streamsize>(response->payload.size()));
+                    }
+                    out.flush();
+                    if (!out) {
+                        throw std::runtime_error("Failed to write complete payload");
+                    }
+                } catch (const std::exception& ex) {
+                    throw_cli_error("E_FETCH_WRITE_FAILED",
+                                    ex.what(),
+                                    "Verify write permissions for " + output_path->string());
+                }
+
+                const auto local_size = !response->payload.empty()
+                                            ? std::to_string(response->payload.size())
+                                            : reported_size;
+                std::cout << "File retrieved to " << output_path->string() << " (" << local_size << " bytes)" << std::endl;
+            } else {
+                const auto output = response->fields.contains("OUTPUT") ? response->fields.at("OUTPUT")
+                                                                         : output_path->string();
+                std::cout << "File retrieved to " << output << " (" << reported_size << " bytes)" << std::endl;
+                if (output != output_path->string()) {
+                    std::cout << "Hint: File was written on the daemon host; copy it manually if needed." << std::endl;
+                }
+            }
             print_daemon_hint(*response);
             return 0;
         }

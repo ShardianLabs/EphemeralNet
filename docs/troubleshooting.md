@@ -8,7 +8,10 @@ Common operational issues and their recommended fixes.
 | CLI stalls on `fetch`. | Chunk not yet replicated locally. | Wait for swarm propagation or verify peers via `eph status`; check network reachability. |
 | `ERR_FETCH_MANIFEST_REGISTRATION` hint about TTL expiry. | Manifest expired before ingestion. | Re-store the payload with a larger TTL or ensure peers remain online during replication. |
 | Secure wipe takes a long time. | High `--wipe-passes` value or large data sets. | Lower the pass count or disable wiping (`--no-wipe`) for non-sensitive data. |
-| `ERR_STORE_FILE_NOT_FOUND`. | Path typo or missing permissions. | Provide an absolute path and confirm the CLI process can read the file. |
+| `ERR_STORE_UNAUTHENTICATED`. | Missing or invalid control token. | Pass `--control-token` matching the daemon's `control_token` setting or update the configuration. |
+| `ERR_STORE_PAYLOAD_REQUIRED`. | CLI sending legacy path-only requests. | Upgrade the CLI to the streaming release or run the command on the daemon host. |
+| `ERR_FETCH_UNAUTHENTICATED`. | Token missing when streaming to the caller. | Supply `--control-token` so the daemon accepts the streamed download. |
+| `ERR_FETCH_RATE_LIMITED`. | Too many streamed downloads in a short period. | Wait briefly before retrying or adjust the daemon's rate limits. |
 | Control socket creation failure. | Another daemon bound to the port or insufficient privileges. | Stop existing instances or choose a different `--control-port`. |
 | Mismatched peer IDs between restarts. | Random identity due to missing seed. | Supply `--identity-seed` or `--peer-id` for deterministic identity during automation. |
 | `Failed to register manifest` errors in daemon logs. | TTL expired or manifest invalid. | Regenerate the `eph://` manifest and ensure system clocks are synchronized. |
