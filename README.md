@@ -58,6 +58,9 @@ The `eph` binary acts as a lightweight client for the daemon and exposes the mos
 # Display global help
 eph --help
 
+# Show the CLI version
+eph --version
+
 # Run the daemon in the foreground until Ctrl+C
 eph --storage-dir .\data serve
 
@@ -70,17 +73,23 @@ eph status
 # Store a file with a 3600-second TTL
 eph store secrets.bin --ttl 3600
 
-# Retrieve a file using an eph:// manifest
-eph fetch eph://<manifest> --out recovered.bin
+# Retrieve a file using an eph:// manifest (auto-names when targeting a directory)
+eph fetch eph://<manifest> ./downloads/
 
 # List locally stored chunks and remaining TTL
 eph list
+
+# Display daemon defaults (TTL window, control host, etc.)
+eph defaults
+
+# Read the integrated manual
+eph man
 
 # Shut the daemon down gracefully
 eph stop
 ```
 
-Global switches control persistence (`--no-persistent`), storage path (`--storage-dir`), secure wipe passes (`--wipe-passes`), deterministic identity (`--identity-seed`), and control-plane endpoint (`--control-host`, `--control-port`).
+Global switches control persistence (`--no-persistent`), storage path (`--storage-dir`), secure wipe passes (`--wipe-passes`), deterministic identity (`--identity-seed`), control-plane endpoints (`--control-host`, `--control-port`), TTL bounds (`--min-ttl`, `--max-ttl`), concurrency (`--fetch-parallel`, `--upload-parallel`), fetch defaults (`--fetch-default-dir`, `--fetch-ignore-manifest-name`), and version/manual discovery (`--version`, `eph man`).
 
 > The `start` command reuses the same options as `serve` to configure the daemon before backgrounding it.
 

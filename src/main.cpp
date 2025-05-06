@@ -3,6 +3,7 @@
 #include "ephemeralnet/core/Node.hpp"
 #include "ephemeralnet/crypto/Sha256.hpp"
 #include "ephemeralnet/daemon/ControlPlane.hpp"
+#include "ephemeralnet/protocol/Manifest.hpp"
 
 #include <algorithm>
 #include <array>
@@ -17,6 +18,7 @@
 #include <exception>
 #include <fstream>
 #include <filesystem>
+#include <system_error>
 #include <initializer_list>
 #include <iostream>
 #include <map>
@@ -39,7 +41,15 @@
 #include <unistd.h>
 #endif
 
+#ifndef EPHEMERALNET_VERSION
+#define EPHEMERALNET_VERSION "0.0.0"
+#endif
+
 namespace {
+
+constexpr std::string_view kEphemeralNetVersion = EPHEMERALNET_VERSION;
+
+namespace protocol = ephemeralnet::protocol;
 
 using namespace std::chrono_literals;
 
@@ -56,9 +66,16 @@ struct GlobalOptions {
     std::optional<std::uint32_t> identity_seed{};
     std::optional<std::string> peer_id_hex{};
     std::optional<std::uint64_t> default_ttl_seconds{};
+    std::optional<std::uint64_t> min_ttl_seconds{};
+    std::optional<std::uint64_t> max_ttl_seconds{};
     std::optional<std::string> control_host{};
     std::optional<std::uint16_t> control_port{};
     std::optional<std::string> control_token{};
+    std::optional<std::uint16_t> fetch_parallel{};
+    std::optional<std::uint16_t> upload_parallel{};
+    std::optional<std::string> fetch_default_directory{};
+    bool fetch_use_manifest_name{true};
+    bool fetch_use_manifest_name_set{false};
     bool assume_yes{false};
     bool assume_yes_set{false};
     std::optional<std::string> config_path{};
@@ -1057,6 +1074,42 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
         }
     }
 
+    if (!options.min_ttl_seconds) {
+        if (auto min_ttl = config::get_int64_any(profile, { {"node", "min_ttl_seconds"}, {"node", "min_ttl"} })) {
+            if (*min_ttl <= 0) {
+                throw config::ConfigError("E_CONFIG_VALUE", "node.min_ttl_seconds must be positive");
+            }
+            options.min_ttl_seconds = static_cast<std::uint64_t>(*min_ttl);
+        }
+    }
+
+    if (!options.max_ttl_seconds) {
+        if (auto max_ttl = config::get_int64_any(profile, { {"node", "max_ttl_seconds"}, {"node", "max_ttl"} })) {
+            if (*max_ttl <= 0) {
+                throw config::ConfigError("E_CONFIG_VALUE", "node.max_ttl_seconds must be positive");
+            }
+            options.max_ttl_seconds = static_cast<std::uint64_t>(*max_ttl);
+        }
+    }
+
+    if (!options.fetch_parallel) {
+        if (auto fetch_parallel = config::get_int64_any(profile, { {"node", "fetch_max_parallel"}, {"node", "fetch", "max_parallel"}, {"fetch", "max_parallel"} })) {
+            if (*fetch_parallel < 0 || *fetch_parallel > std::numeric_limits<std::uint16_t>::max()) {
+                throw config::ConfigError("E_CONFIG_VALUE", "fetch.max_parallel must be between 0 and 65535");
+            }
+            options.fetch_parallel = static_cast<std::uint16_t>(*fetch_parallel);
+        }
+    }
+
+    if (!options.upload_parallel) {
+        if (auto upload_parallel = config::get_int64_any(profile, { {"node", "upload_max_parallel"}, {"node", "upload", "max_parallel"}, {"upload", "max_parallel"} })) {
+            if (*upload_parallel < 0 || *upload_parallel > std::numeric_limits<std::uint16_t>::max()) {
+                throw config::ConfigError("E_CONFIG_VALUE", "upload.max_parallel must be between 0 and 65535");
+            }
+            options.upload_parallel = static_cast<std::uint16_t>(*upload_parallel);
+        }
+    }
+
     if (!options.peer_id_hex) {
         if (auto peer_id = config::get_string_any(profile, { {"node", "peer_id"}, {"node", "peer-id"} })) {
             options.peer_id_hex = *peer_id;
@@ -1067,6 +1120,19 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
         if (auto assume = config::get_bool_any(profile, { {"cli", "assume_yes"}, {"cli", "assume-yes"}, {"assume_yes"} })) {
             options.assume_yes = *assume;
             options.assume_yes_set = true;
+        }
+    }
+
+    if (!options.fetch_default_directory) {
+        if (auto fetch_dir = config::get_string_any(profile, { {"cli", "fetch", "default_directory"}, {"cli", "fetch", "default-directory"}, {"fetch", "default_directory"}, {"fetch", "default-directory"} })) {
+            options.fetch_default_directory = *fetch_dir;
+        }
+    }
+
+    if (!options.fetch_use_manifest_name_set) {
+        if (auto use_name = config::get_bool_any(profile, { {"cli", "fetch", "use_manifest_name"}, {"cli", "fetch", "use-manifest-name"} })) {
+            options.fetch_use_manifest_name = *use_name;
+            options.fetch_use_manifest_name_set = true;
         }
     }
 }
@@ -1132,22 +1198,35 @@ void print_usage() {
               << "  --identity-seed <n>       Deterministic seed for node identity\n"
               << "  --peer-id <hex>           Node identifier (64 hexadecimal characters)\n"
               << "  --default-ttl <sec>       Default TTL for new chunks\n"
+              << "  --min-ttl <sec>           Minimum TTL enforced for manifests\n"
+              << "  --max-ttl <sec>           Maximum TTL permitted for manifests\n"
               << "  --control-host <host>     Control socket host (default 127.0.0.1)\n"
               << "  --control-port <port>     Control socket port (default 47777)\n"
               << "  --control-token <secret>  Pre-shared token for control-plane authentication\n"
+              << "  --fetch-parallel <n>      Fetch concurrency limit (0 = unlimited)\n"
+              << "  --upload-parallel <n>     Upload concurrency limit (0 = unlimited)\n"
+              << "  --fetch-default-dir <path>\n"
+              << "                           Default directory when fetch --out is omitted\n"
+              << "  --fetch-use-manifest-name\n"
+              << "                           Preserve stored filenames when fetching (default)\n"
+              << "  --fetch-ignore-manifest-name\n"
+              << "                           Ignore stored filenames when fetching\n"
               << "  --config <file>          Load configuration from YAML/JSON file\n"
-              << "  --profile <name>        Select configuration profile (default: default)\n"
-              << "  --env <name>            Apply environment overrides from config\n"
-              << "  --help                    Print this help message\n\n";
+              << "  --profile <name>         Select configuration profile (default: default)\n"
+              << "  --env <name>             Apply environment overrides from config\n"
+              << "  --version                Print the CLI version and exit\n"
+              << "  --help                   Print this help message\n\n";
     std::cout << "Commands:\n"
               << "  start                     Launch the daemon in the background\n"
               << "  stop                      Ask the daemon to shut down\n"
               << "  status                    Query daemon status\n"
               << "  store <file> [--ttl <sec>]\n"
               << "                           Ask the daemon to store a file and return eph://\n"
-              << "  fetch <eph://...> --out <file>\n"
-              << "                           Retrieve a file using an eph:// manifest\n"
+              << "  fetch <eph://...> [--out] <path>\n"
+              << "                           Retrieve a file (defaults to current directory)\n"
               << "  list                      List chunks stored locally\n"
+              << "  defaults                  Show daemon default limits and timers\n"
+              << "  man                       Display the integrated manual\n"
               << "  serve                     Start the daemon in the foreground (Ctrl+C to exit)\n"
               << "  help                      Alias for --help\n";
 }
@@ -1178,17 +1257,87 @@ void print_list_usage() {
 
 void print_store_usage() {
     std::cout << "Usage: eph store <file> [--ttl <seconds>]\n"
-              << "Stream a local file to the daemon and receive an eph:// manifest." << std::endl;
+              << "Stream a local file to the daemon and receive an eph:// manifest (TTL defaults to daemon configuration)." << std::endl;
 }
 
 void print_fetch_usage() {
-    std::cout << "Usage: eph fetch <eph://...> --out <path>\n"
-              << "Download a manifest's payload to the given path (prompts before overwrite)." << std::endl;
+    std::cout << "Usage: eph fetch <eph://...> [--out] <file-or-directory>\n"
+              << "Download a manifest's payload to a specific file or directory (defaults to the current directory when omitted)." << std::endl;
 }
 
 void print_serve_usage() {
     std::cout << "Usage: eph serve\n"
               << "Run the daemon in the foreground until interrupted." << std::endl;
+}
+
+void print_defaults_usage() {
+    std::cout << "Usage: eph defaults\n"
+              << "Display the daemon's current default TTL, bounds, and control endpoint." << std::endl;
+}
+
+void print_manual() {
+    std::cout << "EPH(1)                          User Commands                         EPH(1)\n\n";
+    std::cout << "NAME\n"
+              << "    eph - EphemeralNet control-plane client and node launcher\n\n";
+    std::cout << "SYNOPSIS\n"
+              << "    eph [options] <command> [args]\n"
+              << "    eph --help\n"
+              << "    eph --version\n\n";
+    std::cout << "DESCRIPTION\n"
+              << "    The eph CLI manages an EphemeralNet daemon. It can start or stop the node,\n"
+              << "    store and fetch files, and inspect daemon defaults. Global options apply to\n"
+              << "    all commands and can be defined on the command line or via configuration\n"
+              << "    profiles.\n\n";
+    std::cout << "GLOBAL OPTIONS\n"
+              << "    --storage-dir <path>   Directory for persistent chunks.\n"
+              << "    --persistent           Enable persistent storage (default off).\n"
+              << "    --no-persistent        Disable persistent storage.\n"
+              << "    --no-wipe              Disable secure wipe once TTL expires.\n"
+              << "    --wipe-passes <n>      Secure wipe passes (1-255).\n"
+              << "    --identity-seed <n>    Deterministic peer identity seed.\n"
+              << "    --peer-id <hex>        Explicit peer id (64 hex chars).\n"
+              << "    --default-ttl <sec>    Default TTL for stored chunks.\n"
+              << "    --min-ttl <sec>        Minimum TTL accepted for manifests.\n"
+              << "    --max-ttl <sec>        Maximum TTL advertised for manifests.\n"
+              << "    --control-host <host>  Control socket host.\n"
+              << "    --control-port <port>  Control socket port.\n"
+              << "    --control-token <tok>  Control-plane authentication token.\n"
+              << "    --fetch-parallel <n>   Fetch concurrency (0 = unlimited).\n"
+              << "    --upload-parallel <n>  Upload concurrency (0 = unlimited).\n"
+              << "    --fetch-default-dir <path>\n"
+              << "                          Default directory when fetch --out is omitted.\n"
+              << "    --fetch-use-manifest-name / --fetch-ignore-manifest-name\n"
+              << "                          Toggle filename hints during fetch.\n"
+              << "    --config <file>       Load layered JSON/YAML configuration.\n"
+              << "    --profile <name>      Select configuration profile.\n"
+              << "    --env <name>          Apply environment overrides.\n"
+              << "    --yes                 Assume yes for prompts.\n"
+              << "    --help                Show command summary.\n"
+              << "    --version             Print CLI version and exit.\n\n";
+    std::cout << "COMMANDS\n"
+              << "    serve                  Run the daemon in the foreground.\n"
+              << "    start                  Launch the daemon in the background (Windows).\n"
+              << "    stop                   Stop the running daemon.\n"
+              << "    status                 Show peer counts, chunks, and transport port.\n"
+              << "    list                   List local chunks with TTL and encryption status.\n"
+              << "    store <file> [--ttl]   Upload a file and receive an eph:// manifest.\n"
+              << "    fetch <manifest> [--out] <path>\n"
+              << "                          Retrieve payload into a file or directory.\n"
+              << "    defaults               Display daemon TTL bounds and concurrency limits.\n"
+              << "    man                    Display this manual.\n"
+              << "    help                   Alias for --help.\n\n";
+    std::cout << "FILES\n"
+              << "    profiles in configuration files define reusable daemon settings. See\n"
+              << "    docs/deployment-guide.md for examples.\n\n";
+    std::cout << "EXAMPLES\n"
+              << "    eph --storage-dir ./data serve\n"
+              << "    eph store secret.bin --ttl 3600\n"
+              << "    eph fetch eph://... --out ./downloads/\n"
+              << "    eph defaults\n"
+              << "    eph --version\n\n";
+    std::cout << "SEE ALSO\n"
+              << "    docs/README.md, docs/deployment-guide.md within the source tree.\n\n";
+    std::cout << "EphemeralNet " << kEphemeralNetVersion << "                         EPH(1)" << std::endl;
 }
 
 bool parse_uint64(std::string_view text, std::uint64_t& value) {
@@ -1351,6 +1500,56 @@ void validate_global_options(GlobalOptions& options) {
         }
         options.peer_id_hex = candidate;
     }
+
+    if (options.fetch_default_directory) {
+        auto raw = strip_quotes(*options.fetch_default_directory);
+        raw = trim(raw);
+        if (raw.empty()) {
+            throw_cli_error("E_INVALID_FETCH_DEFAULT_DIR",
+                            "--fetch-default-dir cannot be empty",
+                            "Provide a directory path, e.g. --fetch-default-dir ./downloads");
+        }
+        std::filesystem::path absolute;
+        try {
+            absolute = std::filesystem::absolute(std::filesystem::path(raw));
+        } catch (const std::exception&) {
+            throw_cli_error("E_INVALID_FETCH_DEFAULT_DIR",
+                            "Failed to resolve --fetch-default-dir",
+                            "Ensure the path is valid on this platform and try again");
+        }
+        if (std::filesystem::exists(absolute) && !std::filesystem::is_directory(absolute)) {
+            throw_cli_error("E_INVALID_FETCH_DEFAULT_DIR",
+                            "--fetch-default-dir must point to a directory",
+                            "Select a directory or remove the existing file at " + absolute.string());
+        }
+        options.fetch_default_directory = absolute.string();
+    }
+
+    if (options.min_ttl_seconds && *options.min_ttl_seconds == 0) {
+        throw_cli_error("E_INVALID_MIN_TTL",
+                        "--min-ttl must be positive",
+                        "Provide a value greater than zero");
+    }
+    if (options.max_ttl_seconds && *options.max_ttl_seconds == 0) {
+        throw_cli_error("E_INVALID_MAX_TTL",
+                        "--max-ttl must be positive",
+                        "Provide a value greater than zero");
+    }
+    if (options.min_ttl_seconds && options.max_ttl_seconds && *options.min_ttl_seconds > *options.max_ttl_seconds) {
+        throw_cli_error("E_INVALID_TTL_WINDOW",
+                        "--min-ttl must be less than or equal to --max-ttl",
+                        "Adjust the TTL window so the minimum does not exceed the maximum");
+    }
+    if (options.default_ttl_seconds && options.min_ttl_seconds && *options.default_ttl_seconds < *options.min_ttl_seconds) {
+        throw_cli_error("E_INVALID_DEFAULT_TTL",
+                        "--default-ttl must be greater than or equal to --min-ttl",
+                        "Increase the default TTL or lower the minimum bound");
+    }
+    if (options.default_ttl_seconds && options.max_ttl_seconds && *options.default_ttl_seconds > *options.max_ttl_seconds) {
+        throw_cli_error("E_INVALID_DEFAULT_TTL",
+                        "--default-ttl must be less than or equal to --max-ttl",
+                        "Reduce the default TTL or raise the maximum bound");
+    }
 }
 
 ephemeralnet::PeerId make_peer_id(const GlobalOptions& options) {
@@ -1407,6 +1606,12 @@ ephemeralnet::Config build_config(const GlobalOptions& options) {
     if (options.default_ttl_seconds) {
         config.default_chunk_ttl = std::chrono::seconds(*options.default_ttl_seconds);
     }
+    if (options.min_ttl_seconds) {
+        config.min_manifest_ttl = std::chrono::seconds(*options.min_ttl_seconds);
+    }
+    if (options.max_ttl_seconds) {
+        config.max_manifest_ttl = std::chrono::seconds(*options.max_ttl_seconds);
+    }
     if (options.control_host) {
         config.control_host = strip_quotes(*options.control_host);
     }
@@ -1415,6 +1620,12 @@ ephemeralnet::Config build_config(const GlobalOptions& options) {
     }
     if (options.control_token) {
         config.control_token = strip_quotes(*options.control_token);
+    }
+    if (options.fetch_parallel) {
+        config.fetch_max_parallel_requests = *options.fetch_parallel;
+    }
+    if (options.upload_parallel) {
+        config.upload_max_parallel_transfers = *options.upload_parallel;
     }
     return config;
 }
@@ -1447,6 +1658,14 @@ std::vector<std::string> build_daemon_arguments(const GlobalOptions& options) {
         args.emplace_back("--default-ttl");
         args.emplace_back(std::to_string(*options.default_ttl_seconds));
     }
+    if (options.min_ttl_seconds) {
+        args.emplace_back("--min-ttl");
+        args.emplace_back(std::to_string(*options.min_ttl_seconds));
+    }
+    if (options.max_ttl_seconds) {
+        args.emplace_back("--max-ttl");
+        args.emplace_back(std::to_string(*options.max_ttl_seconds));
+    }
     if (options.control_host) {
         args.emplace_back("--control-host");
         args.emplace_back(strip_quotes(*options.control_host));
@@ -1458,6 +1677,14 @@ std::vector<std::string> build_daemon_arguments(const GlobalOptions& options) {
     if (options.control_token) {
         args.emplace_back("--control-token");
         args.emplace_back(strip_quotes(*options.control_token));
+    }
+    if (options.fetch_parallel) {
+        args.emplace_back("--fetch-parallel");
+        args.emplace_back(std::to_string(*options.fetch_parallel));
+    }
+    if (options.upload_parallel) {
+        args.emplace_back("--upload-parallel");
+        args.emplace_back(std::to_string(*options.upload_parallel));
     }
     args.emplace_back("serve");
     return args;
@@ -1704,6 +1931,10 @@ int main(int argc, char** argv) {
                 print_usage();
                 return 0;
             }
+            if (opt == "--version") {
+                std::cout << "EphemeralNet " << kEphemeralNetVersion << std::endl;
+                return 0;
+            }
             if (opt == "--yes" || opt == "-y") {
                 options.assume_yes = true;
                 options.assume_yes_set = true;
@@ -1778,6 +2009,28 @@ int main(int argc, char** argv) {
                 options.default_ttl_seconds = ttl;
                 continue;
             }
+            if (opt == "--min-ttl") {
+                const auto value = require_value(opt);
+                std::uint64_t ttl{};
+                if (!parse_uint64(value, ttl) || ttl == 0) {
+                    throw_cli_error("E_INVALID_MIN_TTL",
+                                    "--min-ttl must be a positive integer",
+                                    "Provide the minimum TTL in seconds, e.g. --min-ttl 30");
+                }
+                options.min_ttl_seconds = ttl;
+                continue;
+            }
+            if (opt == "--max-ttl") {
+                const auto value = require_value(opt);
+                std::uint64_t ttl{};
+                if (!parse_uint64(value, ttl) || ttl == 0) {
+                    throw_cli_error("E_INVALID_MAX_TTL",
+                                    "--max-ttl must be a positive integer",
+                                    "Provide the maximum TTL in seconds, e.g. --max-ttl 86400");
+                }
+                options.max_ttl_seconds = ttl;
+                continue;
+            }
             if (opt == "--control-host") {
                 options.control_host = require_value(opt);
                 continue;
@@ -1795,6 +2048,42 @@ int main(int argc, char** argv) {
             }
             if (opt == "--control-token") {
                 options.control_token = require_value(opt);
+                continue;
+            }
+            if (opt == "--fetch-parallel") {
+                const auto value = require_value(opt);
+                std::uint64_t parallel{};
+                if (!parse_uint64(value, parallel) || parallel > std::numeric_limits<std::uint16_t>::max()) {
+                    throw_cli_error("E_INVALID_FETCH_PARALLEL",
+                                    "--fetch-parallel must be between 0 and 65535",
+                                    "Use 0 for unlimited or a small positive integer");
+                }
+                options.fetch_parallel = static_cast<std::uint16_t>(parallel);
+                continue;
+            }
+            if (opt == "--upload-parallel") {
+                const auto value = require_value(opt);
+                std::uint64_t parallel{};
+                if (!parse_uint64(value, parallel) || parallel > std::numeric_limits<std::uint16_t>::max()) {
+                    throw_cli_error("E_INVALID_UPLOAD_PARALLEL",
+                                    "--upload-parallel must be between 0 and 65535",
+                                    "Use 0 for unlimited or a small positive integer");
+                }
+                options.upload_parallel = static_cast<std::uint16_t>(parallel);
+                continue;
+            }
+            if (opt == "--fetch-default-dir") {
+                options.fetch_default_directory = require_value(opt);
+                continue;
+            }
+            if (opt == "--fetch-use-manifest-name") {
+                options.fetch_use_manifest_name = true;
+                options.fetch_use_manifest_name_set = true;
+                continue;
+            }
+            if (opt == "--fetch-ignore-manifest-name") {
+                options.fetch_use_manifest_name = false;
+                options.fetch_use_manifest_name_set = true;
                 continue;
             }
 
@@ -1819,6 +2108,20 @@ int main(int argc, char** argv) {
         std::string command = to_lower(std::string(args[index++]));
         if (command == "help") {
             print_usage();
+            return 0;
+        }
+
+        if (command == "man") {
+            if (index < args.size()) {
+                if (is_help_flag(args[index])) {
+                    print_manual();
+                    return 0;
+                }
+                throw_cli_error("E_MAN_UNEXPECTED_ARGUMENT",
+                                "man does not accept additional arguments",
+                                "Run 'eph man' or 'eph man --help'");
+            }
+            print_manual();
             return 0;
         }
 
@@ -1994,6 +2297,58 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        if (command == "defaults") {
+            if (index < args.size()) {
+                if (is_help_flag(args[index])) {
+                    print_defaults_usage();
+                    return 0;
+                }
+                throw_cli_error("E_DEFAULTS_UNKNOWN_OPTION",
+                                "Unknown option for defaults: " + std::string(args[index]),
+                                "Run 'eph defaults --help' to view usage");
+            }
+            const auto response = client.send("DEFAULTS");
+            if (!response) {
+                throw_daemon_unreachable();
+            }
+            if (!response->success) {
+                print_daemon_failure(*response);
+                return 1;
+            }
+
+            std::cout << "Daemon defaults" << std::endl;
+            const auto default_ttl = response->fields.contains("DEFAULT_TTL") ? response->fields.at("DEFAULT_TTL") : std::string("0");
+            const auto min_ttl = response->fields.contains("MIN_TTL") ? response->fields.at("MIN_TTL") : std::string("0");
+            const auto max_ttl = response->fields.contains("MAX_TTL") ? response->fields.at("MAX_TTL") : std::string("0");
+            const auto control_host = response->fields.contains("CONTROL_HOST") ? response->fields.at("CONTROL_HOST") : std::string("127.0.0.1");
+            const auto control_port = response->fields.contains("CONTROL_PORT") ? response->fields.at("CONTROL_PORT") : std::string("47777");
+            const auto storage_persistent = response->fields.contains("STORAGE_PERSISTENT") ? response->fields.at("STORAGE_PERSISTENT") : std::string("0");
+            const auto storage_dir = response->fields.contains("STORAGE_DIR") ? response->fields.at("STORAGE_DIR") : std::string("storage");
+            const auto fetch_parallel = response->fields.contains("FETCH_MAX_PARALLEL") ? response->fields.at("FETCH_MAX_PARALLEL") : std::string("0");
+            const auto upload_parallel = response->fields.contains("UPLOAD_MAX_PARALLEL") ? response->fields.at("UPLOAD_MAX_PARALLEL") : std::string("0");
+
+            std::cout << "  Default TTL:        " << default_ttl << " seconds" << std::endl;
+            std::cout << "  TTL window:         " << min_ttl << "s - " << max_ttl << "s" << std::endl;
+            std::cout << "  Control endpoint:   " << control_host << ':' << control_port << std::endl;
+            std::cout << "  Persistent storage: "
+                      << (storage_persistent == "1" ? "enabled" : "disabled")
+                      << std::endl;
+            std::cout << "  Storage directory:  " << storage_dir << std::endl;
+            std::cout << "  Fetch concurrency:  " << fetch_parallel << std::endl;
+            std::cout << "  Upload concurrency: " << upload_parallel << std::endl;
+            std::cout << std::endl;
+            std::cout << "CLI fetch defaults" << std::endl;
+            const auto cli_dest = options.fetch_default_directory
+                                       ? *options.fetch_default_directory
+                                       : std::filesystem::current_path().string();
+            std::cout << "  Output directory:  " << cli_dest << std::endl;
+            std::cout << "  Use stored names:  "
+                      << (options.fetch_use_manifest_name ? "enabled" : "disabled")
+                      << std::endl;
+            print_daemon_hint(*response);
+            return 0;
+        }
+
         if (command == "store") {
             if (index < args.size() && is_help_flag(args[index])) {
                 print_store_usage();
@@ -2093,9 +2448,13 @@ int main(int argc, char** argv) {
             const auto manifest = response->fields.contains("MANIFEST") ? response->fields.at("MANIFEST") : "";
             const auto size = response->fields.contains("SIZE") ? response->fields.at("SIZE") : "0";
             const auto ttl = response->fields.contains("TTL") ? response->fields.at("TTL") : "0";
+            const auto suggested_name = response->fields.contains("FILENAME") ? response->fields.at("FILENAME") : std::string{};
             std::cout << "File stored" << std::endl;
             std::cout << "  Size: " << size << " bytes" << std::endl;
             std::cout << "  Remaining TTL: " << ttl << " seconds" << std::endl;
+            if (!suggested_name.empty()) {
+                std::cout << "  Suggested filename: " << suggested_name << std::endl;
+            }
             std::cout << "  Manifest: " << manifest << std::endl;
             print_daemon_hint(*response);
             return 0;
@@ -2118,47 +2477,130 @@ int main(int argc, char** argv) {
                                 "Make sure you paste the full URI generated by 'store'");
             }
 
-            std::optional<std::filesystem::path> output_path;
+            std::optional<protocol::Manifest> decoded_manifest;
+            try {
+                decoded_manifest = protocol::decode_manifest(manifest_uri);
+            } catch (const std::exception&) {
+                decoded_manifest = std::nullopt;
+            }
+
+            std::optional<std::filesystem::path> output_spec;
             while (index < args.size()) {
-                const auto opt = args[index++];
+                const auto& opt = args[index];
                 if (opt == "--out") {
+                    ++index;
                     if (index >= args.size()) {
                         throw_cli_error("E_FETCH_MISSING_OUT",
                                         "--out requires a path",
                                         "Example: --out ./download.bin");
                     }
-                    output_path = std::filesystem::absolute(std::filesystem::path(args[index++]));
+                    if (output_spec.has_value()) {
+                        throw_cli_error("E_FETCH_OUT_DUPLICATE",
+                                        "Multiple output destinations provided",
+                                        "Supply only one output path or directory");
+                    }
+                    output_spec = std::filesystem::absolute(std::filesystem::path(args[index++]));
                     continue;
                 }
                 if (is_help_flag(opt)) {
                     print_fetch_usage();
                     return 0;
                 }
+                if (!opt.empty() && opt[0] != '-') {
+                    if (output_spec.has_value()) {
+                        throw_cli_error("E_FETCH_OUT_DUPLICATE",
+                                        "Multiple output destinations provided",
+                                        "Supply only one output path or directory");
+                    }
+                    output_spec = std::filesystem::absolute(std::filesystem::path(args[index++]));
+                    continue;
+                }
                 throw_cli_error("E_FETCH_UNKNOWN_OPTION",
                                 "Unknown option for fetch: " + std::string(opt),
                                 "Run 'eph --help' to see permitted modifiers");
             }
 
-            if (!output_path) {
-                throw_cli_error("E_FETCH_OUT_REQUIRED",
-                                "fetch requires --out to specify the destination file",
-                                "Use --out ./file.bin");
+            bool using_cli_default_directory = false;
+            if (!output_spec) {
+                if (options.fetch_default_directory) {
+                    output_spec = std::filesystem::path(*options.fetch_default_directory);
+                    using_cli_default_directory = true;
+                } else {
+                    output_spec = std::filesystem::current_path();
+                }
             }
 
-            if (std::filesystem::exists(*output_path) && std::filesystem::is_directory(*output_path)) {
+            auto destination = *output_spec;
+            const bool destination_exists = std::filesystem::exists(destination);
+            const bool destination_is_directory = destination_exists && std::filesystem::is_directory(destination);
+            const bool trailing_slash_directory = !destination_exists && !destination.has_filename();
+            const bool treat_as_directory = destination_is_directory || trailing_slash_directory || using_cli_default_directory;
+
+            std::filesystem::path resolved_output = destination;
+            if (treat_as_directory) {
+                std::string inferred_name;
+                auto sanitize_filename = [](const std::string& candidate) {
+                    std::filesystem::path candidate_path(candidate);
+                    auto base = candidate_path.filename().string();
+                    base.erase(std::remove_if(base.begin(), base.end(), [](unsigned char ch) {
+                                  return std::iscntrl(ch);
+                              }), base.end());
+                    for (auto& ch : base) {
+                        if (ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '?' || ch == '"' || ch == '<' || ch == '>' || ch == '|') {
+                            ch = '_';
+                        }
+                    }
+                    if (base.empty() || base == "." || base == "..") {
+                        return std::string{};
+                    }
+                    constexpr std::size_t kMaxSuggestedNameLength = 255;
+                    if (base.size() > kMaxSuggestedNameLength) {
+                        base.resize(kMaxSuggestedNameLength);
+                    }
+                    return base;
+                };
+
+                if (decoded_manifest.has_value() && options.fetch_use_manifest_name) {
+                    if (const auto meta_it = decoded_manifest->metadata.find("filename"); meta_it != decoded_manifest->metadata.end()) {
+                        inferred_name = sanitize_filename(meta_it->second);
+                    }
+                    if (inferred_name.empty()) {
+                        inferred_name = ephemeralnet::chunk_id_to_string(decoded_manifest->chunk_id);
+                    }
+                }
+                if (inferred_name.empty()) {
+                    const auto stamp = std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count();
+                    inferred_name = "chunk_" + std::to_string(stamp);
+                }
+                resolved_output /= inferred_name;
+            }
+
+            if (std::filesystem::exists(resolved_output) && std::filesystem::is_directory(resolved_output)) {
                 throw_cli_error("E_FETCH_OUT_IS_DIRECTORY",
-                                "--out must point to a file, not a directory",
-                                "Choose a filename such as --out ./output.bin");
+                                "Destination resolves to a directory",
+                                "Provide a writable file path or an existing directory");
             }
 
-            if (const auto parent = output_path->parent_path(); !parent.empty() && !std::filesystem::exists(parent)) {
-                throw_cli_error("E_FETCH_OUT_PARENT_MISSING",
-                                "Destination directory does not exist",
-                                "Create " + parent.string() + " or choose an existing path");
+            const auto parent = resolved_output.parent_path();
+            if (!parent.empty() && !std::filesystem::exists(parent)) {
+                if (treat_as_directory) {
+                    std::error_code ec;
+                    std::filesystem::create_directories(parent, ec);
+                    if (ec && !std::filesystem::exists(parent)) {
+                        throw_cli_error("E_FETCH_OUT_PARENT_MISSING",
+                                        "Destination directory does not exist",
+                                        "Create " + parent.string() + " or choose an accessible path");
+                    }
+                } else {
+                    throw_cli_error("E_FETCH_OUT_PARENT_MISSING",
+                                    "Destination directory does not exist",
+                                    "Create " + parent.string() + " or choose an existing path");
+                }
             }
 
-            if (std::filesystem::exists(*output_path) &&
-                !confirm_action("File " + output_path->string() + " already exists. Overwrite?",
+            if (std::filesystem::exists(resolved_output) &&
+                !confirm_action("File " + resolved_output.string() + " already exists. Overwrite?",
                                 false,
                                 options.assume_yes)) {
                 std::cout << "Operation cancelled by the user." << std::endl;
@@ -2180,7 +2622,7 @@ int main(int argc, char** argv) {
             const auto reported_size = response->fields.contains("SIZE") ? response->fields.at("SIZE") : "0";
             if (response->has_payload) {
                 try {
-                    std::ofstream out(*output_path, std::ios::binary | std::ios::trunc);
+                    std::ofstream out(resolved_output, std::ios::binary | std::ios::trunc);
                     if (!out) {
                         throw std::runtime_error("Failed to open output file");
                     }
@@ -2195,18 +2637,18 @@ int main(int argc, char** argv) {
                 } catch (const std::exception& ex) {
                     throw_cli_error("E_FETCH_WRITE_FAILED",
                                     ex.what(),
-                                    "Verify write permissions for " + output_path->string());
+                                    "Verify write permissions for " + resolved_output.string());
                 }
 
                 const auto local_size = !response->payload.empty()
                                             ? std::to_string(response->payload.size())
                                             : reported_size;
-                std::cout << "File retrieved to " << output_path->string() << " (" << local_size << " bytes)" << std::endl;
+                std::cout << "File retrieved to " << resolved_output.string() << " (" << local_size << " bytes)" << std::endl;
             } else {
                 const auto output = response->fields.contains("OUTPUT") ? response->fields.at("OUTPUT")
-                                                                         : output_path->string();
+                                                                         : resolved_output.string();
                 std::cout << "File retrieved to " << output << " (" << reported_size << " bytes)" << std::endl;
-                if (output != output_path->string()) {
+                if (output != resolved_output.string()) {
                     std::cout << "Hint: File was written on the daemon host; copy it manually if needed." << std::endl;
                 }
             }

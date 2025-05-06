@@ -91,6 +91,11 @@ target_include_directories(ephemeralnet
         include
 )
 
+target_compile_definitions(ephemeralnet
+    PRIVATE
+        EPHEMERALNET_VERSION="${PROJECT_VERSION}"
+)
+
 if(EPHEMERALNET_BUILD_TESTS)
     enable_testing()
 

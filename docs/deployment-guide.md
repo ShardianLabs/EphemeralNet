@@ -27,8 +27,12 @@ Runtime options are specified via CLI flags or the control daemon configuration 
 - `--persistent/--no-persistent`: Toggle on-disk retention.
 - `--no-wipe` / `--wipe-passes <n>`: Secure wipe control (default one pass).
 - `--default-ttl <seconds>`: Override default chunk TTL.
+- `--min-ttl <seconds>` / `--max-ttl <seconds>`: Bound manifest TTLs accepted and advertised.
 - `--control-host` / `--control-port`: Customize the control socket endpoint.
 - `--identity-seed <n>`: Deterministic peer identity for reproducible deployments.
+- `--fetch-parallel <n>` / `--upload-parallel <n>`: Tune control-plane fetch/upload concurrency (0 = unlimited).
+- `--fetch-default-dir <path>`: Set the default download location when `--out` is omitted.
+- `--fetch-ignore-manifest-name`: Disable reusing stored filenames during fetches (pair with `--fetch-use-manifest-name`).
 
 These flags propagate to the daemon when using `eph start` and `eph serve`.
 
@@ -60,6 +64,9 @@ The CLI spawns a detached process and waits until the daemon responds to `PING`.
 
 - `eph status`: prints connected peer count, local chunk inventory, and transport port.
 - `eph list`: dumps chunk metadata including TTL remaining.
+- `eph defaults`: shows effective TTL bounds, control endpoint, and concurrency limits.
+- `eph --version`: reports the CLI build version.
+- `eph man`: displays the integrated manual with command and option reference.
 - `eph fetch` / `store`: round-trip validations for storage and replication.
 
 ## Environment Hardening Tips

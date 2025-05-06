@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <map>
 
 namespace ephemeralnet::protocol {
 
@@ -26,6 +27,7 @@ struct Manifest {
     std::uint8_t total_shares{0};
     std::chrono::system_clock::time_point expires_at{};
     std::vector<KeyShard> shards;
+    std::map<std::string, std::string> metadata;
 };
 
 std::string encode_manifest(const Manifest& manifest);

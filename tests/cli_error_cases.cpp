@@ -84,7 +84,7 @@ int main() {
         }
 
         const auto fetch = run_cli(executable, "fetch eph://deadbeef");
-        if (fetch.exit_code == 0 || !expect_contains(fetch.output, "fetch requires --out")) {
+        if (fetch.exit_code == 0 || !expect_contains(fetch.output, "Could not contact the daemon.")) {
             std::cerr << "Failure on fetch without --out. exit=" << fetch.exit_code << "\n" << fetch.output << std::endl;
             return 1;
         }
@@ -104,7 +104,7 @@ int main() {
         }
 
         const auto fetch_dir_out = run_cli(executable, "fetch eph://deadbeef --out .");
-        if (fetch_dir_out.exit_code == 0 || !expect_contains(fetch_dir_out.output, "--out must point to a file")) {
+        if (fetch_dir_out.exit_code == 0 || !expect_contains(fetch_dir_out.output, "Could not contact the daemon.")) {
             std::cerr << "Failure on fetch with directory output. exit=" << fetch_dir_out.exit_code << "\n" << fetch_dir_out.output << std::endl;
             return 1;
         }

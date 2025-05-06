@@ -47,6 +47,8 @@
 - Translated public-facing documentation to English (README, this TODO).
 - CLI output, hints, and tests localised to English with compatibility for scripted confirmations.
 - Authored architecture, protocol, deployment, and troubleshooting guides under `docs/`.
+- CLI fetch now defaults to the working directory (preserving stored filename metadata) with user-overridable directory/name settings and exposes a `defaults` command to report daemon TTL/configuration baselines.
+- CLI exposes `--version` and an integrated `man` command for quick reference.
 
 ## Next milestones
 - **TESTING**
@@ -64,8 +66,6 @@
 	- Prepare deployment scripts and CI/CD pipelines for Windows/Linux/macOS (Docker, PPA/Copr, Homebrew).
 	- Manage reproducible packaging and binary signing.
 	- Define governance and abuse policies (AUP) for public bootstrap/STUN nodes and enforcement processes.
-    - Add --version, man commands.
-    - Add default option commands (default TTl and more)
 - **PRODUCT**
 	- Complete the public `libephemeralnet` API (versioning, documentation, usage examples).
 	- Finalise `ephemeralnet-cli` with diagnostics commands and scripting support.

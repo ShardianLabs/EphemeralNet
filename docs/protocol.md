@@ -36,8 +36,9 @@ TTL:3587
 | `STATUS`| `COMMAND`       | none            | Returns connected peers, local chunk count, and transport port. |
 | `STOP`  | `COMMAND`       | none            | Stops the daemon after acknowledging the request. |
 | `LIST`  | `COMMAND`       | none            | Streams stored chunk metadata (id, size, state, TTL). |
+| `DEFAULTS` | `COMMAND`   | none            | Reports daemon defaults such as TTL bounds, control endpoint, and concurrency caps. |
 | `STORE` | `COMMAND`, `PATH` | `TTL`        | Stores a local file, returning manifest URI and effective TTL. |
-| `FETCH` | `COMMAND`, `MANIFEST`, `OUT` | none | Retrieves a chunk described by the manifest into `OUT`. |
+| `FETCH` | `COMMAND`, `MANIFEST` | `OUT`, `STREAM` | Retrieves a chunk described by the manifest. When `STREAM:client` is provided the daemon streams bytes back instead of writing to disk. |
 
 ### Error Semantics
 
@@ -54,6 +55,7 @@ Manifests encode chunk metadata such as:
 - `chunk_id`: 256-bit identifier derived from SHA-256 of the payload.
 - `expires_at`: Absolute expiry instant derived from TTL.
 - `replica_hint`: Desired replication factor for swarm propagation.
+- `metadata`: Key/value annotations. The daemon currently records the original filename (key `filename`) when available so clients can recreate the source name when downloading.
 
 Manifests are serialized and base64-encoded in the `eph://` URI returned to clients.
 
@@ -65,7 +67,7 @@ Manifests are serialized and base64-encoded in the `eph://` URI returned to clie
 
 ### Fetch Semantics
 
-- The CLI must provide an `OUT` parameter. The daemon refuses to stream to stdout to keep the control connection simple.
+- The CLI requests `STREAM:client` by default, saving the payload locally. If no explicit `--out` is given, the CLI will place the file in the current directory, using the original filename if metadata is present.
 - If the chunk is already local, the daemon writes it immediately. Otherwise it registers the manifest and waits for the chunk to arrive from peers.
 - If TTL expires before completion, the daemon reports `ERR_FETCH_CHUNK_MISSING`.
 

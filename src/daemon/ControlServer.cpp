@@ -526,6 +526,10 @@ private:
             handle_list(client);
             return;
         }
+        if (command == "DEFAULTS") {
+            handle_defaults(client);
+            return;
+        }
         if (command == "STORE") {
             handle_store(client, std::move(request), remote_identity);
             return;
@@ -589,6 +593,27 @@ private:
         }
 
         fields["ENTRIES"] = entries.str();
+        send_response(client, fields, true);
+    }
+
+    void handle_defaults(NativeSocket client) {
+        Config config_copy{};
+        {
+            std::scoped_lock lock(node_mutex_);
+            config_copy = node_.config();
+        }
+
+        ControlFields fields{{"CODE", "OK_DEFAULTS"},
+                             {"DEFAULT_TTL", std::to_string(config_copy.default_chunk_ttl.count())},
+                             {"MIN_TTL", std::to_string(config_copy.min_manifest_ttl.count())},
+                             {"MAX_TTL", std::to_string(config_copy.max_manifest_ttl.count())},
+                             {"CONTROL_HOST", config_copy.control_host},
+                             {"CONTROL_PORT", std::to_string(config_copy.control_port)},
+                             {"STORAGE_PERSISTENT", config_copy.storage_persistent_enabled ? "1" : "0"},
+                             {"STORAGE_DIR", config_copy.storage_directory},
+                             {"FETCH_MAX_PARALLEL", std::to_string(config_copy.fetch_max_parallel_requests)},
+                             {"UPLOAD_MAX_PARALLEL", std::to_string(config_copy.upload_max_parallel_transfers)}};
+
         send_response(client, fields, true);
     }
 
@@ -679,10 +704,23 @@ private:
         auto data = std::move(request.payload);
         const auto data_size = data.size();
 
+        std::optional<std::string> original_name;
+        if (const auto name_it = request.fields.find("PATH"); name_it != request.fields.end()) {
+            std::filesystem::path provided{name_it->second};
+            auto base = provided.filename().string();
+            if (!base.empty() && base != "." && base != "..") {
+                constexpr std::size_t kMaxSuggestedNameLength = 255;
+                if (base.size() > kMaxSuggestedNameLength) {
+                    base.resize(kMaxSuggestedNameLength);
+                }
+                original_name = base;
+            }
+        }
+
         protocol::Manifest manifest{};
         {
             std::scoped_lock lock(node_mutex_);
-            manifest = node_.store_chunk(chunk_id, std::move(data), ttl);
+            manifest = node_.store_chunk(chunk_id, std::move(data), ttl, original_name);
         }
 
         const auto manifest_uri = protocol::encode_manifest(manifest);
@@ -699,6 +737,10 @@ private:
 
         if (const auto name_it = request.fields.find("PATH"); name_it != request.fields.end()) {
             fields["SOURCE"] = name_it->second;
+        }
+
+        if (const auto meta_it = manifest.metadata.find("filename"); meta_it != manifest.metadata.end()) {
+            fields["FILENAME"] = meta_it->second;
         }
 
         send_response(client, fields, true);

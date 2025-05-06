@@ -38,7 +38,10 @@ public:
     ~Node();
 
     void announce_chunk(const ChunkId& chunk_id, std::chrono::seconds ttl);
-    protocol::Manifest store_chunk(const ChunkId& chunk_id, ChunkData data, std::chrono::seconds ttl);
+    protocol::Manifest store_chunk(const ChunkId& chunk_id,
+                                   ChunkData data,
+                                   std::chrono::seconds ttl,
+                                   std::optional<std::string> original_name = std::nullopt);
     bool ingest_manifest(const std::string& manifest_uri);
     std::optional<ChunkData> receive_chunk(const std::string& manifest_uri, ChunkData ciphertext);
     std::optional<ChunkRecord> export_chunk_record(const ChunkId& chunk_id);

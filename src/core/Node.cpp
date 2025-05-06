@@ -8,7 +8,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <exception>
+#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <random>
@@ -1174,7 +1176,10 @@ void Node::announce_chunk(const ChunkId& chunk_id, std::chrono::seconds ttl) {
     dht_.add_contact(chunk_id, self_contact, ttl);
 }
 
-protocol::Manifest Node::store_chunk(const ChunkId& chunk_id, ChunkData data, std::chrono::seconds ttl) {
+protocol::Manifest Node::store_chunk(const ChunkId& chunk_id,
+                                     ChunkData data,
+                                     std::chrono::seconds ttl,
+                                     std::optional<std::string> original_name) {
     const auto threshold = std::max<std::uint8_t>(std::uint8_t{1}, config_.shard_threshold);
     const auto total_shares = std::max(threshold, config_.shard_total);
 
@@ -1210,6 +1215,33 @@ protocol::Manifest Node::store_chunk(const ChunkId& chunk_id, ChunkData data, st
     manifest.total_shares = total_shares;
     manifest.expires_at = std::chrono::system_clock::now() + sanitized_ttl;
     manifest.shards = protocol_shards;
+
+    if (original_name.has_value()) {
+        auto sanitize_filename = [](std::string value) {
+            value.erase(std::remove_if(value.begin(), value.end(), [](unsigned char ch) {
+                              return std::iscntrl(ch);
+                          }), value.end());
+            for (auto& ch : value) {
+                if (ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '?' || ch == '"' || ch == '<' || ch == '>' || ch == '|') {
+                    ch = '_';
+                }
+            }
+            if (value == "." || value == "..") {
+                value.clear();
+            }
+            return value;
+        };
+
+        constexpr std::size_t kMaxSuggestedNameLength = 255;
+        std::filesystem::path candidate(*original_name);
+        auto base = sanitize_filename(candidate.filename().string());
+        if (!base.empty()) {
+            if (base.size() > kMaxSuggestedNameLength) {
+                base.resize(kMaxSuggestedNameLength);
+            }
+            manifest.metadata["filename"] = base;
+        }
+    }
 
     manifest_cache_[chunk_id_to_string(chunk_id)] = manifest;
     dht_.publish_shards(chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, sanitized_ttl);

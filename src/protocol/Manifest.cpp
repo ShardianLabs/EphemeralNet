@@ -9,12 +9,14 @@
 #include <cstring>
 #include <iomanip>
 #include <sstream>
+#include <limits>
+#include <stdexcept>
 
 namespace ephemeralnet::protocol {
 
 namespace {
 
-constexpr std::uint8_t kManifestVersion = 1;
+constexpr std::uint8_t kManifestVersion = 2;
 constexpr char kScheme[] = "eph://";
 
 constexpr char kBase64Alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -101,6 +103,11 @@ void append_u64(std::vector<std::uint8_t>& buffer, std::uint64_t value) {
     }
 }
 
+void append_u16(std::vector<std::uint8_t>& buffer, std::uint16_t value) {
+    buffer.push_back(static_cast<std::uint8_t>((value >> 8) & 0xFFu));
+    buffer.push_back(static_cast<std::uint8_t>(value & 0xFFu));
+}
+
 std::uint64_t read_u64(const std::vector<std::uint8_t>& buffer, std::size_t offset) {
     std::uint64_t value = 0;
     for (int shift = 56; shift >= 0; shift -= 8) {
@@ -109,11 +116,36 @@ std::uint64_t read_u64(const std::vector<std::uint8_t>& buffer, std::size_t offs
     return value;
 }
 
+std::uint16_t read_u16(const std::vector<std::uint8_t>& buffer, std::size_t offset) {
+    if (offset + 1 >= buffer.size()) {
+        throw std::invalid_argument("manifest metadata truncated");
+    }
+    return static_cast<std::uint16_t>((static_cast<std::uint16_t>(buffer[offset]) << 8) |
+                                      static_cast<std::uint16_t>(buffer[offset + 1]));
+}
+
 }  // namespace
 
 std::string encode_manifest(const Manifest& manifest) {
+    if (manifest.metadata.size() > std::numeric_limits<std::uint8_t>::max()) {
+        throw std::length_error("manifest metadata entry count exceeds limit");
+    }
+
+    std::size_t metadata_bytes = 1;  // entry count byte
+    for (const auto& entry : manifest.metadata) {
+        const auto& key = entry.first;
+        const auto& value = entry.second;
+        if (key.size() > std::numeric_limits<std::uint8_t>::max()) {
+            throw std::length_error("manifest metadata key too long");
+        }
+        if (value.size() > std::numeric_limits<std::uint16_t>::max()) {
+            throw std::length_error("manifest metadata value too long");
+        }
+        metadata_bytes += 1 + key.size() + 2 + value.size();
+    }
+
     std::vector<std::uint8_t> buffer;
-    buffer.reserve(1 + ChunkId{}.size() + 32 + sizeof(manifest.nonce.bytes) + 8 + 3 + manifest.shards.size() * 33);
+    buffer.reserve(1 + ChunkId{}.size() + 32 + sizeof(manifest.nonce.bytes) + 8 + 3 + manifest.shards.size() * 33 + metadata_bytes);
 
     buffer.push_back(kManifestVersion);
     buffer.insert(buffer.end(), manifest.chunk_id.begin(), manifest.chunk_id.end());
@@ -132,6 +164,16 @@ std::string encode_manifest(const Manifest& manifest) {
         buffer.insert(buffer.end(), shard.value.begin(), shard.value.end());
     }
 
+    buffer.push_back(static_cast<std::uint8_t>(manifest.metadata.size()));
+    for (const auto& entry : manifest.metadata) {
+        const auto& key = entry.first;
+        const auto& value = entry.second;
+        buffer.push_back(static_cast<std::uint8_t>(key.size()));
+        buffer.insert(buffer.end(), key.begin(), key.end());
+        append_u16(buffer, static_cast<std::uint16_t>(value.size()));
+        buffer.insert(buffer.end(), value.begin(), value.end());
+    }
+
     return std::string{kScheme} + base64_encode(buffer);
 }
 
@@ -148,7 +190,7 @@ Manifest decode_manifest(const std::string& uri) {
     }
 
     const auto version = payload[offset++];
-    if (version != kManifestVersion) {
+    if (version != 1 && version != kManifestVersion) {
         throw std::invalid_argument("unsupported manifest version");
     }
 
@@ -181,6 +223,41 @@ Manifest decode_manifest(const std::string& uri) {
         std::copy_n(payload.begin() + offset, shard.value.size(), shard.value.begin());
         offset += shard.value.size();
         manifest.shards.push_back(shard);
+    }
+
+    manifest.metadata.clear();
+
+    if (version == 1) {
+        return manifest;
+    }
+
+    if (offset >= payload.size()) {
+        return manifest;
+    }
+
+    const auto metadata_count = payload[offset++];
+    for (std::size_t index = 0; index < metadata_count; ++index) {
+        if (offset >= payload.size()) {
+            throw std::invalid_argument("manifest metadata truncated");
+        }
+        const auto key_length = payload[offset++];
+        if (offset + key_length > payload.size()) {
+            throw std::invalid_argument("manifest metadata key truncated");
+        }
+        std::string key(payload.begin() + offset, payload.begin() + offset + key_length);
+        offset += key_length;
+
+        if (offset + 1 >= payload.size()) {
+            throw std::invalid_argument("manifest metadata value truncated");
+        }
+        const auto value_length = read_u16(payload, offset);
+        offset += 2;
+        if (offset + value_length > payload.size()) {
+            throw std::invalid_argument("manifest metadata value truncated");
+        }
+        std::string value(payload.begin() + offset, payload.begin() + offset + value_length);
+        offset += value_length;
+        manifest.metadata.emplace(std::move(key), std::move(value));
     }
 
     return manifest;
