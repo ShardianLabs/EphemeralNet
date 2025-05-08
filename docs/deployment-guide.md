@@ -28,6 +28,8 @@ Runtime options are specified via CLI flags or the control daemon configuration 
 - `--no-wipe` / `--wipe-passes <n>`: Secure wipe control (default one pass).
 - `--default-ttl <seconds>`: Override default chunk TTL.
 - `--min-ttl <seconds>` / `--max-ttl <seconds>`: Bound manifest TTLs accepted and advertised.
+- `--key-rotation <seconds>`: Rotate session keys on the specified cadence (defaults to 600 seconds, clamped between 5 seconds and 1 hour).
+- `--announce-interval <seconds>` / `--announce-burst <n>` / `--announce-window <seconds>` / `--announce-pow <difficulty>`: Rate-limit announce broadcasts with a token bucket and optional proof-of-work gate (interval/window default to 60 seconds, burst defaults to 5 tokens, PoW defaults to 0).
 - `--control-host` / `--control-port`: Customize the control socket endpoint.
 - `--identity-seed <n>`: Deterministic peer identity for reproducible deployments.
 - `--fetch-parallel <n>` / `--upload-parallel <n>`: Tune control-plane fetch/upload concurrency (0 = unlimited).
@@ -64,7 +66,7 @@ The CLI spawns a detached process and waits until the daemon responds to `PING`.
 
 - `eph status`: prints connected peer count, local chunk inventory, and transport port.
 - `eph list`: dumps chunk metadata including TTL remaining.
-- `eph defaults`: shows effective TTL bounds, control endpoint, and concurrency limits.
+- `eph defaults`: shows effective TTL bounds, control endpoint, announce throttling (interval, burst, window, PoW), and concurrency limits.
 - `eph --version`: reports the CLI build version.
 - `eph man`: displays the integrated manual with command and option reference.
 - `eph fetch` / `store`: round-trip validations for storage and replication.
@@ -74,6 +76,8 @@ The CLI spawns a detached process and waits until the daemon responds to `PING`.
 - Run the daemon under a dedicated user account with restricted filesystem permissions.
 - Place the control socket on `127.0.0.1` or a private interface; never expose it unprotected.
 - Enable secure wiping (`--wipe-passes`) when storing sensitive material on persistent volumes.
+- Keep the key rotation interval short for volatile clusters. Use `--key-rotation 300` (5 minutes) together with tight TTL bounds (e.g., `--min-ttl 30`, `--max-ttl 900`) when handling highly sensitive data.
+- Limit announce pressure against the DHT by tuning rate limits: `--announce-interval 30 --announce-burst 3 --announce-window 120 --announce-pow 8` is a hardened baseline for untrusted peers.
 - Monitor the storage directory disk usage and configure OS-level quotas if required.
 
 ## Upgrade Workflow

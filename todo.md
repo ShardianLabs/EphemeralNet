@@ -49,6 +49,11 @@
 - Authored architecture, protocol, deployment, and troubleshooting guides under `docs/`.
 - CLI fetch now defaults to the working directory (preserving stored filename metadata) with user-overridable directory/name settings and exposes a `defaults` command to report daemon TTL/configuration baselines.
 - CLI exposes `--version` and an integrated `man` command for quick reference.
+- CLI surfaces configurable key rotation via `--key-rotation`, reports the active interval in `defaults`, and documents TTL/key rotation guardrails for operators.
+- CLI exposes configurable announce rate limiting (interval, burst, window, PoW) with validation, defaults reporting, and documentation updates for operator hardening.
+- Authored `docs/performance-tuning.md` with sizing recommendations, announce throttle baselines, observability checkpoints, and capacity planning guidance (referenced from README and ops playbooks).
+- Established governance and acceptable-use policy for public bootstrap/STUN infrastructure (`docs/governance-and-aaup.md`) and linked it from operator runbooks.
+- Control-plane daemon emits structured JSON logs and exposes Prometheus-style counters via the `METRICS` command for observability.
 
 ## Next milestones
 - **TESTING**
@@ -56,16 +61,15 @@
 	- Automate end-to-end store/fetch scenarios with induced failures and plan rotation.
 - **SECURITY**
 	- Review crypto hardening (key rotation policy, TTL limits, Announce rate limiting).
-		- Existing controls: Automatic session key rotation via `KeyManager`, TTL audit cross-checks for storage/DHT, CLI validation of TTL defaults.
-		- Outstanding: Document rotation cadence, enforce configurable TTL bounds, introduce Announce rate limiting in the SwarmCoordinator/CLI pipeline.
+		- Existing controls: Automatic session key rotation via `KeyManager`, TTL audit cross-checks for storage/DHT, CLI validation of TTL defaults, operator guidance on rotation cadence and TTL guardrails, and configurable Announce rate limiting (interval/burst/window/PoW) surfaced via CLI defaults reporting.
+		- Outstanding: Re-evaluate announce thresholds after soak testing and telemetry review; tune defaults based on gathered metrics.
 	- Design and implement anti-Sybil/spam defences (lightweight Proof-of-Work or equivalent for costly operations).
 		- Existing controls: Per-peer reputation tracking, HMAC-authenticated transport, rate-aware fetch scheduler and chunk ledger accounting.
 		- Outstanding: Define a proof-of-work or stake cost for Announce/store operations, integrate challenge verification in handshake, extend reputation penalties for failed or abusive attempts.
 - **OPS & OBSERVABILITY**
-	- Integrate structured logging and metrics exporters (Prometheus/OpenTelemetry).
 	- Prepare deployment scripts and CI/CD pipelines for Windows/Linux/macOS (Docker, PPA/Copr, Homebrew).
 	- Manage reproducible packaging and binary signing.
-	- Define governance and abuse policies (AUP) for public bootstrap/STUN nodes and enforcement processes.
+	- Review governance and abuse policy effectiveness quarterly; feed incident learnings back into the runbook.
 - **PRODUCT**
 	- Complete the public `libephemeralnet` API (versioning, documentation, usage examples).
 	- Finalise `ephemeralnet-cli` with diagnostics commands and scripting support.

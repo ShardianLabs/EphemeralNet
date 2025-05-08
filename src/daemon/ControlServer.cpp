@@ -1,4 +1,5 @@
 #include "ephemeralnet/daemon/ControlPlane.hpp"
+#include "ephemeralnet/daemon/StructuredLogger.hpp"
 
 #include "ephemeralnet/Config.hpp"
 #include "ephemeralnet/Types.hpp"
@@ -318,6 +319,107 @@ ControlFields make_error(std::string_view code, std::string_view message, std::s
     return fields;
 }
 
+void log_event(StructuredLogger::Level level,
+               std::string_view event,
+               StructuredLogger::FieldList fields = {}) {
+    StructuredLogger::instance().log(level, event, std::move(fields));
+}
+
+struct Metrics {
+    std::atomic<std::uint64_t> control_connections_total{0};
+    std::atomic<std::uint64_t> control_parse_failures_total{0};
+    std::atomic<std::uint64_t> control_unsupported_total{0};
+    std::atomic<std::uint64_t> command_ping_requests_total{0};
+    std::atomic<std::uint64_t> command_status_requests_total{0};
+    std::atomic<std::uint64_t> command_list_requests_total{0};
+    std::atomic<std::uint64_t> command_defaults_requests_total{0};
+    std::atomic<std::uint64_t> command_stop_requests_total{0};
+    std::atomic<std::uint64_t> command_metrics_requests_total{0};
+    std::atomic<std::uint64_t> command_store_requests_total{0};
+    std::atomic<std::uint64_t> command_store_success_total{0};
+    std::atomic<std::uint64_t> command_store_bytes_total{0};
+    std::atomic<std::uint64_t> command_store_rate_limited_total{0};
+    std::atomic<std::uint64_t> command_store_auth_failures_total{0};
+    std::atomic<std::uint64_t> command_fetch_requests_total{0};
+    std::atomic<std::uint64_t> command_fetch_success_total{0};
+    std::atomic<std::uint64_t> command_fetch_stream_success_total{0};
+    std::atomic<std::uint64_t> command_fetch_bytes_total{0};
+    std::atomic<std::uint64_t> command_fetch_rate_limited_total{0};
+    std::atomic<std::uint64_t> command_fetch_auth_failures_total{0};
+
+    std::string render_prometheus() const {
+        std::ostringstream oss;
+        auto emit_counter = [&](std::string_view name, std::string_view help, std::uint64_t value) {
+            oss << "# HELP " << name << ' ' << help << "\n";
+            oss << "# TYPE " << name << " counter\n";
+            oss << name << ' ' << value << "\n";
+        };
+
+        emit_counter("ephemeralnet_control_connections_total",
+                      "Total control connections accepted.",
+                      control_connections_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_control_parse_failures_total",
+                      "Control requests rejected during parsing.",
+                      control_parse_failures_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_control_unsupported_total",
+                      "Unsupported control commands received.",
+                      control_unsupported_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_command_ping_requests_total",
+                      "PING commands processed.",
+                      command_ping_requests_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_command_status_requests_total",
+                      "STATUS commands processed.",
+                      command_status_requests_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_command_list_requests_total",
+                      "LIST commands processed.",
+                      command_list_requests_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_command_defaults_requests_total",
+                      "DEFAULTS commands processed.",
+                      command_defaults_requests_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_command_stop_requests_total",
+                      "STOP commands processed.",
+                      command_stop_requests_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_command_metrics_requests_total",
+                      "METRICS commands processed.",
+                      command_metrics_requests_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_command_store_requests_total",
+                      "STORE commands processed.",
+                      command_store_requests_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_command_store_success_total",
+                      "Successful STORE commands.",
+                      command_store_success_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_command_store_bytes_total",
+                      "Bytes uploaded via STORE.",
+                      command_store_bytes_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_command_store_rate_limited_total",
+                      "STORE commands rejected by rate limiting.",
+                      command_store_rate_limited_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_command_store_auth_failures_total",
+                      "STORE commands rejected by authentication.",
+                      command_store_auth_failures_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_command_fetch_requests_total",
+                      "FETCH commands processed.",
+                      command_fetch_requests_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_command_fetch_success_total",
+                      "Successful FETCH commands.",
+                      command_fetch_success_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_command_fetch_stream_success_total",
+                      "Successful streaming FETCH commands.",
+                      command_fetch_stream_success_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_command_fetch_bytes_total",
+                      "Bytes transferred via FETCH.",
+                      command_fetch_bytes_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_command_fetch_rate_limited_total",
+                      "FETCH commands rejected by rate limiting.",
+                      command_fetch_rate_limited_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_command_fetch_auth_failures_total",
+                      "FETCH commands rejected by authentication.",
+                      command_fetch_auth_failures_total.load(std::memory_order_relaxed));
+
+        return oss.str();
+    }
+};
+
 }  // namespace
 
 class ControlServer::Impl {
@@ -396,6 +498,7 @@ private:
     Node& node_;
     std::mutex& node_mutex_;
     StopCallback stop_callback_;
+    Metrics metrics_{};
     std::atomic<bool> running_{false};
     NativeSocket listen_socket_{kInvalidSocket};
     std::thread accept_thread_;
@@ -459,6 +562,10 @@ private:
                 remote_address = buffer;
             }
 #endif
+            metrics_.control_connections_total.fetch_add(1, std::memory_order_relaxed);
+            log_event(StructuredLogger::Level::Info,
+                      "control.connection.accepted",
+                      {{"remote", remote_address}});
             handle_client(client, remote_address);
             close_socket(client);
         }
@@ -488,11 +595,16 @@ private:
             return;
         }
         if (!parse.success) {
+            metrics_.control_parse_failures_total.fetch_add(1, std::memory_order_relaxed);
             auto error = make_error(parse.error_code.empty() ? "ERR_CONTROL_REQUEST"
                                                              : parse.error_code,
                                      parse.error_message.empty() ? "Malformed control request"
                                                                  : parse.error_message,
                                      parse.error_hint);
+            log_event(StructuredLogger::Level::Warning,
+                      "control.request.parse_error",
+                      {{"remote", remote_identity},
+                       {"code", error.count("CODE") ? error.at("CODE") : std::string("ERR_CONTROL_REQUEST")}});
             send_response(client, std::move(error), false);
             return;
         }
@@ -500,52 +612,77 @@ private:
         auto request = std::move(parse.request);
         const auto it = request.fields.find("COMMAND");
         if (it == request.fields.end()) {
+            metrics_.control_parse_failures_total.fetch_add(1, std::memory_order_relaxed);
             auto error = make_error("ERR_MISSING_COMMAND",
                                     "COMMAND header missing",
                                     "Include the COMMAND header in the request");
+            log_event(StructuredLogger::Level::Warning,
+                      "control.request.missing_command",
+                      {{"remote", remote_identity}});
             send_response(client, error, false);
             return;
         }
 
         const auto command = to_upper(it->second);
         if (command == "PING") {
+            metrics_.command_ping_requests_total.fetch_add(1, std::memory_order_relaxed);
             auto fields = make_ok("OK_PING");
             fields["MESSAGE"] = "pong";
             send_response(client, fields, true);
+            log_event(StructuredLogger::Level::Info,
+                      "control.command.ping",
+                      {{"remote", remote_identity},
+                       {"code", fields.at("CODE")}});
             return;
         }
         if (command == "STATUS") {
-            handle_status(client);
+            metrics_.command_status_requests_total.fetch_add(1, std::memory_order_relaxed);
+            handle_status(client, remote_identity);
             return;
         }
         if (command == "STOP") {
-            handle_stop(client);
+            metrics_.command_stop_requests_total.fetch_add(1, std::memory_order_relaxed);
+            handle_stop(client, remote_identity);
             return;
         }
         if (command == "LIST") {
-            handle_list(client);
+            metrics_.command_list_requests_total.fetch_add(1, std::memory_order_relaxed);
+            handle_list(client, remote_identity);
             return;
         }
         if (command == "DEFAULTS") {
-            handle_defaults(client);
+            metrics_.command_defaults_requests_total.fetch_add(1, std::memory_order_relaxed);
+            handle_defaults(client, remote_identity);
+            return;
+        }
+        if (command == "METRICS") {
+            metrics_.command_metrics_requests_total.fetch_add(1, std::memory_order_relaxed);
+            handle_metrics(client, remote_identity);
             return;
         }
         if (command == "STORE") {
+            metrics_.command_store_requests_total.fetch_add(1, std::memory_order_relaxed);
             handle_store(client, std::move(request), remote_identity);
             return;
         }
         if (command == "FETCH") {
+            metrics_.command_fetch_requests_total.fetch_add(1, std::memory_order_relaxed);
             handle_fetch(client, request, remote_identity);
             return;
         }
 
+        metrics_.control_unsupported_total.fetch_add(1, std::memory_order_relaxed);
         auto error = make_error("ERR_UNSUPPORTED_COMMAND",
                                 "Unsupported command",
                                 "Check the control API documentation");
+        log_event(StructuredLogger::Level::Warning,
+                  "control.command.unsupported",
+                  {{"remote", remote_identity},
+                   {"command", command}});
         send_response(client, error, false);
     }
 
-    void handle_status(NativeSocket client) {
+    void handle_status(NativeSocket client, const std::string& remote_identity) {
         std::size_t peers = 0;
         std::size_t chunks = 0;
         std::uint16_t port = 0;
@@ -561,18 +698,27 @@ private:
                              {"CHUNKS", std::to_string(chunks)},
                              {"TRANSPORT_PORT", std::to_string(port)}};
         send_response(client, fields, true);
+        log_event(StructuredLogger::Level::Info,
+                  "control.command.status",
+                  {{"remote", remote_identity},
+                   {"peers", std::to_string(peers)},
+                   {"chunks", std::to_string(chunks)},
+                   {"transport_port", std::to_string(port)}});
     }
 
-    void handle_stop(NativeSocket client) {
+    void handle_stop(NativeSocket client, const std::string& remote_identity) {
         auto fields = make_ok("OK_STOP");
         fields["MESSAGE"] = "Stopping daemon";
         send_response(client, fields, true);
+        log_event(StructuredLogger::Level::Info,
+                  "control.command.stop",
+                  {{"remote", remote_identity}});
         if (stop_callback_) {
             stop_callback_();
         }
     }
 
-    void handle_list(NativeSocket client) {
+    void handle_list(NativeSocket client, const std::string& remote_identity) {
         std::vector<ChunkStore::SnapshotEntry> snapshot;
         {
             std::scoped_lock lock(node_mutex_);
@@ -594,9 +740,13 @@ private:
 
         fields["ENTRIES"] = entries.str();
         send_response(client, fields, true);
+        log_event(StructuredLogger::Level::Info,
+                  "control.command.list",
+                  {{"remote", remote_identity},
+                   {"count", std::to_string(snapshot.size())}});
     }
 
-    void handle_defaults(NativeSocket client) {
+    void handle_defaults(NativeSocket client, const std::string& remote_identity) {
         Config config_copy{};
         {
             std::scoped_lock lock(node_mutex_);
@@ -607,6 +757,11 @@ private:
                              {"DEFAULT_TTL", std::to_string(config_copy.default_chunk_ttl.count())},
                              {"MIN_TTL", std::to_string(config_copy.min_manifest_ttl.count())},
                              {"MAX_TTL", std::to_string(config_copy.max_manifest_ttl.count())},
+                             {"KEY_ROTATION", std::to_string(config_copy.key_rotation_interval.count())},
+                             {"ANNOUNCE_INTERVAL", std::to_string(config_copy.announce_min_interval.count())},
+                             {"ANNOUNCE_BURST", std::to_string(config_copy.announce_burst_limit)},
+                             {"ANNOUNCE_WINDOW", std::to_string(config_copy.announce_burst_window.count())},
+                             {"ANNOUNCE_POW", std::to_string(config_copy.announce_pow_difficulty)},
                              {"CONTROL_HOST", config_copy.control_host},
                              {"CONTROL_PORT", std::to_string(config_copy.control_port)},
                              {"STORAGE_PERSISTENT", config_copy.storage_persistent_enabled ? "1" : "0"},
@@ -615,14 +770,49 @@ private:
                              {"UPLOAD_MAX_PARALLEL", std::to_string(config_copy.upload_max_parallel_transfers)}};
 
         send_response(client, fields, true);
+        log_event(StructuredLogger::Level::Info,
+                  "control.command.defaults",
+                  {{"remote", remote_identity}});
+    }
+
+    void handle_metrics(NativeSocket client, const std::string& remote_identity) {
+        const auto snapshot = metrics_.render_prometheus();
+        ControlFields fields{{"CODE", "OK_METRICS"}};
+        const auto payload = std::span<const std::uint8_t>(
+            reinterpret_cast<const std::uint8_t*>(snapshot.data()), snapshot.size());
+        send_response(client, fields, true, payload);
+        log_event(StructuredLogger::Level::Info,
+                  "control.command.metrics",
+                  {{"remote", remote_identity},
+                   {"bytes", std::to_string(snapshot.size())}});
     }
 
     void handle_store(NativeSocket client, ParsedRequest request, const std::string& remote_identity) {
+        auto respond_error = [&](ControlFields fields,
+                                 std::string_view reason,
+                                 bool auth_failure = false,
+                                 bool rate_limited = false) {
+            if (auth_failure) {
+                metrics_.command_store_auth_failures_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (rate_limited) {
+                metrics_.command_store_rate_limited_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            StructuredLogger::FieldList log_fields;
+            log_fields.emplace_back("remote", remote_identity);
+            log_fields.emplace_back("status", "error");
+            const auto code_it = fields.find("CODE");
+            log_fields.emplace_back("code", code_it != fields.end() ? code_it->second : std::string("UNKNOWN"));
+            log_fields.emplace_back("reason", std::string(reason));
+            log_event(StructuredLogger::Level::Warning, "control.command.store", std::move(log_fields));
+            send_response(client, std::move(fields), false);
+        };
+
         if (!request.payload_header_present) {
             auto error = make_error("ERR_STORE_PAYLOAD_REQUIRED",
                                     "STORE requires a streamed payload",
                                     "Upgrade the CLI and retry the command");
-            send_response(client, error, false);
+            respond_error(std::move(error), "payload_missing");
             return;
         }
 
@@ -630,7 +820,7 @@ private:
             auto error = make_error("ERR_STORE_PAYLOAD_TOO_LARGE",
                                     "Payload exceeds server allowance",
                                     "Reduce the file below 32 MiB");
-            send_response(client, error, false);
+            respond_error(std::move(error), "payload_too_large");
             return;
         }
 
@@ -654,14 +844,14 @@ private:
                 auto error = make_error("ERR_STORE_UNAUTHENTICATED",
                                         "Control token required",
                                         "Provide --control-token when invoking the CLI");
-                send_response(client, error, false);
+                respond_error(std::move(error), "auth_missing", true, false);
                 return;
             }
             if (!constant_time_equal(*control_token, token_it->second)) {
                 auto error = make_error("ERR_STORE_UNAUTHENTICATED",
                                         "Invalid control token",
                                         "Verify the shared secret configured on the daemon");
-                send_response(client, error, false);
+                respond_error(std::move(error), "auth_invalid", true, false);
                 return;
             }
             rate_identity = hashed_token_identity(token_it->second);
@@ -676,7 +866,7 @@ private:
                 auto error = make_error("ERR_STORE_TTL_INVALID",
                                         "Invalid TTL",
                                         "Use a positive integer value in seconds");
-                send_response(client, error, false);
+                respond_error(std::move(error), "ttl_invalid");
                 return;
             }
             ttl = std::chrono::seconds(*parsed);
@@ -687,7 +877,7 @@ private:
                                     "TTL outside permitted bounds",
                                     "Allowed range: " + std::to_string(min_ttl.count()) +
                                         "s - " + std::to_string(max_ttl.count()) + "s");
-            send_response(client, error, false);
+            respond_error(std::move(error), "ttl_out_of_range");
             return;
         }
 
@@ -695,7 +885,7 @@ private:
             auto error = make_error("ERR_STORE_RATE_LIMITED",
                                     "Too many STORE requests",
                                     "Wait a few seconds before retrying");
-            send_response(client, error, false);
+            respond_error(std::move(error), "rate_limited", false, true);
             return;
         }
 
@@ -743,17 +933,50 @@ private:
             fields["FILENAME"] = meta_it->second;
         }
 
+        metrics_.command_store_success_total.fetch_add(1, std::memory_order_relaxed);
+        metrics_.command_store_bytes_total.fetch_add(data_size, std::memory_order_relaxed);
+
+        StructuredLogger::FieldList log_fields;
+        log_fields.emplace_back("remote", remote_identity);
+        log_fields.emplace_back("status", "ok");
+        log_fields.emplace_back("size", std::to_string(data_size));
+        log_fields.emplace_back("ttl", std::to_string(expires_in));
+        if (original_name.has_value()) {
+            log_fields.emplace_back("filename", *original_name);
+        }
+        log_event(StructuredLogger::Level::Info, "control.command.store", std::move(log_fields));
+
         send_response(client, fields, true);
     }
 
     void handle_fetch(NativeSocket client, const ParsedRequest& request, const std::string& remote_identity) {
+        auto respond_error = [&](ControlFields fields,
+                                 std::string_view reason,
+                                 bool auth_failure = false,
+                                 bool rate_limited = false) {
+            if (auth_failure) {
+                metrics_.command_fetch_auth_failures_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (rate_limited) {
+                metrics_.command_fetch_rate_limited_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            StructuredLogger::FieldList log_fields;
+            log_fields.emplace_back("remote", remote_identity);
+            log_fields.emplace_back("status", "error");
+            const auto code_it = fields.find("CODE");
+            log_fields.emplace_back("code", code_it != fields.end() ? code_it->second : std::string("UNKNOWN"));
+            log_fields.emplace_back("reason", std::string(reason));
+            log_event(StructuredLogger::Level::Warning, "control.command.fetch", std::move(log_fields));
+            send_response(client, std::move(fields), false);
+        };
+
         const auto& fields = request.fields;
         const auto manifest_it = fields.find("MANIFEST");
         if (manifest_it == fields.end()) {
             auto error = make_error("ERR_FETCH_MANIFEST_REQUIRED",
                                     "FETCH requires MANIFEST",
                                     "Include MANIFEST:eph://... in the request");
-            send_response(client, error, false);
+            respond_error(std::move(error), "manifest_missing");
             return;
         }
 
@@ -764,7 +987,7 @@ private:
             auto error = make_error("ERR_FETCH_MANIFEST_INVALID",
                                     "Invalid manifest",
                                     "Ensure the eph:// URI is complete");
-            send_response(client, error, false);
+            respond_error(std::move(error), "manifest_invalid");
             return;
         }
 
@@ -785,7 +1008,7 @@ private:
             auto error = make_error("ERR_FETCH_OUT_REQUIRED",
                                     "FETCH requires OUT",
                                     "Add OUT:destination_path to the request or STREAM:client for streaming");
-            send_response(client, error, false);
+            respond_error(std::move(error), "destination_required");
             return;
         }
 
@@ -796,7 +1019,7 @@ private:
                 auto error = make_error("ERR_FETCH_MANIFEST_REGISTRATION",
                                         "Failed to register manifest",
                                         "The chunk TTL may have expired");
-                send_response(client, error, false);
+                respond_error(std::move(error), "manifest_registration_failed");
                 return;
             }
             chunk = node_.fetch_chunk(manifest.chunk_id);
@@ -806,7 +1029,7 @@ private:
             auto error = make_error("ERR_FETCH_CHUNK_MISSING",
                                     "Chunk not available locally",
                                     "Wait for it to arrive from the swarm or verify connectivity");
-            send_response(client, error, false);
+            respond_error(std::move(error), "chunk_missing");
             return;
         }
 
@@ -824,14 +1047,14 @@ private:
                     auto error = make_error("ERR_FETCH_UNAUTHENTICATED",
                                             "Control token required",
                                             "Provide --control-token when invoking the CLI");
-                    send_response(client, error, false);
+                    respond_error(std::move(error), "auth_missing", true, false);
                     return;
                 }
                 if (!constant_time_equal(*control_token, token_it->second)) {
                     auto error = make_error("ERR_FETCH_UNAUTHENTICATED",
                                             "Invalid control token",
                                             "Verify the shared secret configured on the daemon");
-                    send_response(client, error, false);
+                    respond_error(std::move(error), "auth_invalid", true, false);
                     return;
                 }
                 rate_identity = hashed_token_identity(token_it->second);
@@ -843,7 +1066,7 @@ private:
                 auto error = make_error("ERR_FETCH_RATE_LIMITED",
                                         "Too many FETCH requests",
                                         "Wait a few seconds before retrying");
-                send_response(client, error, false);
+                respond_error(std::move(error), "rate_limited", false, true);
                 return;
             }
 
@@ -851,13 +1074,25 @@ private:
                 auto error = make_error("ERR_FETCH_PAYLOAD_TOO_LARGE",
                                         "Chunk exceeds streaming allowance",
                                         "Adjust the payload limit or fetch locally on the daemon host");
-                send_response(client, error, false);
+                respond_error(std::move(error), "payload_too_large");
                 return;
             }
 
             ControlFields response_fields{{"CODE", "OK_FETCH"},
                                           {"SIZE", std::to_string(chunk->size())},
                                           {"STREAM", "CLIENT"}};
+            metrics_.command_fetch_success_total.fetch_add(1, std::memory_order_relaxed);
+            metrics_.command_fetch_stream_success_total.fetch_add(1, std::memory_order_relaxed);
+            metrics_.command_fetch_bytes_total.fetch_add(static_cast<std::uint64_t>(chunk->size()), std::memory_order_relaxed);
+
+            StructuredLogger::FieldList log_fields;
+            log_fields.emplace_back("remote", remote_identity);
+            log_fields.emplace_back("status", "ok");
+            log_fields.emplace_back("mode", "stream");
+            log_fields.emplace_back("size", std::to_string(chunk->size()));
+            log_fields.emplace_back("chunk_id", ephemeralnet::chunk_id_to_string(manifest.chunk_id));
+            log_event(StructuredLogger::Level::Info, "control.command.fetch", std::move(log_fields));
+
             send_response(client,
                           std::move(response_fields),
                           true,
@@ -871,14 +1106,26 @@ private:
             auto error = make_error("ERR_FETCH_WRITE_FAILED",
                                     ex.what(),
                                     "Verify write permissions and free disk space");
-            send_response(client, error, false);
+            respond_error(std::move(error), "write_failed");
             return;
         }
 
-    ControlFields response_fields{{"CODE", "OK_FETCH"},
-                      {"OUTPUT", output_path->string()},
-                      {"SIZE", std::to_string(chunk->size())}};
-    send_response(client, response_fields, true);
+        ControlFields response_fields{{"CODE", "OK_FETCH"},
+                                      {"OUTPUT", output_path->string()},
+                                      {"SIZE", std::to_string(chunk->size())}};
+        metrics_.command_fetch_success_total.fetch_add(1, std::memory_order_relaxed);
+        metrics_.command_fetch_bytes_total.fetch_add(static_cast<std::uint64_t>(chunk->size()), std::memory_order_relaxed);
+
+        StructuredLogger::FieldList log_fields;
+        log_fields.emplace_back("remote", remote_identity);
+        log_fields.emplace_back("status", "ok");
+        log_fields.emplace_back("mode", "file");
+        log_fields.emplace_back("size", std::to_string(chunk->size()));
+    log_fields.emplace_back("chunk_id", ephemeralnet::chunk_id_to_string(manifest.chunk_id));
+        log_fields.emplace_back("output", output_path->string());
+        log_event(StructuredLogger::Level::Info, "control.command.fetch", std::move(log_fields));
+
+        send_response(client, std::move(response_fields), true);
     }
 };
 

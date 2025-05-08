@@ -42,14 +42,6 @@ ctest --test-dir build
 
 > **Note:** The first `cmake` configure step generates the project files and the `build/` directory. Add `-DEPHEMERALNET_BUILD_TESTS=OFF` if you want to skip test targets.
 
-## Suggested next steps
-
-1. Implement a full networking layer for chunk exchange (UDP/TCP or QUIC).
-2. Replace `SessionManager` with a production-grade transport and end-to-end encryption.
-3. Add distributed TTL audits and coordinated cleanup.
-4. Expose a gRPC/REST API for node orchestration.
-5. Introduce a daemon mode with key management and remote CLI control.
-
 ## CLI
 
 The `eph` binary acts as a lightweight client for the daemon and exposes the most common control commands. Typical usage:
@@ -79,7 +71,7 @@ eph fetch eph://<manifest> ./downloads/
 # List locally stored chunks and remaining TTL
 eph list
 
-# Display daemon defaults (TTL window, control host, etc.)
+# Display daemon defaults (TTL window, control host, announce throttling, etc.)
 eph defaults
 
 # Read the integrated manual
@@ -89,7 +81,7 @@ eph man
 eph stop
 ```
 
-Global switches control persistence (`--no-persistent`), storage path (`--storage-dir`), secure wipe passes (`--wipe-passes`), deterministic identity (`--identity-seed`), control-plane endpoints (`--control-host`, `--control-port`), TTL bounds (`--min-ttl`, `--max-ttl`), concurrency (`--fetch-parallel`, `--upload-parallel`), fetch defaults (`--fetch-default-dir`, `--fetch-ignore-manifest-name`), and version/manual discovery (`--version`, `eph man`).
+Global switches control persistence (`--no-persistent`), storage path (`--storage-dir`), secure wipe passes (`--wipe-passes`), deterministic identity (`--identity-seed`), control-plane endpoints (`--control-host`, `--control-port`), TTL bounds (`--min-ttl`, `--max-ttl`), session key rotation cadence (`--key-rotation`), announce throttling (`--announce-interval`, `--announce-burst`, `--announce-window`, `--announce-pow`), concurrency (`--fetch-parallel`, `--upload-parallel`), fetch defaults (`--fetch-default-dir`, `--fetch-ignore-manifest-name`), and version/manual discovery (`--version`, `eph man`).
 
 > The `start` command reuses the same options as `serve` to configure the daemon before backgrounding it.
 
@@ -99,3 +91,5 @@ Global switches control persistence (`--no-persistent`), storage path (`--storag
 - [Control & Data Protocol](docs/protocol.md): control socket semantics and TTL lifecycle.
 - [Deployment Guide](docs/deployment-guide.md): build, configuration, and runtime operations.
 - [Troubleshooting](docs/troubleshooting.md): common failures and remediation steps.
+- [Performance Tuning Runbook](ops/performance-tuning.md): sizing guidance and announce throttling playbooks for operators.
+- [Governance & AUP](docs/governance-and-aaup.md): policies for operating public bootstrap/STUN infrastructure and handling abuse reports.

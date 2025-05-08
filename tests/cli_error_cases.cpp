@@ -121,6 +121,24 @@ int main() {
             return 1;
         }
 
+        const auto invalid_key_rotation = run_cli(executable, "--key-rotation 0 status");
+        if (invalid_key_rotation.exit_code == 0 || !expect_contains(invalid_key_rotation.output, "--key-rotation must be a positive integer")) {
+            std::cerr << "Failure on invalid --key-rotation. exit=" << invalid_key_rotation.exit_code << "\n" << invalid_key_rotation.output << std::endl;
+            return 1;
+        }
+
+        const auto invalid_announce_interval = run_cli(executable, "--announce-interval 0 status");
+        if (invalid_announce_interval.exit_code == 0 || !expect_contains(invalid_announce_interval.output, "--announce-interval must be a positive integer")) {
+            std::cerr << "Failure on invalid --announce-interval. exit=" << invalid_announce_interval.exit_code << "\n" << invalid_announce_interval.output << std::endl;
+            return 1;
+        }
+
+        const auto invalid_announce_pow = run_cli(executable, "--announce-pow 25 status");
+        if (invalid_announce_pow.exit_code == 0 || !expect_contains(invalid_announce_pow.output, "--announce-pow must be between 0 and 24")) {
+            std::cerr << "Failure on invalid --announce-pow. exit=" << invalid_announce_pow.exit_code << "\n" << invalid_announce_pow.output << std::endl;
+            return 1;
+        }
+
     } catch (const std::exception& ex) {
         std::cerr << "Exception during CLI tests: " << ex.what() << std::endl;
         return 1;

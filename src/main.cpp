@@ -68,6 +68,11 @@ struct GlobalOptions {
     std::optional<std::uint64_t> default_ttl_seconds{};
     std::optional<std::uint64_t> min_ttl_seconds{};
     std::optional<std::uint64_t> max_ttl_seconds{};
+    std::optional<std::uint64_t> key_rotation_seconds{};
+    std::optional<std::uint64_t> announce_interval_seconds{};
+    std::optional<std::uint64_t> announce_burst_limit{};
+    std::optional<std::uint64_t> announce_window_seconds{};
+    std::optional<std::uint64_t> announce_pow_difficulty{};
     std::optional<std::string> control_host{};
     std::optional<std::uint16_t> control_port{};
     std::optional<std::string> control_token{};
@@ -1086,9 +1091,20 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
     if (!options.max_ttl_seconds) {
         if (auto max_ttl = config::get_int64_any(profile, { {"node", "max_ttl_seconds"}, {"node", "max_ttl"} })) {
             if (*max_ttl <= 0) {
+    if (options.key_rotation_seconds) {
                 throw config::ConfigError("E_CONFIG_VALUE", "node.max_ttl_seconds must be positive");
+    }
             }
             options.max_ttl_seconds = static_cast<std::uint64_t>(*max_ttl);
+        }
+    }
+
+    if (!options.key_rotation_seconds) {
+        if (auto rotation = config::get_int64_any(profile, { {"node", "key_rotation_seconds"}, {"node", "key_rotation_interval"}, {"security", "key_rotation_seconds"}, {"security", "key_rotation_interval"} })) {
+            if (*rotation <= 0) {
+                throw config::ConfigError("E_CONFIG_VALUE", "key rotation interval must be positive");
+            }
+            options.key_rotation_seconds = static_cast<std::uint64_t>(*rotation);
         }
     }
 
@@ -1098,6 +1114,42 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
                 throw config::ConfigError("E_CONFIG_VALUE", "fetch.max_parallel must be between 0 and 65535");
             }
             options.fetch_parallel = static_cast<std::uint16_t>(*fetch_parallel);
+
+    if (!options.announce_interval_seconds) {
+        if (auto announce_interval = config::get_int64_any(profile, { {"announce", "min_interval"}, {"node", "announce_min_interval"} })) {
+            if (*announce_interval <= 0) {
+                throw config::ConfigError("E_CONFIG_VALUE", "announce.min_interval must be positive");
+            }
+            options.announce_interval_seconds = static_cast<std::uint64_t>(*announce_interval);
+        }
+    }
+
+    if (!options.announce_burst_limit) {
+        if (auto announce_burst = config::get_int64_any(profile, { {"announce", "burst_limit"}, {"node", "announce_burst_limit"} })) {
+            if (*announce_burst <= 0) {
+                throw config::ConfigError("E_CONFIG_VALUE", "announce.burst_limit must be positive");
+            }
+            options.announce_burst_limit = static_cast<std::uint64_t>(*announce_burst);
+        }
+    }
+
+    if (!options.announce_window_seconds) {
+        if (auto announce_window = config::get_int64_any(profile, { {"announce", "burst_window"}, {"node", "announce_burst_window"} })) {
+            if (*announce_window <= 0) {
+                throw config::ConfigError("E_CONFIG_VALUE", "announce.burst_window must be positive");
+            }
+            options.announce_window_seconds = static_cast<std::uint64_t>(*announce_window);
+        }
+    }
+
+    if (!options.announce_pow_difficulty) {
+        if (auto pow = config::get_int64_any(profile, { {"announce", "pow_difficulty"}, {"node", "announce_pow_difficulty"} })) {
+            if (*pow < 0 || *pow > 24) {
+                throw config::ConfigError("E_CONFIG_VALUE", "announce.pow_difficulty must be between 0 and 24");
+            }
+            options.announce_pow_difficulty = static_cast<std::uint64_t>(*pow);
+        }
+    }
         }
     }
 
@@ -1200,6 +1252,11 @@ void print_usage() {
               << "  --default-ttl <sec>       Default TTL for new chunks\n"
               << "  --min-ttl <sec>           Minimum TTL enforced for manifests\n"
               << "  --max-ttl <sec>           Maximum TTL permitted for manifests\n"
+              << "  --key-rotation <sec>      Session key rotation cadence\n"
+              << "  --announce-interval <sec> Minimum spacing between ANNOUNCE messages\n"
+              << "  --announce-burst <count>  Maximum ANNOUNCEs permitted per window\n"
+              << "  --announce-window <sec>   Rolling window for ANNOUNCE burst tracking\n"
+              << "  --announce-pow <bits>     Proof-of-work difficulty for ANNOUNCE (0-24)\n"
               << "  --control-host <host>     Control socket host (default 127.0.0.1)\n"
               << "  --control-port <port>     Control socket port (default 47777)\n"
               << "  --control-token <secret>  Pre-shared token for control-plane authentication\n"
@@ -1299,6 +1356,13 @@ void print_manual() {
               << "    --default-ttl <sec>    Default TTL for stored chunks.\n"
               << "    --min-ttl <sec>        Minimum TTL accepted for manifests.\n"
               << "    --max-ttl <sec>        Maximum TTL advertised for manifests.\n"
+              << "    --key-rotation <sec>   Session key rotation interval.\n"
+              << "    --announce-interval <sec>\n"
+              << "                          Minimum spacing between ANNOUNCE messages.\n"
+              << "    --announce-burst <n>  Maximum ANNOUNCE count permitted per window.\n"
+              << "    --announce-window <sec>\n"
+              << "                          Rolling window length for burst enforcement.\n"
+              << "    --announce-pow <bits> Proof-of-work difficulty for ANNOUNCE (0-24).\n"
               << "    --control-host <host>  Control socket host.\n"
               << "    --control-port <port>  Control socket port.\n"
               << "    --control-token <tok>  Control-plane authentication token.\n"
@@ -1535,6 +1599,31 @@ void validate_global_options(GlobalOptions& options) {
                         "--max-ttl must be positive",
                         "Provide a value greater than zero");
     }
+    if (options.key_rotation_seconds && *options.key_rotation_seconds == 0) {
+        throw_cli_error("E_INVALID_KEY_ROTATION",
+                        "--key-rotation must be a positive integer",
+                        "Provide the interval in seconds, e.g. --key-rotation 600");
+    }
+    if (options.announce_interval_seconds && *options.announce_interval_seconds == 0) {
+        throw_cli_error("E_INVALID_ANNOUNCE_INTERVAL",
+                        "--announce-interval must be a positive integer",
+                        "Set a value greater than zero seconds");
+    }
+    if (options.announce_burst_limit && *options.announce_burst_limit == 0) {
+        throw_cli_error("E_INVALID_ANNOUNCE_BURST",
+                        "--announce-burst must be a positive integer",
+                        "Provide a burst limit greater than zero");
+    }
+    if (options.announce_window_seconds && *options.announce_window_seconds == 0) {
+        throw_cli_error("E_INVALID_ANNOUNCE_WINDOW",
+                        "--announce-window must be a positive integer",
+                        "Provide the rolling window in seconds");
+    }
+    if (options.announce_pow_difficulty && *options.announce_pow_difficulty > 24) {
+        throw_cli_error("E_INVALID_ANNOUNCE_POW",
+                        "--announce-pow must be between 0 and 24",
+                        "Use 0 to disable proof-of-work or a small integer");
+    }
     if (options.min_ttl_seconds && options.max_ttl_seconds && *options.min_ttl_seconds > *options.max_ttl_seconds) {
         throw_cli_error("E_INVALID_TTL_WINDOW",
                         "--min-ttl must be less than or equal to --max-ttl",
@@ -1612,6 +1701,21 @@ ephemeralnet::Config build_config(const GlobalOptions& options) {
     if (options.max_ttl_seconds) {
         config.max_manifest_ttl = std::chrono::seconds(*options.max_ttl_seconds);
     }
+    if (options.key_rotation_seconds) {
+        config.key_rotation_interval = std::chrono::seconds(*options.key_rotation_seconds);
+    }
+    if (options.announce_interval_seconds) {
+        config.announce_min_interval = std::chrono::seconds(*options.announce_interval_seconds);
+    }
+    if (options.announce_burst_limit) {
+        config.announce_burst_limit = static_cast<std::size_t>(*options.announce_burst_limit);
+    }
+    if (options.announce_window_seconds) {
+        config.announce_burst_window = std::chrono::seconds(*options.announce_window_seconds);
+    }
+    if (options.announce_pow_difficulty) {
+        config.announce_pow_difficulty = static_cast<std::uint8_t>(std::min<std::uint64_t>(*options.announce_pow_difficulty, 24));
+    }
     if (options.control_host) {
         config.control_host = strip_quotes(*options.control_host);
     }
@@ -1665,6 +1769,26 @@ std::vector<std::string> build_daemon_arguments(const GlobalOptions& options) {
     if (options.max_ttl_seconds) {
         args.emplace_back("--max-ttl");
         args.emplace_back(std::to_string(*options.max_ttl_seconds));
+    }
+    if (options.key_rotation_seconds) {
+        args.emplace_back("--key-rotation");
+        args.emplace_back(std::to_string(*options.key_rotation_seconds));
+    }
+    if (options.announce_interval_seconds) {
+        args.emplace_back("--announce-interval");
+        args.emplace_back(std::to_string(*options.announce_interval_seconds));
+    }
+    if (options.announce_burst_limit) {
+        args.emplace_back("--announce-burst");
+        args.emplace_back(std::to_string(*options.announce_burst_limit));
+    }
+    if (options.announce_window_seconds) {
+        args.emplace_back("--announce-window");
+        args.emplace_back(std::to_string(*options.announce_window_seconds));
+    }
+    if (options.announce_pow_difficulty) {
+        args.emplace_back("--announce-pow");
+        args.emplace_back(std::to_string(*options.announce_pow_difficulty));
     }
     if (options.control_host) {
         args.emplace_back("--control-host");
@@ -2031,6 +2155,61 @@ int main(int argc, char** argv) {
                 options.max_ttl_seconds = ttl;
                 continue;
             }
+            if (opt == "--key-rotation") {
+                const auto value = require_value(opt);
+                std::uint64_t interval{};
+                if (!parse_uint64(value, interval) || interval == 0) {
+                    throw_cli_error("E_INVALID_KEY_ROTATION",
+                                    "--key-rotation must be a positive integer",
+                                    "Provide the interval in seconds, e.g. --key-rotation 600");
+                }
+                options.key_rotation_seconds = interval;
+                continue;
+            }
+            if (opt == "--announce-interval") {
+                const auto value = require_value(opt);
+                std::uint64_t interval{};
+                if (!parse_uint64(value, interval) || interval == 0) {
+                    throw_cli_error("E_INVALID_ANNOUNCE_INTERVAL",
+                                    "--announce-interval must be a positive integer",
+                                    "Provide the minimum spacing between announces in seconds, e.g. --announce-interval 2");
+                }
+                options.announce_interval_seconds = interval;
+                continue;
+            }
+            if (opt == "--announce-burst") {
+                const auto value = require_value(opt);
+                std::uint64_t limit{};
+                if (!parse_uint64(value, limit) || limit == 0) {
+                    throw_cli_error("E_INVALID_ANNOUNCE_BURST",
+                                    "--announce-burst must be a positive integer",
+                                    "Specify how many announces are allowed per window, e.g. --announce-burst 8");
+                }
+                options.announce_burst_limit = limit;
+                continue;
+            }
+            if (opt == "--announce-window") {
+                const auto value = require_value(opt);
+                std::uint64_t window{};
+                if (!parse_uint64(value, window) || window == 0) {
+                    throw_cli_error("E_INVALID_ANNOUNCE_WINDOW",
+                                    "--announce-window must be a positive integer",
+                                    "Provide the rolling window length in seconds, e.g. --announce-window 30");
+                }
+                options.announce_window_seconds = window;
+                continue;
+            }
+            if (opt == "--announce-pow") {
+                const auto value = require_value(opt);
+                std::uint64_t difficulty{};
+                if (!parse_uint64(value, difficulty) || difficulty > 24) {
+                    throw_cli_error("E_INVALID_ANNOUNCE_POW",
+                                    "--announce-pow must be between 0 and 24",
+                                    "Use 0 to disable proof-of-work or a small integer number of leading zero bits");
+                }
+                options.announce_pow_difficulty = difficulty;
+                continue;
+            }
             if (opt == "--control-host") {
                 options.control_host = require_value(opt);
                 continue;
@@ -2320,6 +2499,11 @@ int main(int argc, char** argv) {
             const auto default_ttl = response->fields.contains("DEFAULT_TTL") ? response->fields.at("DEFAULT_TTL") : std::string("0");
             const auto min_ttl = response->fields.contains("MIN_TTL") ? response->fields.at("MIN_TTL") : std::string("0");
             const auto max_ttl = response->fields.contains("MAX_TTL") ? response->fields.at("MAX_TTL") : std::string("0");
+            const auto key_rotation = response->fields.contains("KEY_ROTATION") ? response->fields.at("KEY_ROTATION") : std::string("0");
+            const auto announce_interval = response->fields.contains("ANNOUNCE_INTERVAL") ? response->fields.at("ANNOUNCE_INTERVAL") : std::string("0");
+            const auto announce_burst = response->fields.contains("ANNOUNCE_BURST") ? response->fields.at("ANNOUNCE_BURST") : std::string("0");
+            const auto announce_window = response->fields.contains("ANNOUNCE_WINDOW") ? response->fields.at("ANNOUNCE_WINDOW") : std::string("0");
+            const auto announce_pow = response->fields.contains("ANNOUNCE_POW") ? response->fields.at("ANNOUNCE_POW") : std::string("0");
             const auto control_host = response->fields.contains("CONTROL_HOST") ? response->fields.at("CONTROL_HOST") : std::string("127.0.0.1");
             const auto control_port = response->fields.contains("CONTROL_PORT") ? response->fields.at("CONTROL_PORT") : std::string("47777");
             const auto storage_persistent = response->fields.contains("STORAGE_PERSISTENT") ? response->fields.at("STORAGE_PERSISTENT") : std::string("0");
@@ -2329,6 +2513,10 @@ int main(int argc, char** argv) {
 
             std::cout << "  Default TTL:        " << default_ttl << " seconds" << std::endl;
             std::cout << "  TTL window:         " << min_ttl << "s - " << max_ttl << "s" << std::endl;
+            std::cout << "  Key rotation:       " << key_rotation << " seconds" << std::endl;
+            std::cout << "  Announce interval:  every " << announce_interval << " seconds" << std::endl;
+            std::cout << "  Announce burst:     " << announce_burst << " events / " << announce_window << "s window" << std::endl;
+            std::cout << "  Announce PoW:       " << announce_pow << " leading zero bits" << std::endl;
             std::cout << "  Control endpoint:   " << control_host << ':' << control_port << std::endl;
             std::cout << "  Persistent storage: "
                       << (storage_persistent == "1" ? "enabled" : "disabled")
