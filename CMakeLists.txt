@@ -423,6 +423,23 @@ if(EPHEMERALNET_BUILD_TESTS)
 
     add_test(NAME EphemeralNet.FetchPriority COMMAND ephemeralnet_fetch_priority_tests)
 
+    add_executable(ephemeralnet_multi_node_integration_tests
+        tests/multi_node_integration.cpp
+    )
+
+    target_link_libraries(ephemeralnet_multi_node_integration_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_multi_node_integration_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_multi_node_integration_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.MultiNodeIntegration COMMAND ephemeralnet_multi_node_integration_tests)
+
     add_executable(ephemeralnet_upload_choking_tests
         tests/upload_choking.cpp
     )

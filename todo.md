@@ -54,10 +54,10 @@
 - Authored `docs/performance-tuning.md` with sizing recommendations, announce throttle baselines, observability checkpoints, and capacity planning guidance (referenced from README and ops playbooks).
 - Established governance and acceptable-use policy for public bootstrap/STUN infrastructure (`docs/governance-and-aaup.md`) and linked it from operator runbooks.
 - Control-plane daemon emits structured JSON logs and exposes Prometheus-style counters via the `METRICS` command for observability.
+- Added a deterministic multi-node integration harness that simulates bounded latency and intentional packet loss to validate end-to-end chunk replication under degraded conditions.
 
 ## Next milestones
 - **TESTING**
-	- Build a multi-node integration harness with latency/loss simulation.
 	- Automate end-to-end store/fetch scenarios with induced failures and plan rotation.
 - **SECURITY**
 	- Review crypto hardening (key rotation policy, TTL limits, Announce rate limiting).

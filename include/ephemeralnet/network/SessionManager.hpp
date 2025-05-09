@@ -4,6 +4,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -48,6 +49,13 @@ public:
     bool send(const PeerId& peer_id, std::span<const std::uint8_t> payload);
 
     std::size_t active_session_count() const;
+
+    struct TestHooks {
+        std::function<void(const PeerId&, std::size_t)> before_send;
+        std::function<bool(const TransportMessage&)> drop_receive;
+    };
+
+    static void set_test_hooks(const TestHooks* hooks);
 
 private:
     struct Session {

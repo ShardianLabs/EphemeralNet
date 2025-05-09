@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <exception>
@@ -85,6 +86,8 @@ std::array<std::uint8_t, kPeerIdSize> peer_id_bytes(const ephemeralnet::PeerId& 
     std::copy(peer_id.begin(), peer_id.end(), bytes.begin());
     return bytes;
 }
+
+std::atomic<const ephemeralnet::network::SessionManager::TestHooks*> g_test_hooks{nullptr};
 
 }  // namespace
 
@@ -289,6 +292,12 @@ bool SessionManager::send(const PeerId& peer_id, std::span<const std::uint8_t> p
         return false;
     }
 
+    if (const auto* hooks = g_test_hooks.load(std::memory_order_acquire)) {
+        if (hooks->before_send) {
+            hooks->before_send(peer_id, payload.size());
+        }
+    }
+
     if (payload.size() > kMaxPayloadSize) {
         return false;
     }
@@ -412,6 +421,15 @@ void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session
             message.peer_id = peer_id;
             message.endpoint = session->endpoint;
             message.payload = std::move(plaintext);
+            bool drop = false;
+            if (const auto* hooks = g_test_hooks.load(std::memory_order_acquire)) {
+                if (hooks->drop_receive) {
+                    drop = hooks->drop_receive(message);
+                }
+            }
+            if (drop) {
+                continue;
+            }
             handler_copy(message);
         }
     }
@@ -522,6 +540,10 @@ bool SessionManager::configure_socket(SocketHandle handle, bool server_mode) {
     }
 
     return true;
+}
+
+void SessionManager::set_test_hooks(const TestHooks* hooks) {
+    g_test_hooks.store(hooks, std::memory_order_release);
 }
 
 SessionManager::SocketHandle SessionManager::create_socket() {
