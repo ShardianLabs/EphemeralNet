@@ -134,6 +134,28 @@ public:
         return snapshot;
     }
 
+    static std::optional<SwarmDistributionPlan> swarm_plan(const Node& node, const ChunkId& chunk_id) {
+        const auto key = chunk_id_to_string(chunk_id);
+        const auto it = node.swarm_plans_.find(key);
+        if (it == node.swarm_plans_.end()) {
+            return std::nullopt;
+        }
+        return it->second;
+    }
+
+    static void rebroadcast_manifest(Node& node, const ChunkId& chunk_id) {
+        const auto key = chunk_id_to_string(chunk_id);
+        const auto it = node.manifest_cache_.find(key);
+        if (it == node.manifest_cache_.end()) {
+            return;
+        }
+        node.broadcast_manifest(it->second);
+    }
+
+    static void withdraw_provider(Node& node, const ChunkId& chunk_id, const PeerId& provider) {
+        node.dht_.withdraw_contact(chunk_id, provider);
+    }
+
     static std::optional<std::array<std::uint8_t, 32>> rotate_key(Node& node,
                                                                   const PeerId& peer_id,
                                                                   std::chrono::steady_clock::time_point when) {

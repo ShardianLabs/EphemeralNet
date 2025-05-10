@@ -55,10 +55,9 @@
 - Established governance and acceptable-use policy for public bootstrap/STUN infrastructure (`docs/governance-and-aaup.md`) and linked it from operator runbooks.
 - Control-plane daemon emits structured JSON logs and exposes Prometheus-style counters via the `METRICS` command for observability.
 - Added a deterministic multi-node integration harness that simulates bounded latency and intentional packet loss to validate end-to-end chunk replication under degraded conditions.
+- Automated end-to-end store/fetch scenarios with induced failures and plan rotation inside the multi-node harness.
 
 ## Next milestones
-- **TESTING**
-	- Automate end-to-end store/fetch scenarios with induced failures and plan rotation.
 - **SECURITY**
 	- Review crypto hardening (key rotation policy, TTL limits, Announce rate limiting).
 		- Existing controls: Automatic session key rotation via `KeyManager`, TTL audit cross-checks for storage/DHT, CLI validation of TTL defaults, operator guidance on rotation cadence and TTL guardrails, and configurable Announce rate limiting (interval/burst/window/PoW) surfaced via CLI defaults reporting.

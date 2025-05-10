@@ -440,6 +440,23 @@ if(EPHEMERALNET_BUILD_TESTS)
 
     add_test(NAME EphemeralNet.MultiNodeIntegration COMMAND ephemeralnet_multi_node_integration_tests)
 
+    add_executable(ephemeralnet_store_fetch_plan_rotation_tests
+        tests/store_fetch_plan_rotation.cpp
+    )
+
+    target_link_libraries(ephemeralnet_store_fetch_plan_rotation_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_store_fetch_plan_rotation_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_store_fetch_plan_rotation_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.StoreFetchPlanRotation COMMAND ephemeralnet_store_fetch_plan_rotation_tests)
+
     add_executable(ephemeralnet_upload_choking_tests
         tests/upload_choking.cpp
     )
