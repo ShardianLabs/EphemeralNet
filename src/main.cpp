@@ -1602,7 +1602,7 @@ void validate_global_options(GlobalOptions& options) {
     if (options.key_rotation_seconds && *options.key_rotation_seconds == 0) {
         throw_cli_error("E_INVALID_KEY_ROTATION",
                         "--key-rotation must be a positive integer",
-                        "Provide the interval in seconds, e.g. --key-rotation 600");
+                        "Provide the interval in seconds, e.g. --key-rotation 300");
     }
     if (options.announce_interval_seconds && *options.announce_interval_seconds == 0) {
         throw_cli_error("E_INVALID_ANNOUNCE_INTERVAL",
@@ -2161,7 +2161,7 @@ int main(int argc, char** argv) {
                 if (!parse_uint64(value, interval) || interval == 0) {
                     throw_cli_error("E_INVALID_KEY_ROTATION",
                                     "--key-rotation must be a positive integer",
-                                    "Provide the interval in seconds, e.g. --key-rotation 600");
+                                    "Provide the interval in seconds, e.g. --key-rotation 300");
                 }
                 options.key_rotation_seconds = interval;
                 continue;
@@ -2172,7 +2172,7 @@ int main(int argc, char** argv) {
                 if (!parse_uint64(value, interval) || interval == 0) {
                     throw_cli_error("E_INVALID_ANNOUNCE_INTERVAL",
                                     "--announce-interval must be a positive integer",
-                                    "Provide the minimum spacing between announces in seconds, e.g. --announce-interval 2");
+                                    "Provide the minimum spacing between announces in seconds, e.g. --announce-interval 15");
                 }
                 options.announce_interval_seconds = interval;
                 continue;
@@ -2183,7 +2183,7 @@ int main(int argc, char** argv) {
                 if (!parse_uint64(value, limit) || limit == 0) {
                     throw_cli_error("E_INVALID_ANNOUNCE_BURST",
                                     "--announce-burst must be a positive integer",
-                                    "Specify how many announces are allowed per window, e.g. --announce-burst 8");
+                                    "Specify how many announces are allowed per window, e.g. --announce-burst 4");
                 }
                 options.announce_burst_limit = limit;
                 continue;
@@ -2194,7 +2194,7 @@ int main(int argc, char** argv) {
                 if (!parse_uint64(value, window) || window == 0) {
                     throw_cli_error("E_INVALID_ANNOUNCE_WINDOW",
                                     "--announce-window must be a positive integer",
-                                    "Provide the rolling window length in seconds, e.g. --announce-window 30");
+                                    "Provide the rolling window length in seconds, e.g. --announce-window 120");
                 }
                 options.announce_window_seconds = window;
                 continue;

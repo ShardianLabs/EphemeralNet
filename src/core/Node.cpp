@@ -272,11 +272,20 @@ Config sanitize_config(Config config) {
     config.key_rotation_interval = sanitize_key_rotation_interval(config.key_rotation_interval);
     config.min_manifest_ttl = sanitize_manifest_min(config.min_manifest_ttl);
     config.max_manifest_ttl = sanitize_manifest_max(config.max_manifest_ttl, config.min_manifest_ttl);
+    if (config.default_chunk_ttl < config.min_manifest_ttl) {
+        config.default_chunk_ttl = config.min_manifest_ttl;
+    }
+    if (config.default_chunk_ttl > config.max_manifest_ttl) {
+        config.default_chunk_ttl = config.max_manifest_ttl;
+    }
     config.announce_min_interval = sanitize_announce_interval(config.announce_min_interval);
     if (config.announce_burst_limit == 0) {
         config.announce_burst_limit = 1;
     }
     config.announce_burst_window = sanitize_announce_window(config.announce_burst_window);
+    if (config.announce_burst_window < config.announce_min_interval) {
+        config.announce_burst_window = config.announce_min_interval;
+    }
     if (config.announce_pow_difficulty > kMaxAnnouncePowDifficulty) {
         config.announce_pow_difficulty = kMaxAnnouncePowDifficulty;
     }

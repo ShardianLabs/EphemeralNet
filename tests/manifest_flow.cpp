@@ -30,10 +30,14 @@ int main() {
     ephemeralnet::Config producer_config{};
     producer_config.shard_threshold = 3;
     producer_config.shard_total = 5;
+    producer_config.min_manifest_ttl = 5s;
+    producer_config.max_manifest_ttl = 1h;
 
     ephemeralnet::Config consumer_config{};
     consumer_config.shard_threshold = 3;
     consumer_config.shard_total = 5;
+    consumer_config.min_manifest_ttl = 5s;
+    consumer_config.max_manifest_ttl = 1h;
 
     const auto chunk_id = make_peer_id(0x10);
     const auto payload = make_payload(0x30);

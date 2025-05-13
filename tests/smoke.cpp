@@ -31,7 +31,12 @@ int main() {
     PeerId peer{};
     peer.fill(0xAA);
 
-    Node node{peer};
+    ephemeralnet::Config config{};
+    config.min_manifest_ttl = 1s;
+    config.max_manifest_ttl = 60s;
+    config.default_chunk_ttl = 5s;
+    config.announce_pow_difficulty = 0;
+    Node node{peer, config};
 
     const auto chunk_id = make_chunk_id(0x10);
     node.store_chunk(chunk_id, make_chunk(0x01), 1s);

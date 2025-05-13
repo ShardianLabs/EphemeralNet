@@ -30,6 +30,20 @@ ephemeralnet::ChunkId make_chunk_id(std::uint8_t seed) {
 }  // namespace
 
 int main() {
+    {
+        const auto default_id = make_peer_id(0x70);
+        ephemeralnet::Node hardened(default_id);
+        const auto& hardened_config = hardened.config();
+        assert(hardened_config.key_rotation_interval == 5min);
+        assert(hardened_config.default_chunk_ttl == 6h);
+        assert(hardened_config.min_manifest_ttl == 30s);
+        assert(hardened_config.max_manifest_ttl == 6h);
+        assert(hardened_config.announce_min_interval == 15s);
+        assert(hardened_config.announce_burst_limit == 4);
+        assert(hardened_config.announce_burst_window == 120s);
+        assert(hardened_config.announce_pow_difficulty == 6);
+    }
+
     ephemeralnet::Config config{};
     config.key_rotation_interval = std::chrono::seconds(0);
     config.min_manifest_ttl = 5s;
@@ -81,6 +95,8 @@ int main() {
     announce.manifest_uri = remote_uri;
     announce.assigned_shards.push_back(stored_manifest.shards.front().index);
 
+    const bool announce_pow_ready = ephemeralnet::test::NodeTestAccess::apply_pow(node, announce);
+    assert(announce_pow_ready);
     ephemeralnet::test::NodeTestAccess::handle_announce(node, announce, peer_id);
     const auto first_score = node.reputation_score(peer_id);
     assert(first_score > 0);

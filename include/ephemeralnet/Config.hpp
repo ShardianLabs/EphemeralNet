@@ -12,7 +12,7 @@
 namespace ephemeralnet {
 
 struct Config {
-    std::chrono::seconds default_chunk_ttl{std::chrono::hours(24)};
+    std::chrono::seconds default_chunk_ttl{std::chrono::hours(6)};
     std::chrono::seconds announce_interval{std::chrono::minutes(15)};
     std::chrono::seconds cleanup_interval{std::chrono::minutes(5)};
     std::chrono::seconds handshake_cooldown{std::chrono::seconds(5)};
@@ -46,13 +46,13 @@ struct Config {
     std::chrono::seconds bootstrap_contact_ttl{std::chrono::minutes(15)};
     std::uint8_t protocol_message_version{0};
     std::uint8_t protocol_min_supported_version{1};
-    std::chrono::seconds min_manifest_ttl{std::chrono::seconds(1)};
-    std::chrono::seconds max_manifest_ttl{std::chrono::hours(24)};
-    std::chrono::seconds key_rotation_interval{std::chrono::minutes(10)};
-    std::chrono::seconds announce_min_interval{std::chrono::seconds(2)};
-    std::size_t announce_burst_limit{8};
-    std::chrono::seconds announce_burst_window{std::chrono::seconds(30)};
-    std::uint8_t announce_pow_difficulty{0};
+    std::chrono::seconds min_manifest_ttl{std::chrono::seconds(30)};
+    std::chrono::seconds max_manifest_ttl{std::chrono::hours(6)};
+    std::chrono::seconds key_rotation_interval{std::chrono::minutes(5)};
+    std::chrono::seconds announce_min_interval{std::chrono::seconds(15)};
+    std::size_t announce_burst_limit{4};
+    std::chrono::seconds announce_burst_window{std::chrono::seconds(120)};
+    std::uint8_t announce_pow_difficulty{6};
 
     struct BootstrapNode {
         PeerId id{};

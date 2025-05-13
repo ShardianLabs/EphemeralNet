@@ -28,6 +28,7 @@ ephemeralnet::PeerId make_peer_id(std::uint8_t seed) {
 int main() {
     ephemeralnet::Config producer_config{};
     producer_config.identity_seed = 0x33u;
+    producer_config.announce_pow_difficulty = 0;
 
     ephemeralnet::Config consumer_config{};
     consumer_config.identity_seed = 0x44u;
@@ -35,6 +36,7 @@ int main() {
     consumer_config.fetch_retry_max_backoff = std::chrono::seconds(2);
     consumer_config.fetch_retry_success_interval = std::chrono::seconds(1);
     consumer_config.fetch_retry_attempt_limit = 4;
+    consumer_config.announce_pow_difficulty = 0;
 
     const auto producer_id = make_peer_id(0x10);
     const auto consumer_id = make_peer_id(0x80);

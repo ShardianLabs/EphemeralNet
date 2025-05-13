@@ -15,10 +15,10 @@ This runbook helps operators size EphemeralNet deployments and adjust throttles 
 
 ## 2. Announce Throttling Guidance
 
-- `--announce-interval`: Raise to 30-45 seconds on busy swarms. Keep below 60 seconds to prevent manifest visibility gaps.
-- `--announce-burst`: Start at 5 (default). Lower to 3 on constrained control nodes; raise to 8 when rollout pipelines push many manifests simultaneously.
-- `--announce-window`: 120 seconds pairs well with a burst of 5, ensuring fresh tokens arrive gradually instead of in spikes.
-- `--announce-pow`: Set between 6 and 10 for public-facing nodes to discourage Sybil spray. Increase difficulty once CPU telemetry remains <60% utilisation.
+- `--announce-interval`: Defaults to 15 seconds. Raise to 25-40 seconds on busy swarms, but keep below 60 seconds to prevent manifest visibility gaps.
+- `--announce-burst`: Start at 4 (default). Lower to 3 on constrained control nodes; raise to 6 when rollout pipelines push many manifests simultaneously.
+- `--announce-window`: 120 seconds pairs well with a burst of 4, ensuring fresh tokens arrive gradually instead of in spikes.
+- `--announce-pow`: Defaults to 6. Increase to 8-10 for public-facing nodes once CPU telemetry remains <60% utilisation.
 
 Use `eph defaults` after changing knobs to confirm daemon acceptance. Monitor the `MANIFEST_ANNOUNCE_RATE` metric (see below) to keep the average below 60% of total capacity.
 

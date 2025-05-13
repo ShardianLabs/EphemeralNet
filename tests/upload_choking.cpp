@@ -37,6 +37,7 @@ int main() {
     seeder_config.upload_max_transfers_per_peer = 1;
     seeder_config.upload_transfer_timeout = std::chrono::seconds{3};
     seeder_config.upload_reconsider_interval = std::chrono::seconds{1};
+    seeder_config.announce_pow_difficulty = 0;
 
     ephemeralnet::Config consumer_config{};
     consumer_config.identity_seed = 0x20u;
@@ -44,6 +45,7 @@ int main() {
     consumer_config.fetch_retry_initial_backoff = std::chrono::seconds{1};
     consumer_config.fetch_retry_success_interval = std::chrono::seconds{1};
     consumer_config.fetch_availability_refresh = std::chrono::seconds{1};
+    consumer_config.announce_pow_difficulty = 0;
 
     ephemeralnet::Config consumer_b_config = consumer_config;
     consumer_b_config.identity_seed = 0x30u;

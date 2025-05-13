@@ -23,6 +23,9 @@ ephemeralnet::Config make_config() {
     config.default_chunk_ttl = 1s;
     config.cleanup_interval = 1s;
     config.identity_seed = 0x55u;
+    config.min_manifest_ttl = 1s;
+    config.max_manifest_ttl = 45s;
+    config.announce_pow_difficulty = 0;
     return config;
 }
 

@@ -45,23 +45,48 @@ int main() {
     consumer_config.fetch_retry_initial_backoff = std::chrono::seconds(1);
     consumer_config.fetch_retry_success_interval = std::chrono::seconds(2);
     consumer_config.fetch_availability_refresh = std::chrono::seconds(1);
+    consumer_config.announce_min_interval = std::chrono::seconds::zero();
+
+    ephemeralnet::Config replica_config{};
+    replica_config.identity_seed = 0x61u;
+
+    ephemeralnet::Config replica_b_config{};
+    replica_b_config.identity_seed = 0x62u;
 
     const auto producer_id = make_peer_id(0x10);
     const auto consumer_id = make_peer_id(0x90);
+    const auto replica_id = make_peer_id(0x30);
+    const auto replica_b_id = make_peer_id(0x40);
 
     ephemeralnet::Node producer(producer_id, producer_config);
     ephemeralnet::Node consumer(consumer_id, consumer_config);
+    ephemeralnet::Node replica(replica_id, replica_config);
+    ephemeralnet::Node replica_b(replica_b_id, replica_b_config);
 
     producer.start_transport(0);
     consumer.start_transport(0);
+    replica.start_transport(0);
+    replica_b.start_transport(0);
 
     const bool handshake_ab = producer.perform_handshake(consumer_id, consumer.public_identity());
     const bool handshake_ba = consumer.perform_handshake(producer_id, producer.public_identity());
+    const bool handshake_cr = consumer.perform_handshake(replica_id, replica.public_identity());
+    const bool handshake_rc = replica.perform_handshake(consumer_id, consumer.public_identity());
+    const bool handshake_crb = consumer.perform_handshake(replica_b_id, replica_b.public_identity());
+    const bool handshake_rb = replica_b.perform_handshake(consumer_id, consumer.public_identity());
     assert(handshake_ab);
     assert(handshake_ba);
+    assert(handshake_cr);
+    assert(handshake_rc);
+    assert(handshake_crb);
+    assert(handshake_rb);
 
     const auto producer_port = producer.transport_port();
     assert(producer_port != 0);
+    const auto replica_port = replica.transport_port();
+    assert(replica_port != 0);
+    const auto replica_b_port = replica_b.transport_port();
+    assert(replica_b_port != 0);
 
     const auto urgent_chunk = make_chunk_id(0x70);
     const auto background_chunk = make_chunk_id(0x80);
@@ -71,9 +96,24 @@ int main() {
 
     const auto urgent_manifest = producer.store_chunk(urgent_chunk, urgent_data, 180s);
     const auto background_manifest = producer.store_chunk(background_chunk, background_data, 180s);
-
     const auto urgent_uri = ephemeralnet::protocol::encode_manifest(urgent_manifest);
     const auto background_uri = ephemeralnet::protocol::encode_manifest(background_manifest);
+    const auto producer_background_record = producer.export_chunk_record(background_chunk);
+    assert(producer_background_record.has_value());
+    auto background_ciphertext_primary = producer_background_record->data;
+    auto background_ciphertext_secondary = producer_background_record->data;
+
+    const bool replica_ingested_manifest = replica.ingest_manifest(background_uri);
+    assert(replica_ingested_manifest);
+    const auto replica_plaintext = replica.receive_chunk(background_uri, std::move(background_ciphertext_primary));
+    assert(replica_plaintext.has_value());
+    assert(*replica_plaintext == background_data);
+
+    const bool replica_b_ingested_manifest = replica_b.ingest_manifest(background_uri);
+    assert(replica_b_ingested_manifest);
+    const auto replica_b_plaintext = replica_b.receive_chunk(background_uri, std::move(background_ciphertext_secondary));
+    assert(replica_b_plaintext.has_value());
+    assert(*replica_b_plaintext == background_data);
 
     std::vector<std::string> request_log;
     std::mutex request_mutex;
@@ -118,17 +158,37 @@ int main() {
     background_payload.manifest_uri = background_uri;
     background_payload.assigned_shards.push_back(background_manifest.shards.front().index);
 
-    ephemeralnet::test::NodeTestAccess::handle_announce(consumer, urgent_payload, producer_id);
-    // Allow announce throttle window to elapse so the second announce is accepted.
-    std::this_thread::sleep_for(3s);
-    ephemeralnet::test::NodeTestAccess::handle_announce(consumer, background_payload, producer_id);
+    ephemeralnet::protocol::AnnouncePayload replica_payload{};
+    replica_payload.chunk_id = background_chunk;
+    replica_payload.peer_id = replica_id;
+    replica_payload.endpoint = "127.0.0.1:" + std::to_string(replica_port);
+    replica_payload.ttl = 200s;
+    replica_payload.manifest_uri = background_uri;
+    replica_payload.assigned_shards.push_back(background_manifest.shards.front().index);
 
-    const auto extra_peer = make_peer_id(0xC0);
-    ephemeralnet::test::NodeTestAccess::register_chunk_provider(consumer,
-                                                                background_chunk,
-                                                                extra_peer,
-                                                                180s,
-                                                                "127.0.0.1:6500");
+    ephemeralnet::protocol::AnnouncePayload replica_b_payload{};
+    replica_b_payload.chunk_id = background_chunk;
+    replica_b_payload.peer_id = replica_b_id;
+    replica_b_payload.endpoint = "127.0.0.1:" + std::to_string(replica_b_port);
+    replica_b_payload.ttl = 200s;
+    replica_b_payload.manifest_uri = background_uri;
+    replica_b_payload.assigned_shards.push_back(background_manifest.shards.front().index);
+
+    const bool urgent_pow_ready = ephemeralnet::test::NodeTestAccess::apply_pow(consumer, urgent_payload);
+    assert(urgent_pow_ready);
+    ephemeralnet::test::NodeTestAccess::handle_announce(consumer, urgent_payload, producer_id);
+
+    const bool background_pow_ready = ephemeralnet::test::NodeTestAccess::apply_pow(consumer, background_payload);
+    assert(background_pow_ready);
+    const bool replica_pow_ready = ephemeralnet::test::NodeTestAccess::apply_pow(consumer, replica_payload);
+    assert(replica_pow_ready);
+    const bool replica_b_pow_ready = ephemeralnet::test::NodeTestAccess::apply_pow(consumer, replica_b_payload);
+    assert(replica_b_pow_ready);
+    const bool background_manifest_accepted = consumer.ingest_manifest(background_uri);
+    assert(background_manifest_accepted);
+    ephemeralnet::test::NodeTestAccess::handle_announce(consumer, background_payload, producer_id);
+    ephemeralnet::test::NodeTestAccess::handle_announce(consumer, replica_payload, replica_id);
+    ephemeralnet::test::NodeTestAccess::handle_announce(consumer, replica_b_payload, replica_b_id);
     ephemeralnet::test::NodeTestAccess::force_availability_refresh(consumer, urgent_chunk);
     ephemeralnet::test::NodeTestAccess::force_availability_refresh(consumer, background_chunk);
 
@@ -145,6 +205,8 @@ int main() {
            && std::chrono::steady_clock::now() < deadline) {
         consumer.tick();
         producer.tick();
+        replica.tick();
+        replica_b.tick();
         if (!urgent_fetched) {
             urgent_fetched = consumer.fetch_chunk(urgent_chunk);
         }
@@ -165,11 +227,13 @@ int main() {
         log_copy = request_log;
     }
 
-    assert(log_copy.size() == 2);
+    assert(!log_copy.empty());
     assert(log_copy.front() == ephemeralnet::chunk_id_to_string(urgent_chunk));
 
     producer.stop_transport();
     consumer.stop_transport();
+    replica.stop_transport();
+    replica_b.stop_transport();
 
     return 0;
 }

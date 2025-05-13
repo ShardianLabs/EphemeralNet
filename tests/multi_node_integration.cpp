@@ -43,6 +43,7 @@ ephemeralnet::Config make_config(std::uint32_t seed) {
     config.max_manifest_ttl = 600s;
     config.key_rotation_interval = 30s;
     config.control_host = "127.0.0.1";
+    config.announce_pow_difficulty = 0;
     return config;
 }
 
