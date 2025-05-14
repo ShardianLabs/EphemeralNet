@@ -30,6 +30,10 @@ public:
         return node.apply_announce_pow(payload);
     }
 
+    static std::optional<std::uint64_t> handshake_work(Node& initiator, const PeerId& responder) {
+        return initiator.generate_handshake_work(responder);
+    }
+
     static std::optional<std::size_t> pending_attempts(const Node& node, const ChunkId& chunk_id) {
         const auto key = chunk_id_to_string(chunk_id);
         const auto it = node.pending_chunk_fetches_.find(key);

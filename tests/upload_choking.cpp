@@ -62,10 +62,18 @@ int main() {
     peer_a.start_transport(0);
     peer_b.start_transport(0);
 
-    const bool hs_a = seeder.perform_handshake(peer_a_id, peer_a.public_identity());
-    const bool hs_a_back = peer_a.perform_handshake(seeder_id, seeder.public_identity());
-    const bool hs_b = seeder.perform_handshake(peer_b_id, peer_b.public_identity());
-    const bool hs_b_back = peer_b.perform_handshake(seeder_id, seeder.public_identity());
+    const auto pow_peer_a = ephemeralnet::test::NodeTestAccess::handshake_work(peer_a, seeder_id);
+    const auto pow_seeder_a = ephemeralnet::test::NodeTestAccess::handshake_work(seeder, peer_a_id);
+    const auto pow_peer_b = ephemeralnet::test::NodeTestAccess::handshake_work(peer_b, seeder_id);
+    const auto pow_seeder_b = ephemeralnet::test::NodeTestAccess::handshake_work(seeder, peer_b_id);
+    assert(pow_peer_a.has_value());
+    assert(pow_seeder_a.has_value());
+    assert(pow_peer_b.has_value());
+    assert(pow_seeder_b.has_value());
+    const bool hs_a = seeder.perform_handshake(peer_a_id, peer_a.public_identity(), *pow_peer_a);
+    const bool hs_a_back = peer_a.perform_handshake(seeder_id, seeder.public_identity(), *pow_seeder_a);
+    const bool hs_b = seeder.perform_handshake(peer_b_id, peer_b.public_identity(), *pow_peer_b);
+    const bool hs_b_back = peer_b.perform_handshake(seeder_id, seeder.public_identity(), *pow_seeder_b);
     assert(hs_a && hs_a_back);
     assert(hs_b && hs_b_back);
 

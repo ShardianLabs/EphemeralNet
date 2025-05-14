@@ -53,6 +53,8 @@ struct Config {
     std::size_t announce_burst_limit{4};
     std::chrono::seconds announce_burst_window{std::chrono::seconds(120)};
     std::uint8_t announce_pow_difficulty{6};
+    std::uint8_t handshake_pow_difficulty{4};
+    std::uint8_t store_pow_difficulty{6};
 
     struct BootstrapNode {
         PeerId id{};

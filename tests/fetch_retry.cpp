@@ -71,8 +71,12 @@ int main() {
     assert(initial_attempt.has_value());
     assert(*initial_attempt == 1);
 
-    const bool handshake_ab = producer.perform_handshake(consumer_id, consumer.public_identity());
-    const bool handshake_ba = consumer.perform_handshake(producer_id, producer.public_identity());
+    const auto pow_consumer = ephemeralnet::test::NodeTestAccess::handshake_work(consumer, producer_id);
+    const auto pow_producer = ephemeralnet::test::NodeTestAccess::handshake_work(producer, consumer_id);
+    assert(pow_consumer.has_value());
+    assert(pow_producer.has_value());
+    const bool handshake_ab = producer.perform_handshake(consumer_id, consumer.public_identity(), *pow_consumer);
+    const bool handshake_ba = consumer.perform_handshake(producer_id, producer.public_identity(), *pow_producer);
     assert(handshake_ab);
     assert(handshake_ba);
 

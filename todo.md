@@ -45,6 +45,7 @@
 - CLI commands expose dedicated `--help` summaries (`store`, `fetch`, `list`, `status`, `start`, `stop`, `serve`).
 - Added an MIT `LICENSE` file.
 - Translated public-facing documentation to English (README, this TODO).
+- Handshake path now enforces configurable proof-of-work with helper APIs for CLI/daemon integration and updated regression coverage.
 - CLI output, hints, and tests localised to English with compatibility for scripted confirmations.
 - Authored architecture, protocol, deployment, and troubleshooting guides under `docs/`.
 - CLI fetch now defaults to the working directory (preserving stored filename metadata) with user-overridable directory/name settings and exposes a `defaults` command to report daemon TTL/configuration baselines.
@@ -62,7 +63,8 @@
 - **SECURITY**
 	- Design and implement anti-Sybil/spam defences (lightweight Proof-of-Work or equivalent for costly operations).
 		- Existing controls: Per-peer reputation tracking, HMAC-authenticated transport, rate-aware fetch scheduler and chunk ledger accounting.
-		- Outstanding: Define a proof-of-work or stake cost for Announce/store operations, integrate challenge verification in handshake, extend reputation penalties for failed or abusive attempts.
+		- Progress: Handshake PoW integrated with configurable difficulty and tougher reputation penalties for invalid work.
+		- Outstanding: Apply equivalent PoW to Announce/store submissions, plumb CLI/daemon message formats, broaden abuse heuristics.
 - **OPS & OBSERVABILITY**
 	- Prepare deployment scripts and CI/CD pipelines for Windows/Linux/macOS (Docker, PPA/Copr, Homebrew).
 	- Manage reproducible packaging and binary signing.

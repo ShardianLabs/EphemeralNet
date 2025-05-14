@@ -1,4 +1,5 @@
 #include "ephemeralnet/core/Node.hpp"
+#include "test_access.hpp"
 
 #include "ephemeralnet/network/SessionManager.hpp"
 
@@ -43,8 +44,12 @@ int main() {
 
     const auto port_a = node_a.transport_port();
 
-    const bool handshake_ab = node_a.perform_handshake(node_b.id(), node_b.public_identity());
-    const bool handshake_ba = node_b.perform_handshake(node_a.id(), node_a.public_identity());
+    const auto pow_b = ephemeralnet::test::NodeTestAccess::handshake_work(node_b, node_a.id());
+    const auto pow_a = ephemeralnet::test::NodeTestAccess::handshake_work(node_a, node_b.id());
+    assert(pow_b.has_value());
+    assert(pow_a.has_value());
+    const bool handshake_ab = node_a.perform_handshake(node_b.id(), node_b.public_identity(), *pow_b);
+    const bool handshake_ba = node_b.perform_handshake(node_a.id(), node_a.public_identity(), *pow_a);
     assert(handshake_ab);
     assert(handshake_ba);
 

@@ -52,8 +52,12 @@ int main() {
     seeder.start_transport(0);
     leecher.start_transport(0);
 
-    const bool hs_ab = seeder.perform_handshake(leecher_id, leecher.public_identity());
-    const bool hs_ba = leecher.perform_handshake(seeder_id, seeder.public_identity());
+    const auto pow_leecher = ephemeralnet::test::NodeTestAccess::handshake_work(leecher, seeder_id);
+    const auto pow_seeder = ephemeralnet::test::NodeTestAccess::handshake_work(seeder, leecher_id);
+    assert(pow_leecher.has_value());
+    assert(pow_seeder.has_value());
+    const bool hs_ab = seeder.perform_handshake(leecher_id, leecher.public_identity(), *pow_leecher);
+    const bool hs_ba = leecher.perform_handshake(seeder_id, seeder.public_identity(), *pow_seeder);
     assert(hs_ab && hs_ba);
 
     ephemeralnet::ChunkData payload(48, 0xEEu);

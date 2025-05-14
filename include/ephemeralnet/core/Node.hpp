@@ -58,7 +58,10 @@ public:
     std::optional<SwarmDistributionPlan> swarm_plan(const ChunkId& chunk_id) const;
 
     std::uint32_t public_identity() const noexcept { return identity_public_; }
-    bool perform_handshake(const PeerId& peer_id, std::uint32_t remote_public_key);
+    bool perform_handshake(const PeerId& peer_id,
+                           std::uint32_t remote_public_key,
+                           std::uint64_t remote_work_nonce);
+    std::optional<std::uint64_t> generate_handshake_work(const PeerId& peer_id) const;
     int reputation_score(const PeerId& peer_id) const;
     std::optional<bool> last_handshake_success(const PeerId& peer_id) const;
 
@@ -115,6 +118,7 @@ private:
         std::chrono::steady_clock::time_point last_attempt{};
         bool success{false};
         std::uint32_t remote_public{0};
+        std::uint64_t remote_pow_nonce{0};
     };
     struct PendingFetchState {
         ChunkId chunk_id{};

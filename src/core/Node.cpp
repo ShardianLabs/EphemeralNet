@@ -36,6 +36,9 @@ constexpr std::chrono::seconds kMinAnnounceInterval{std::chrono::seconds{1}};
 constexpr std::chrono::seconds kMaxAnnounceWindow{std::chrono::hours{1}};
 constexpr std::uint8_t kMaxAnnouncePowDifficulty{24};
 constexpr std::uint64_t kMaxAnnouncePowAttempts{500'000};
+constexpr std::uint8_t kMaxHandshakePowDifficulty{24};
+constexpr std::uint8_t kMaxStorePowDifficulty{24};
+constexpr std::uint64_t kMaxHandshakePowAttempts{500'000};
 
 std::uint32_t generate_identity_scalar(const Config& config) {
     std::mt19937 generator;
@@ -221,6 +224,68 @@ bool compute_announce_pow(protocol::AnnouncePayload& payload, std::uint8_t diffi
     return false;
 }
 
+std::array<std::uint8_t, 32> handshake_pow_digest(const PeerId& initiator,
+                                                  const PeerId& responder,
+                                                  std::uint32_t initiator_public,
+                                                  std::uint64_t nonce) {
+    crypto::Sha256 hasher;
+    update_length_prefixed(hasher, std::span<const std::uint8_t>(initiator.data(), initiator.size()));
+    update_length_prefixed(hasher, std::span<const std::uint8_t>(responder.data(), responder.size()));
+    const auto public_bytes = to_big_endian_bytes(static_cast<std::uint64_t>(initiator_public));
+    hasher.update(public_bytes);
+    const auto nonce_bytes = to_big_endian_bytes(nonce);
+    hasher.update(nonce_bytes);
+    return hasher.finalize();
+}
+
+bool handshake_pow_valid(const PeerId& initiator,
+                         const PeerId& responder,
+                         std::uint32_t initiator_public,
+                         std::uint64_t nonce,
+                         std::uint8_t difficulty) {
+    if (difficulty == 0) {
+        return true;
+    }
+    const auto digest = handshake_pow_digest(initiator, responder, initiator_public, nonce);
+    return count_leading_zero_bits(digest) >= difficulty;
+}
+
+std::uint64_t derive_handshake_seed(const PeerId& initiator,
+                                    const PeerId& responder,
+                                    std::uint32_t initiator_public) {
+    const auto digest = handshake_pow_digest(initiator, responder, initiator_public, 0);
+    std::uint64_t seed = 0;
+    for (int index = 0; index < 8; ++index) {
+        seed = (seed << 8) | static_cast<std::uint64_t>(digest[index]);
+    }
+    return seed;
+}
+
+bool compute_handshake_pow(const PeerId& initiator,
+                           const PeerId& responder,
+                           std::uint32_t initiator_public,
+                           std::uint8_t difficulty,
+                           std::uint64_t& nonce_out) {
+    if (difficulty == 0) {
+        nonce_out = 0;
+        return true;
+    }
+
+    const auto seed = derive_handshake_seed(initiator, responder, initiator_public);
+    std::mt19937_64 generator(seed);
+    std::uniform_int_distribution<std::uint64_t> distribution(0, std::numeric_limits<std::uint64_t>::max());
+    const auto start = distribution(generator);
+
+    for (std::uint64_t attempt = 0; attempt < kMaxHandshakePowAttempts; ++attempt) {
+        const auto candidate = start + attempt;
+        if (handshake_pow_valid(initiator, responder, initiator_public, candidate, difficulty)) {
+            nonce_out = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
 std::chrono::seconds clamp_chunk_ttl(std::chrono::seconds ttl,
                                      std::chrono::seconds min_ttl,
                                      std::chrono::seconds max_ttl) {
@@ -288,6 +353,12 @@ Config sanitize_config(Config config) {
     }
     if (config.announce_pow_difficulty > kMaxAnnouncePowDifficulty) {
         config.announce_pow_difficulty = kMaxAnnouncePowDifficulty;
+    }
+    if (config.handshake_pow_difficulty > kMaxHandshakePowDifficulty) {
+        config.handshake_pow_difficulty = kMaxHandshakePowDifficulty;
+    }
+    if (config.store_pow_difficulty > kMaxStorePowDifficulty) {
+        config.store_pow_difficulty = kMaxStorePowDifficulty;
     }
     return config;
 }
@@ -1470,7 +1541,17 @@ std::optional<SwarmDistributionPlan> Node::swarm_plan(const ChunkId& chunk_id) c
     return it->second;
 }
 
-bool Node::perform_handshake(const PeerId& peer_id, std::uint32_t remote_public_key) {
+std::optional<std::uint64_t> Node::generate_handshake_work(const PeerId& peer_id) const {
+    std::uint64_t nonce = 0;
+    if (!compute_handshake_pow(id_, peer_id, identity_public_, config_.handshake_pow_difficulty, nonce)) {
+        return std::nullopt;
+    }
+    return nonce;
+}
+
+bool Node::perform_handshake(const PeerId& peer_id,
+                             std::uint32_t remote_public_key,
+                             std::uint64_t remote_work_nonce) {
     const auto now = std::chrono::steady_clock::now();
     const auto key = peer_id_to_string(peer_id);
 
@@ -1485,10 +1566,19 @@ bool Node::perform_handshake(const PeerId& peer_id, std::uint32_t remote_public_
     HandshakeRecord record{};
     record.last_attempt = now;
     record.remote_public = remote_public_key;
+    record.remote_pow_nonce = remote_work_nonce;
 
     if (!network::KeyExchange::validate_public(remote_public_key)) {
         record.success = false;
         handshake_state_[key] = record;
+        reputation_.record_failure(peer_id);
+        return false;
+    }
+
+    if (!handshake_pow_valid(peer_id, id_, remote_public_key, remote_work_nonce, config_.handshake_pow_difficulty)) {
+        record.success = false;
+        handshake_state_[key] = record;
+        reputation_.record_failure(peer_id);
         reputation_.record_failure(peer_id);
         return false;
     }
@@ -2067,7 +2157,16 @@ void Node::ensure_bootstrap_handshake(const PeerId& peer_id) {
         return;
     }
 
-    perform_handshake(peer_id, *it->second.public_identity);
+    std::uint64_t remote_work_nonce = 0;
+    if (!compute_handshake_pow(peer_id,
+                               id_,
+                               *it->second.public_identity,
+                               config_.handshake_pow_difficulty,
+                               remote_work_nonce)) {
+        return;
+    }
+
+    perform_handshake(peer_id, *it->second.public_identity, remote_work_nonce);
 }
 
 }  

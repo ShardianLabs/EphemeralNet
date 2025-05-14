@@ -99,11 +99,21 @@ int main() {
 	assert(leecher_b_port != 0);
 	assert(leecher_c_port != 0);
 
-	const bool handshake_sa = seeder.perform_handshake(leecher_a.id(), leecher_a.public_identity());
-	const bool handshake_as = leecher_a.perform_handshake(seeder.id(), seeder.public_identity());
-	const bool handshake_bs = leecher_b.perform_handshake(seeder.id(), seeder.public_identity());
-	const bool handshake_sc = seeder.perform_handshake(leecher_c.id(), leecher_c.public_identity());
-	const bool handshake_cs = leecher_c.perform_handshake(seeder.id(), seeder.public_identity());
+	const auto pow_leecher_a = ephemeralnet::test::NodeTestAccess::handshake_work(leecher_a, seeder.id());
+	const auto pow_seeder_a = ephemeralnet::test::NodeTestAccess::handshake_work(seeder, leecher_a.id());
+	const auto pow_seeder_b = ephemeralnet::test::NodeTestAccess::handshake_work(seeder, leecher_b.id());
+	const auto pow_leecher_c = ephemeralnet::test::NodeTestAccess::handshake_work(leecher_c, seeder.id());
+	const auto pow_seeder_c = ephemeralnet::test::NodeTestAccess::handshake_work(seeder, leecher_c.id());
+	assert(pow_leecher_a.has_value());
+	assert(pow_seeder_a.has_value());
+	assert(pow_seeder_b.has_value());
+	assert(pow_leecher_c.has_value());
+	assert(pow_seeder_c.has_value());
+	const bool handshake_sa = seeder.perform_handshake(leecher_a.id(), leecher_a.public_identity(), *pow_leecher_a);
+	const bool handshake_as = leecher_a.perform_handshake(seeder.id(), seeder.public_identity(), *pow_seeder_a);
+	const bool handshake_bs = leecher_b.perform_handshake(seeder.id(), seeder.public_identity(), *pow_seeder_b);
+	const bool handshake_sc = seeder.perform_handshake(leecher_c.id(), leecher_c.public_identity(), *pow_leecher_c);
+	const bool handshake_cs = leecher_c.perform_handshake(seeder.id(), seeder.public_identity(), *pow_seeder_c);
 
 	assert(handshake_sa);
 	assert(handshake_as);
