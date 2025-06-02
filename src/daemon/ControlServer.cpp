@@ -5,6 +5,7 @@
 #include "ephemeralnet/Types.hpp"
 #include "ephemeralnet/crypto/Sha256.hpp"
 #include "ephemeralnet/protocol/Manifest.hpp"
+#include "ephemeralnet/security/StoreProof.hpp"
 
 #include <algorithm>
 #include <array>
@@ -92,6 +93,8 @@ constexpr std::size_t kMaxLineLength = 16 * 1024;
 constexpr std::size_t kMaxStreamPayloadBytes = kMaxControlStreamBytes;
 constexpr std::chrono::seconds kStoreRateWindow{std::chrono::seconds(30)};
 constexpr std::size_t kStoreRateBurstLimit = 6;
+constexpr std::chrono::seconds kStorePowFailureWindow{std::chrono::seconds(120)};
+constexpr std::size_t kStorePowFailureLimit = 3;
 constexpr std::chrono::seconds kFetchStreamRateWindow{std::chrono::seconds(30)};
 constexpr std::size_t kFetchStreamBurstLimit = 12;
 
@@ -288,13 +291,6 @@ void write_file_bytes(const std::filesystem::path& path, std::span<const std::ui
     output.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
 }
 
-ChunkId chunk_id_from_data(std::span<const std::uint8_t> data) {
-    const auto digest = crypto::Sha256::digest(data);
-    ChunkId id{};
-    std::copy(digest.begin(), digest.end(), id.begin());
-    return id;
-}
-
 std::int64_t ttl_seconds_remaining(const std::chrono::steady_clock::time_point& expires_at) {
     const auto now = std::chrono::steady_clock::now();
     if (expires_at <= now) {
@@ -340,6 +336,7 @@ struct Metrics {
     std::atomic<std::uint64_t> command_store_bytes_total{0};
     std::atomic<std::uint64_t> command_store_rate_limited_total{0};
     std::atomic<std::uint64_t> command_store_auth_failures_total{0};
+    std::atomic<std::uint64_t> command_store_pow_failures_total{0};
     std::atomic<std::uint64_t> command_fetch_requests_total{0};
     std::atomic<std::uint64_t> command_fetch_success_total{0};
     std::atomic<std::uint64_t> command_fetch_stream_success_total{0};
@@ -397,6 +394,9 @@ struct Metrics {
         emit_counter("ephemeralnet_command_store_auth_failures_total",
                       "STORE commands rejected by authentication.",
                       command_store_auth_failures_total.load(std::memory_order_relaxed));
+    emit_counter("ephemeralnet_command_store_pow_failures_total",
+              "STORE commands rejected due to invalid proof-of-work.",
+              command_store_pow_failures_total.load(std::memory_order_relaxed));
         emit_counter("ephemeralnet_command_fetch_requests_total",
                       "FETCH commands processed.",
                       command_fetch_requests_total.load(std::memory_order_relaxed));
@@ -505,6 +505,7 @@ private:
     std::mutex rate_mutex_;
     std::unordered_map<std::string, std::vector<std::chrono::steady_clock::time_point>> store_history_;
     std::unordered_map<std::string, std::vector<std::chrono::steady_clock::time_point>> fetch_history_;
+    std::unordered_map<std::string, std::vector<std::chrono::steady_clock::time_point>> store_pow_failures_;
 
     bool allow_store_request(const std::string& identity) {
         const auto now = std::chrono::steady_clock::now();
@@ -519,6 +520,23 @@ private:
         }
         history.push_back(now);
         return true;
+    }
+
+    bool note_store_pow_failure(const std::string& identity) {
+        const auto now = std::chrono::steady_clock::now();
+        std::scoped_lock lock(rate_mutex_);
+        auto& history = store_pow_failures_[identity];
+        history.erase(std::remove_if(history.begin(), history.end(), [&](const auto& timestamp) {
+                          return now - timestamp > kStorePowFailureWindow;
+                      }),
+                      history.end());
+        history.push_back(now);
+        return history.size() >= kStorePowFailureLimit;
+    }
+
+    void clear_store_pow_failures(const std::string& identity) {
+        std::scoped_lock lock(rate_mutex_);
+        store_pow_failures_.erase(identity);
     }
 
     bool allow_stream_fetch(const std::string& identity) {
@@ -762,6 +780,8 @@ private:
                              {"ANNOUNCE_BURST", std::to_string(config_copy.announce_burst_limit)},
                              {"ANNOUNCE_WINDOW", std::to_string(config_copy.announce_burst_window.count())},
                              {"ANNOUNCE_POW", std::to_string(config_copy.announce_pow_difficulty)},
+                             {"HANDSHAKE_POW", std::to_string(config_copy.handshake_pow_difficulty)},
+                             {"STORE_POW", std::to_string(config_copy.store_pow_difficulty)},
                              {"CONTROL_HOST", config_copy.control_host},
                              {"CONTROL_PORT", std::to_string(config_copy.control_port)},
                              {"STORAGE_PERSISTENT", config_copy.storage_persistent_enabled ? "1" : "0"},
@@ -828,6 +848,7 @@ private:
         std::chrono::seconds min_ttl{};
         std::chrono::seconds max_ttl{};
         std::optional<std::string> control_token;
+        std::uint8_t store_pow_difficulty{0};
         {
             std::scoped_lock lock(node_mutex_);
             const auto& cfg = node_.config();
@@ -835,6 +856,7 @@ private:
             min_ttl = cfg.min_manifest_ttl;
             max_ttl = cfg.max_manifest_ttl;
             control_token = cfg.control_token;
+            store_pow_difficulty = cfg.store_pow_difficulty;
         }
 
         const auto token_it = request.fields.find("TOKEN");
@@ -890,22 +912,59 @@ private:
         }
 
         const auto payload_span = std::span<const std::uint8_t>(request.payload.data(), request.payload.size());
-        const auto chunk_id = chunk_id_from_data(payload_span);
+        const auto chunk_id = security::derive_chunk_id(payload_span);
         auto data = std::move(request.payload);
         const auto data_size = data.size();
 
-        std::optional<std::string> original_name;
+        std::optional<std::string> filename_hint;
         if (const auto name_it = request.fields.find("PATH"); name_it != request.fields.end()) {
-            std::filesystem::path provided{name_it->second};
-            auto base = provided.filename().string();
-            if (!base.empty() && base != "." && base != "..") {
-                constexpr std::size_t kMaxSuggestedNameLength = 255;
-                if (base.size() > kMaxSuggestedNameLength) {
-                    base.resize(kMaxSuggestedNameLength);
-                }
-                original_name = base;
+            filename_hint = security::sanitize_filename_hint(name_it->second);
+        }
+
+        security::StoreWorkInput pow_input{chunk_id,
+                                           static_cast<std::uint64_t>(data_size),
+                                           filename_hint ? std::string_view(*filename_hint) : std::string_view{}};
+
+        if (store_pow_difficulty > 0) {
+            const auto pow_field = request.fields.find("STORE-POW");
+            if (pow_field == request.fields.end()) {
+                metrics_.command_store_pow_failures_total.fetch_add(1, std::memory_order_relaxed);
+                const bool locked = note_store_pow_failure(rate_identity);
+                auto error = make_error(locked ? "ERR_STORE_POW_LOCKED" : "ERR_STORE_POW_REQUIRED",
+                                        locked ? "Repeated invalid proofs-of-work detected"
+                                               : "Proof-of-work nonce required",
+                                        locked ? "Wait two minutes before retrying"
+                                               : "Upgrade the CLI and retry the command");
+                respond_error(std::move(error), locked ? "pow_missing_locked" : "pow_missing");
+                return;
+            }
+            const auto parsed_pow = parse_uint64(pow_field->second);
+            if (!parsed_pow.has_value()) {
+                metrics_.command_store_pow_failures_total.fetch_add(1, std::memory_order_relaxed);
+                const bool locked = note_store_pow_failure(rate_identity);
+                auto error = make_error(locked ? "ERR_STORE_POW_LOCKED" : "ERR_STORE_POW_INVALID",
+                                        locked ? "Repeated invalid proofs-of-work detected"
+                                               : "Malformed proof-of-work nonce",
+                                        locked ? "Wait two minutes before retrying"
+                                               : "Retry the store command to generate new work");
+                respond_error(std::move(error), locked ? "pow_invalid_locked" : "pow_invalid_parse");
+                return;
+            }
+            if (!security::store_pow_valid(pow_input, *parsed_pow, store_pow_difficulty)) {
+                metrics_.command_store_pow_failures_total.fetch_add(1, std::memory_order_relaxed);
+                const bool locked = note_store_pow_failure(rate_identity);
+                auto error = make_error(locked ? "ERR_STORE_POW_LOCKED" : "ERR_STORE_POW_INVALID",
+                                        locked ? "Repeated invalid proofs-of-work detected"
+                                               : "Proof-of-work verification failed",
+                                        locked ? "Wait two minutes before retrying"
+                                               : "Retry the store command to generate new work");
+                respond_error(std::move(error), locked ? "pow_invalid_locked" : "pow_invalid");
+                return;
             }
         }
+        clear_store_pow_failures(rate_identity);
+
+        std::optional<std::string> original_name = filename_hint;
 
         protocol::Manifest manifest{};
         {

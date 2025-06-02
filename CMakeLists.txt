@@ -27,6 +27,7 @@ add_library(ephemeralnet_core
     src/crypto/Sha256.cpp
     src/crypto/HmacSha256.cpp
     src/crypto/Shamir.cpp
+    src/security/StoreProof.cpp
     src/network/NatTraversal.cpp
     src/core/SwarmCoordinator.cpp
     src/protocol/Manifest.cpp
@@ -235,6 +236,23 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.Handshake COMMAND ephemeralnet_handshake_tests)
+
+    add_executable(ephemeralnet_store_pow_tests
+        tests/store_pow.cpp
+    )
+
+    target_link_libraries(ephemeralnet_store_pow_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_store_pow_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_store_pow_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.StorePow COMMAND ephemeralnet_store_pow_tests)
 
     add_executable(ephemeralnet_ttl_audit_tests
         tests/ttl_audit.cpp

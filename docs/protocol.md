@@ -37,7 +37,7 @@ TTL:3587
 | `STOP`  | `COMMAND`       | none            | Stops the daemon after acknowledging the request. |
 | `LIST`  | `COMMAND`       | none            | Streams stored chunk metadata (id, size, state, TTL). |
 | `DEFAULTS` | `COMMAND`   | none            | Reports daemon defaults such as TTL bounds, control endpoint, and concurrency caps. |
-| `STORE` | `COMMAND`, `PATH` | `TTL`        | Stores a local file, returning manifest URI and effective TTL. |
+| `STORE` | `COMMAND`, `PATH` | `TTL`, `STORE-POW` | Stores a local file, returning manifest URI and effective TTL. `STORE-POW` is mandatory when the daemon advertises a non-zero store PoW difficulty. |
 | `FETCH` | `COMMAND`, `MANIFEST` | `OUT`, `STREAM` | Retrieves a chunk described by the manifest. When `STREAM:client` is provided the daemon streams bytes back instead of writing to disk. |
 
 ### Error Semantics
@@ -45,6 +45,13 @@ TTL:3587
 - Every error uses a stable `CODE` prefix so automation can map to remediation steps.
 - `MESSAGE` is human-readable and now localized in English.
 - `HINT` provides actionable guidance (e.g., *"Use a positive integer value in seconds"*).
+
+### Proof-of-Work
+
+- The daemon enforces proof-of-work on sensitive control operations. Handshakes and `STORE` uploads require solving a configurable number of leading-zero bits.
+- The `DEFAULTS` response advertises the active bits via `HANDSHAKE_POW` and `STORE_POW`. A value of `0` disables enforcement for that path.
+- Clients must include a `STORE-POW` header when `STORE_POW > 0`. The value is a 64-bit nonce that satisfies the advertised difficulty over the chunk id, payload size, and sanitized filename hint.
+- Failures surface as `ERR_STORE_POW_REQUIRED`, `ERR_STORE_POW_INVALID`, or `ERR_STORE_POW_LOCKED` (the latter after repeated invalid submissions). Hints instruct operators to regenerate work or wait for the temporary back-off window.
 
 ## Data Plane Overview
 

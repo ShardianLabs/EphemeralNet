@@ -3,6 +3,7 @@
 #include "ephemeralnet/core/Node.hpp"
 #include "ephemeralnet/crypto/Sha256.hpp"
 #include "ephemeralnet/daemon/ControlPlane.hpp"
+#include "ephemeralnet/security/StoreProof.hpp"
 #include "ephemeralnet/protocol/Manifest.hpp"
 
 #include <algorithm>
@@ -2504,6 +2505,8 @@ int main(int argc, char** argv) {
             const auto announce_burst = response->fields.contains("ANNOUNCE_BURST") ? response->fields.at("ANNOUNCE_BURST") : std::string("0");
             const auto announce_window = response->fields.contains("ANNOUNCE_WINDOW") ? response->fields.at("ANNOUNCE_WINDOW") : std::string("0");
             const auto announce_pow = response->fields.contains("ANNOUNCE_POW") ? response->fields.at("ANNOUNCE_POW") : std::string("0");
+            const auto handshake_pow = response->fields.contains("HANDSHAKE_POW") ? response->fields.at("HANDSHAKE_POW") : std::string("0");
+            const auto store_pow = response->fields.contains("STORE_POW") ? response->fields.at("STORE_POW") : std::string("0");
             const auto control_host = response->fields.contains("CONTROL_HOST") ? response->fields.at("CONTROL_HOST") : std::string("127.0.0.1");
             const auto control_port = response->fields.contains("CONTROL_PORT") ? response->fields.at("CONTROL_PORT") : std::string("47777");
             const auto storage_persistent = response->fields.contains("STORAGE_PERSISTENT") ? response->fields.at("STORAGE_PERSISTENT") : std::string("0");
@@ -2517,6 +2520,8 @@ int main(int argc, char** argv) {
             std::cout << "  Announce interval:  every " << announce_interval << " seconds" << std::endl;
             std::cout << "  Announce burst:     " << announce_burst << " events / " << announce_window << "s window" << std::endl;
             std::cout << "  Announce PoW:       " << announce_pow << " leading zero bits" << std::endl;
+            std::cout << "  Handshake PoW:      " << handshake_pow << " leading zero bits" << std::endl;
+            std::cout << "  Store PoW:          " << store_pow << " leading zero bits" << std::endl;
             std::cout << "  Control endpoint:   " << control_host << ':' << control_port << std::endl;
             std::cout << "  Persistent storage: "
                       << (storage_persistent == "1" ? "enabled" : "disabled")
@@ -2617,9 +2622,52 @@ int main(int argc, char** argv) {
                 }
             }
 
+            std::uint8_t store_pow_difficulty = 0;
+            if (const auto defaults = client.send("DEFAULTS"); defaults) {
+                if (!defaults->success) {
+                    print_daemon_failure(*defaults);
+                    return 1;
+                }
+                if (const auto pow_it = defaults->fields.find("STORE_POW"); pow_it != defaults->fields.end()) {
+                    std::uint64_t parsed = 0;
+                    if (parse_uint64(pow_it->second, parsed)) {
+                        if (parsed > ephemeralnet::security::kMaxStorePowDifficulty) {
+                            parsed = ephemeralnet::security::kMaxStorePowDifficulty;
+                        }
+                        store_pow_difficulty = static_cast<std::uint8_t>(parsed);
+                    }
+                }
+            } else {
+                throw_daemon_unreachable();
+            }
+
+            const auto chunk_id = ephemeralnet::security::derive_chunk_id(
+                std::span<const std::uint8_t>(payload.data(), payload.size()));
+            const auto filename_hint = ephemeralnet::security::sanitize_filename_hint(input_path.string());
+            const ephemeralnet::security::StoreWorkInput pow_input{
+                chunk_id,
+                static_cast<std::uint64_t>(payload.size()),
+                filename_hint ? std::string_view(*filename_hint) : std::string_view{}
+            };
+
+            std::optional<std::uint64_t> store_pow_nonce;
+            if (store_pow_difficulty > 0) {
+                store_pow_nonce = ephemeralnet::security::compute_store_pow(pow_input, store_pow_difficulty);
+                if (!store_pow_nonce.has_value()) {
+                    throw_cli_error("E_STORE_POW_SEARCH_EXHAUSTED",
+                                    "Unable to satisfy the daemon's proof-of-work requirement",
+                                    "Retry the command or lower the store PoW difficulty on the daemon");
+                }
+            } else {
+                store_pow_nonce = std::uint64_t{0};
+            }
+
             ephemeralnet::daemon::ControlFields fields{{"PATH", input_path.string()}};
             if (ttl_override) {
                 fields["TTL"] = std::to_string(*ttl_override);
+            }
+            if (store_pow_nonce.has_value()) {
+                fields["STORE-POW"] = std::to_string(*store_pow_nonce);
             }
 
             const auto response = client.send("STORE",
