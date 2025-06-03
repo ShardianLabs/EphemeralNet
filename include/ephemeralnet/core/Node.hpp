@@ -168,6 +168,8 @@ private:
     std::unordered_map<std::string, SwarmRoleLedger> swarm_roles_;
     std::unordered_map<std::string, std::uint8_t> peer_message_versions_;
     std::unordered_map<std::string, std::deque<std::chrono::steady_clock::time_point>> peer_announce_history_;
+    std::unordered_map<std::string, std::deque<std::chrono::steady_clock::time_point>> peer_announce_failure_history_;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> peer_announce_lockouts_;
     mutable std::recursive_mutex scheduler_mutex_;
 
     void initialize_transport_handler();
@@ -237,6 +239,9 @@ private:
     SwarmPeerLoadMap gather_peer_load() const;
     bool apply_announce_pow(protocol::AnnouncePayload& payload) const;
     bool verify_announce_pow(const protocol::AnnouncePayload& payload, std::uint8_t message_version) const;
+    bool announce_sender_locked(const PeerId& peer_id, std::chrono::steady_clock::time_point now);
+    void record_announce_failure(const PeerId& peer_id, std::chrono::steady_clock::time_point now);
+    void clear_announce_failures(const PeerId& peer_id);
 };
 
 }  

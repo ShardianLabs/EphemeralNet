@@ -254,6 +254,23 @@ if(EPHEMERALNET_BUILD_TESTS)
 
     add_test(NAME EphemeralNet.StorePow COMMAND ephemeralnet_store_pow_tests)
 
+    add_executable(ephemeralnet_announce_abuse_tests
+        tests/announce_abuse.cpp
+    )
+
+    target_link_libraries(ephemeralnet_announce_abuse_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_announce_abuse_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_announce_abuse_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.AnnounceAbuse COMMAND ephemeralnet_announce_abuse_tests)
+
     add_executable(ephemeralnet_ttl_audit_tests
         tests/ttl_audit.cpp
     )

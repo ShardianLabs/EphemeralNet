@@ -63,8 +63,8 @@
 - **SECURITY**
 	- Design and implement anti-Sybil/spam defences (lightweight Proof-of-Work or equivalent for costly operations).
 		- Existing controls: Per-peer reputation tracking, HMAC-authenticated transport, rate-aware fetch scheduler and chunk ledger accounting.
-		- Progress: Handshake and store PoW integrated with configurable difficulty, CLI/daemon enforcement, and tougher reputation penalties for invalid work.
-		- Outstanding: Apply equivalent PoW to Announce submissions and broaden abuse heuristics.
+		- Progress: Handshake, store, and announce PoW integrated with configurable difficulty, CLI/daemon enforcement, abuse heuristics for Announce spam, and tougher reputation penalties for invalid work.
+		- Outstanding: Monitor PoW difficulty targets in long-running swarms and surface tuning guidance via metrics and operator docs.
 - **OPS & OBSERVABILITY**
 	- Prepare deployment scripts and CI/CD pipelines for Windows/Linux/macOS (Docker, PPA/Copr, Homebrew).
 	- Manage reproducible packaging and binary signing.

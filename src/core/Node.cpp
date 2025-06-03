@@ -39,6 +39,9 @@ constexpr std::uint64_t kMaxAnnouncePowAttempts{500'000};
 constexpr std::uint8_t kMaxHandshakePowDifficulty{24};
 constexpr std::uint8_t kMaxStorePowDifficulty{24};
 constexpr std::uint64_t kMaxHandshakePowAttempts{500'000};
+constexpr std::chrono::seconds kAnnounceFailureWindow{std::chrono::seconds{120}};
+constexpr std::chrono::seconds kAnnounceLockoutDuration{std::chrono::seconds{180}};
+constexpr std::size_t kAnnounceFailureThreshold{3};
 
 std::uint32_t generate_identity_scalar(const Config& config) {
     std::mt19937 generator;
@@ -1009,6 +1012,51 @@ bool Node::register_incoming_announce(const PeerId& peer_id, std::chrono::steady
     return true;
 }
 
+bool Node::announce_sender_locked(const PeerId& peer_id, std::chrono::steady_clock::time_point now) {
+    SchedulerLock lock(scheduler_mutex_);
+    const auto key = peer_id_to_string(peer_id);
+    const auto it = peer_announce_lockouts_.find(key);
+    if (it == peer_announce_lockouts_.end()) {
+        return false;
+    }
+    if (it->second <= now) {
+        peer_announce_lockouts_.erase(it);
+        return false;
+    }
+    return true;
+}
+
+void Node::record_announce_failure(const PeerId& peer_id, std::chrono::steady_clock::time_point now) {
+    SchedulerLock lock(scheduler_mutex_);
+    const auto key = peer_id_to_string(peer_id);
+    auto& history = peer_announce_failure_history_[key];
+    while (!history.empty() && now - history.front() > kAnnounceFailureWindow) {
+        history.pop_front();
+    }
+
+    const auto lock_it = peer_announce_lockouts_.find(key);
+    if (lock_it != peer_announce_lockouts_.end()) {
+        if (lock_it->second <= now) {
+            peer_announce_lockouts_.erase(lock_it);
+        } else {
+            return;
+        }
+    }
+
+    history.push_back(now);
+    if (history.size() >= kAnnounceFailureThreshold) {
+        peer_announce_lockouts_[key] = now + kAnnounceLockoutDuration;
+        history.clear();
+    }
+}
+
+void Node::clear_announce_failures(const PeerId& peer_id) {
+    SchedulerLock lock(scheduler_mutex_);
+    const auto key = peer_id_to_string(peer_id);
+    peer_announce_failure_history_.erase(key);
+    peer_announce_lockouts_.erase(key);
+}
+
 bool Node::apply_announce_pow(protocol::AnnouncePayload& payload) const {
     return compute_announce_pow(payload, config_.announce_pow_difficulty);
 }
@@ -1866,23 +1914,32 @@ void Node::handle_acknowledge(const protocol::AcknowledgePayload& payload, const
 void Node::handle_announce(const protocol::AnnouncePayload& payload,
                            const PeerId& sender,
                            std::uint8_t message_version) {
+    const auto now = std::chrono::steady_clock::now();
+    if (announce_sender_locked(sender, now)) {
+        reputation_.record_failure(sender);
+        return;
+    }
+
     if (payload.peer_id != sender) {
+        record_announce_failure(sender, now);
         reputation_.record_failure(sender);
         return;
     }
 
     if (payload.manifest_uri.empty()) {
+        record_announce_failure(sender, now);
         reputation_.record_failure(sender);
         return;
     }
 
     if (!verify_announce_pow(payload, message_version)) {
+        record_announce_failure(sender, now);
         reputation_.record_failure(sender);
         return;
     }
 
-    const auto now = std::chrono::steady_clock::now();
     if (!register_incoming_announce(sender, now)) {
+        record_announce_failure(sender, now);
         reputation_.record_failure(sender);
         return;
     }
@@ -1891,22 +1948,26 @@ void Node::handle_announce(const protocol::AnnouncePayload& payload,
     try {
         manifest = protocol::decode_manifest(payload.manifest_uri);
     } catch (const std::exception&) {
+        record_announce_failure(sender, now);
         reputation_.record_failure(sender);
         return;
     }
 
     if (manifest.chunk_id != payload.chunk_id) {
+        record_announce_failure(sender, now);
         reputation_.record_failure(sender);
         return;
     }
 
     if (!validate_shards(manifest)) {
+        record_announce_failure(sender, now);
         reputation_.record_failure(sender);
         return;
     }
 
     const auto ttl_opt = manifest_ttl(manifest, config_);
     if (!ttl_opt.has_value()) {
+        record_announce_failure(sender, now);
         reputation_.record_failure(sender);
         return;
     }
@@ -1919,6 +1980,7 @@ void Node::handle_announce(const protocol::AnnouncePayload& payload,
         });
 
     if (!shards_valid) {
+        record_announce_failure(sender, now);
         reputation_.record_failure(sender);
         return;
     }
@@ -1928,6 +1990,7 @@ void Node::handle_announce(const protocol::AnnouncePayload& payload,
     dht_.publish_shards(manifest.chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, *ttl_opt);
     update_swarm_plan(manifest);
     note_peer_seed(manifest.chunk_id, sender);
+    clear_announce_failures(sender);
 
     auto advertised_ttl = payload.ttl.count() > 0 ? payload.ttl : *ttl_opt;
     if (advertised_ttl > *ttl_opt) {

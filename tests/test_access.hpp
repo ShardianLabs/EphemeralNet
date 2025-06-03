@@ -165,6 +165,23 @@ public:
                                                                   std::chrono::steady_clock::time_point when) {
         return node.key_manager_.rotate_if_needed(peer_id, when);
     }
+
+    static bool announce_blocked(const Node& node, const PeerId& peer_id) {
+        const auto key = peer_id_to_string(peer_id);
+        const auto it = node.peer_announce_lockouts_.find(key);
+        if (it == node.peer_announce_lockouts_.end()) {
+            return false;
+        }
+        return it->second > std::chrono::steady_clock::now();
+    }
+
+    static void expire_announce_lock(Node& node, const PeerId& peer_id) {
+        const auto key = peer_id_to_string(peer_id);
+        const auto it = node.peer_announce_lockouts_.find(key);
+        if (it != node.peer_announce_lockouts_.end()) {
+            it->second = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+        }
+    }
 };
 
 }  // namespace ephemeralnet::test
