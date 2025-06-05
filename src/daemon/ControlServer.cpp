@@ -1,5 +1,6 @@
 #include "ephemeralnet/daemon/ControlPlane.hpp"
 #include "ephemeralnet/daemon/StructuredLogger.hpp"
+#include "ephemeralnet/core/Node.hpp"
 
 #include "ephemeralnet/Config.hpp"
 #include "ephemeralnet/Types.hpp"
@@ -344,11 +345,17 @@ struct Metrics {
     std::atomic<std::uint64_t> command_fetch_rate_limited_total{0};
     std::atomic<std::uint64_t> command_fetch_auth_failures_total{0};
 
-    std::string render_prometheus() const {
+    std::string render_prometheus(const Config& config, const Node::PowStatistics& pow_stats) const {
         std::ostringstream oss;
         auto emit_counter = [&](std::string_view name, std::string_view help, std::uint64_t value) {
             oss << "# HELP " << name << ' ' << help << "\n";
             oss << "# TYPE " << name << " counter\n";
+            oss << name << ' ' << value << "\n";
+        };
+
+        auto emit_gauge = [&](std::string_view name, std::string_view help, std::uint64_t value) {
+            oss << "# HELP " << name << ' ' << help << "\n";
+            oss << "# TYPE " << name << " gauge\n";
             oss << name << ' ' << value << "\n";
         };
 
@@ -394,9 +401,9 @@ struct Metrics {
         emit_counter("ephemeralnet_command_store_auth_failures_total",
                       "STORE commands rejected by authentication.",
                       command_store_auth_failures_total.load(std::memory_order_relaxed));
-    emit_counter("ephemeralnet_command_store_pow_failures_total",
-              "STORE commands rejected due to invalid proof-of-work.",
-              command_store_pow_failures_total.load(std::memory_order_relaxed));
+      emit_counter("ephemeralnet_command_store_pow_failures_total",
+                "STORE commands rejected due to invalid proof-of-work.",
+                command_store_pow_failures_total.load(std::memory_order_relaxed));
         emit_counter("ephemeralnet_command_fetch_requests_total",
                       "FETCH commands processed.",
                       command_fetch_requests_total.load(std::memory_order_relaxed));
@@ -415,6 +422,29 @@ struct Metrics {
         emit_counter("ephemeralnet_command_fetch_auth_failures_total",
                       "FETCH commands rejected by authentication.",
                       command_fetch_auth_failures_total.load(std::memory_order_relaxed));
+
+        emit_gauge("ephemeralnet_handshake_pow_difficulty_bits",
+                    "Configured handshake proof-of-work difficulty (leading zero bits).",
+                    config.handshake_pow_difficulty);
+        emit_gauge("ephemeralnet_store_pow_difficulty_bits",
+                    "Configured store proof-of-work difficulty (leading zero bits).",
+                    config.store_pow_difficulty);
+        emit_gauge("ephemeralnet_announce_pow_difficulty_bits",
+                    "Configured announce proof-of-work difficulty (leading zero bits).",
+                    config.announce_pow_difficulty);
+
+        emit_counter("ephemeralnet_handshake_pow_success_total",
+                      "Remote handshakes passing proof-of-work validation.",
+                      pow_stats.handshake_validations_success);
+        emit_counter("ephemeralnet_handshake_pow_failure_total",
+                      "Remote handshakes failing proof-of-work validation.",
+                      pow_stats.handshake_validations_failure);
+        emit_counter("ephemeralnet_announce_pow_success_total",
+                      "Announce messages passing proof-of-work validation.",
+                      pow_stats.announce_validations_success);
+        emit_counter("ephemeralnet_announce_pow_failure_total",
+                      "Announce messages failing proof-of-work validation.",
+                      pow_stats.announce_validations_failure);
 
         return oss.str();
     }
@@ -796,7 +826,15 @@ private:
     }
 
     void handle_metrics(NativeSocket client, const std::string& remote_identity) {
-        const auto snapshot = metrics_.render_prometheus();
+        Config config_copy{};
+        Node::PowStatistics pow_stats{};
+        {
+            std::scoped_lock lock(node_mutex_);
+            config_copy = node_.config();
+            pow_stats = node_.pow_statistics();
+        }
+
+        const auto snapshot = metrics_.render_prometheus(config_copy, pow_stats);
         ControlFields fields{{"CODE", "OK_METRICS"}};
         const auto payload = std::span<const std::uint8_t>(
             reinterpret_cast<const std::uint8_t*>(snapshot.data()), snapshot.size());

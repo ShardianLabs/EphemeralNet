@@ -182,6 +182,10 @@ public:
             it->second = std::chrono::steady_clock::now() - std::chrono::seconds(1);
         }
     }
+
+    static Node::PowStatistics pow_stats(const Node& node) {
+        return node.pow_statistics();
+    }
 };
 
 }  // namespace ephemeralnet::test

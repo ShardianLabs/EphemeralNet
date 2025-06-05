@@ -1068,7 +1068,13 @@ bool Node::verify_announce_pow(const protocol::AnnouncePayload& payload, std::ui
     if (message_version < 3) {
         return false;
     }
-    return announce_pow_valid(payload, config_.announce_pow_difficulty);
+    const bool valid = announce_pow_valid(payload, config_.announce_pow_difficulty);
+    if (valid) {
+        pow_counters_.announce_success.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        pow_counters_.announce_failure.fetch_add(1, std::memory_order_relaxed);
+    }
+    return valid;
 }
 
 void Node::rotate_session_keys(std::chrono::steady_clock::time_point now) {
@@ -1623,13 +1629,22 @@ bool Node::perform_handshake(const PeerId& peer_id,
         return false;
     }
 
-    if (!handshake_pow_valid(peer_id, id_, remote_public_key, remote_work_nonce, config_.handshake_pow_difficulty)) {
+    const bool pow_valid = handshake_pow_valid(peer_id,
+                                               id_,
+                                               remote_public_key,
+                                               remote_work_nonce,
+                                               config_.handshake_pow_difficulty);
+
+    if (!pow_valid) {
+        pow_counters_.handshake_failure.fetch_add(1, std::memory_order_relaxed);
         record.success = false;
         handshake_state_[key] = record;
         reputation_.record_failure(peer_id);
         reputation_.record_failure(peer_id);
         return false;
     }
+
+    pow_counters_.handshake_success.fetch_add(1, std::memory_order_relaxed);
 
     const auto shared_secret = network::KeyExchange::derive_shared_secret(identity_scalar_, remote_public_key);
     const auto material = make_handshake_material(identity_public_, remote_public_key);
@@ -1654,6 +1669,15 @@ std::optional<bool> Node::last_handshake_success(const PeerId& peer_id) const {
         return std::nullopt;
     }
     return it->second.success;
+}
+
+Node::PowStatistics Node::pow_statistics() const {
+    PowStatistics stats{};
+    stats.handshake_validations_success = pow_counters_.handshake_success.load(std::memory_order_relaxed);
+    stats.handshake_validations_failure = pow_counters_.handshake_failure.load(std::memory_order_relaxed);
+    stats.announce_validations_success = pow_counters_.announce_success.load(std::memory_order_relaxed);
+    stats.announce_validations_failure = pow_counters_.announce_failure.load(std::memory_order_relaxed);
+    return stats;
 }
 
 std::vector<std::string> Node::drain_cleanup_notifications() {

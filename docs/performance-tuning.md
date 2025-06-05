@@ -42,6 +42,7 @@ Implement the following minimal dashboards/alerts:
 - **Announce saturation**: Track `ANNOUNCE_RATE_LIMITED` counters from daemon logs. Trigger scaling when more than 5% of announces are rejected in a 10-minute window.
 - **Storage churn**: Graph chunk expirations per hour. A spike usually means TTL misconfiguration or abusive uploads.
 - **Key rotation drift**: Compare expected rotation cadence versus observed `key_rotation` log entries to catch stalled peers.
+- **Proof-of-Work drift**: Graph `ephemeralnet_*_pow_difficulty_bits` gauges alongside the corresponding success/failure counters (`ephemeralnet_handshake_pow_success_total`, `ephemeralnet_handshake_pow_failure_total`, `ephemeralnet_announce_pow_success_total`, `ephemeralnet_announce_pow_failure_total`, `ephemeralnet_command_store_pow_failures_total`). Alert when failure rates exceed 5% over a 15-minute rolling window.
 
 ## 6. Capacity Planning Playbook
 
@@ -50,5 +51,15 @@ Implement the following minimal dashboards/alerts:
 3. Simulate the peak using the CLI (`eph store` in a loop) while tailing daemon logs to confirm rejections remain below 5%.
 4. Scale vertically (CPU/RAM) when announce PoW difficulty needs to rise above 10 bits, or horizontally by adding additional control nodes behind DNS round-robin.
 5. Revisit the plan quarterly or after significant workload changes.
+
+## 7. Proof-of-Work Monitoring & Tuning
+
+1. Poll `eph metrics --format prometheus` (or scrape the `METRICS` command) to capture the `ephemeralnet_*_pow_difficulty_bits` gauges. These values mirror the active daemon defaults and confirm configuration drift after reloads.
+2. Track success and failure counters for each proof-of-work gate:
+	- Handshake: `ephemeralnet_handshake_pow_success_total` vs. `ephemeralnet_handshake_pow_failure_total`
+	- Announce: `ephemeralnet_announce_pow_success_total` vs. `ephemeralnet_announce_pow_failure_total`
+	- Store: success is implied by `ephemeralnet_command_store_success_total`, while failures surface through `ephemeralnet_command_store_pow_failures_total`
+3. If failure ratios exceed 5–7% for sustained 10-minute windows, lower the corresponding difficulty by one bit or provision additional CPU to the daemon. Conversely, if failure ratios remain below 1% and CPU load is modest, consider raising difficulty to curb Sybil attempts.
+4. Document adopted thresholds in your runbooks and revisit after major workload changes, keeping the tuning guidance in sync with operational reality.
 
 Keep this runbook alongside your bootstrap automation so operators have quick access during incident response.

@@ -52,6 +52,7 @@ TTL:3587
 - The `DEFAULTS` response advertises the active bits via `HANDSHAKE_POW` and `STORE_POW`. A value of `0` disables enforcement for that path.
 - Clients must include a `STORE-POW` header when `STORE_POW > 0`. The value is a 64-bit nonce that satisfies the advertised difficulty over the chunk id, payload size, and sanitized filename hint.
 - Failures surface as `ERR_STORE_POW_REQUIRED`, `ERR_STORE_POW_INVALID`, or `ERR_STORE_POW_LOCKED` (the latter after repeated invalid submissions). Hints instruct operators to regenerate work or wait for the temporary back-off window.
+- Operators can audit live enforcement via `METRICS`: the gauges `ephemeralnet_handshake_pow_difficulty_bits`, `ephemeralnet_store_pow_difficulty_bits`, and `ephemeralnet_announce_pow_difficulty_bits` mirror the configured targets, while success/failure counters highlight drift that warrants retuning.
 
 ## Data Plane Overview
 

@@ -25,6 +25,7 @@
 #include <unordered_set>
 #include <vector>
 #include <mutex>
+#include <atomic>
 
 namespace ephemeralnet {
 
@@ -64,6 +65,15 @@ public:
     std::optional<std::uint64_t> generate_handshake_work(const PeerId& peer_id) const;
     int reputation_score(const PeerId& peer_id) const;
     std::optional<bool> last_handshake_success(const PeerId& peer_id) const;
+
+    struct PowStatistics {
+        std::uint64_t handshake_validations_success{0};
+        std::uint64_t handshake_validations_failure{0};
+        std::uint64_t announce_validations_success{0};
+        std::uint64_t announce_validations_failure{0};
+    };
+
+    PowStatistics pow_statistics() const;
 
     struct TtlAuditReport {
         std::vector<std::string> expired_local_chunks;
@@ -171,6 +181,12 @@ private:
     std::unordered_map<std::string, std::deque<std::chrono::steady_clock::time_point>> peer_announce_failure_history_;
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> peer_announce_lockouts_;
     mutable std::recursive_mutex scheduler_mutex_;
+    struct PowCounters {
+        std::atomic<std::uint64_t> handshake_success{0};
+        std::atomic<std::uint64_t> handshake_failure{0};
+        std::atomic<std::uint64_t> announce_success{0};
+        std::atomic<std::uint64_t> announce_failure{0};
+    } mutable pow_counters_{};
 
     void initialize_transport_handler();
     void handle_transport_message(const network::TransportMessage& message);
