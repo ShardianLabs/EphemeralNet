@@ -68,13 +68,14 @@ int main() {
         base_payload.assigned_shards.push_back(manifest.shards.front().index);
     }
 
-    auto invalid_payload = base_payload;
-    invalid_payload.work_nonce = 0;
-    ephemeralnet::test::NodeTestAccess::handle_announce(node, invalid_payload, remote_id);
-
     auto valid_payload = base_payload;
     const bool pow_ready = ephemeralnet::test::NodeTestAccess::apply_pow(node, valid_payload);
     assert(pow_ready);
+
+    auto invalid_payload = valid_payload;
+    invalid_payload.work_nonce += 1;  // Guaranteed miss adjacent to valid solution.
+    ephemeralnet::test::NodeTestAccess::handle_announce(node, invalid_payload, remote_id);
+
     ephemeralnet::test::NodeTestAccess::handle_announce(node, valid_payload, remote_id);
 
     const auto stats = ephemeralnet::test::NodeTestAccess::pow_stats(node);

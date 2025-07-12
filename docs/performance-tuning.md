@@ -60,6 +60,6 @@ Implement the following minimal dashboards/alerts:
 	- Announce: `ephemeralnet_announce_pow_success_total` vs. `ephemeralnet_announce_pow_failure_total`
 	- Store: success is implied by `ephemeralnet_command_store_success_total`, while failures surface through `ephemeralnet_command_store_pow_failures_total`
 3. If failure ratios exceed 5–7% for sustained 10-minute windows, lower the corresponding difficulty by one bit or provision additional CPU to the daemon. Conversely, if failure ratios remain below 1% and CPU load is modest, consider raising difficulty to curb Sybil attempts.
-4. Document adopted thresholds in your runbooks and revisit after major workload changes, keeping the tuning guidance in sync with operational reality.
+4. Document adopted thresholds in your runbooks and revisit after major workload changes, keeping the tuning guidance in sync with operational reality. The repository’s `docs/observability/` folder includes ready-to-import Prometheus alert rules and a Grafana dashboard to accelerate this setup.
 
 Keep this runbook alongside your bootstrap automation so operators have quick access during incident response.

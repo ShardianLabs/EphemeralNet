@@ -58,21 +58,22 @@
 - Added a deterministic multi-node integration harness that simulates bounded latency and intentional packet loss to validate end-to-end chunk replication under degraded conditions.
 - Automated end-to-end store/fetch scenarios with induced failures and plan rotation inside the multi-node harness.
 - Reviewed crypto hardening levers (key rotation cadence, TTL bounds, announce throttles) using soak metrics and tuned defaults/documentation accordingly.
+- Anti-Sybil defences enforce PoW across handshake/store/announce paths with CLI/daemon helpers, abuse heuristics, metrics, and bundled Prometheus/Grafana alerting assets.
 
 ## Next milestones
-- **SECURITY**
-	- Design and implement anti-Sybil/spam defences (lightweight Proof-of-Work or equivalent for costly operations).
-		- Existing controls: Per-peer reputation tracking, HMAC-authenticated transport, rate-aware fetch scheduler and chunk ledger accounting.
-		- Progress: Handshake, store, and announce PoW integrated with configurable difficulty, CLI/daemon enforcement, abuse heuristics for Announce spam, and tougher reputation penalties for invalid work. Metrics now expose active difficulties and validation outcomes, with operator docs covering tuning practices.
-		- Outstanding: Automate alert thresholds for PoW drift (e.g., ship sample dashboards/alerts alongside the metrics guidance).
 - **OPS & OBSERVABILITY**
 	- Prepare deployment scripts and CI/CD pipelines for Windows/Linux/macOS (Docker, PPA/Copr, Homebrew).
 	- Manage reproducible packaging and binary signing.
 	- Review governance and abuse policy effectiveness quarterly; feed incident learnings back into the runbook.
+	- Configure Apple notarization workflow and Windows Authenticode signing inside CI.
 - **PRODUCT**
 	- Complete the public `libephemeralnet` API (versioning, documentation, usage examples).
 	- Finalise `ephemeralnet-cli` with diagnostics commands and scripting support.
 	- Prototype an initial `ephemeralnet-GUI` or lightweight admin panel.
+	- Implement a version-check endpoint (JSON hosted on GitHub Pages) and wire an `eph update-check` command.
 - **DOCS**
 	- Publish a versioned API reference for developers embedding `libephemeralnet`.
 	- Expand operator runbooks with performance tuning and capacity planning guidance.
+	- Author a contributor guide and code of conduct for the project.
+- **TESTING & VALIDATION**
+	- Schedule manual hostile-network P2P validation (e.g., 4G mobile vs. corporate Wi-Fi segments).

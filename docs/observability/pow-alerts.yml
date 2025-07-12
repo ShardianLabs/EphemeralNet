@@ -1,0 +1,107 @@
+groups:
+  - name: ephemeralnet-pow-alerts
+    rules:
+      - alert: EphemeralNetHandshakePowFailureRateHigh
+        expr: (
+                increase(ephemeralnet_handshake_pow_failure_total[15m]) /
+                clamp_min(
+                  increase(ephemeralnet_handshake_pow_success_total[15m]) +
+                  increase(ephemeralnet_handshake_pow_failure_total[15m]),
+                  1
+                )
+              ) > 0.07
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Handshake proof-of-work failure rate above 7%.
+          description: |
+            EphemeralNet handshake proof-of-work failures exceeded 7% over the last 15 minutes.
+            Consider lowering HANDSHAKE_POW difficulty or scaling control-plane CPU.
+            Inspect daemon logs for remote identity abuse before tuning.
+
+      - alert: EphemeralNetHandshakePowFailureRateCritical
+        expr: (
+                increase(ephemeralnet_handshake_pow_failure_total[15m]) /
+                clamp_min(
+                  increase(ephemeralnet_handshake_pow_success_total[15m]) +
+                  increase(ephemeralnet_handshake_pow_failure_total[15m]),
+                  1
+                )
+              ) > 0.12
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: Handshake proof-of-work failure rate above 12%.
+          description: |
+            EphemeralNet handshake proof-of-work failures exceeded 12% over the last 15 minutes.
+            Automation should page operators. Investigate Sybil attempts and adjust difficulty or rate limits.
+
+      - alert: EphemeralNetAnnouncePowFailureRateHigh
+        expr: (
+                increase(ephemeralnet_announce_pow_failure_total[10m]) /
+                clamp_min(
+                  increase(ephemeralnet_announce_pow_success_total[10m]) +
+                  increase(ephemeralnet_announce_pow_failure_total[10m]),
+                  1
+                )
+              ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Announce proof-of-work failure rate above 5%.
+          description: |
+            Announce proof-of-work failures exceeded 5% in the last 10 minutes. Review ANNOUNCE_POW difficulty
+            and confirm the announce abuse heuristics are not locking out legitimate peers.
+
+      - alert: EphemeralNetAnnouncePowFailureRateCritical
+        expr: (
+                increase(ephemeralnet_announce_pow_failure_total[10m]) /
+                clamp_min(
+                  increase(ephemeralnet_announce_pow_success_total[10m]) +
+                  increase(ephemeralnet_announce_pow_failure_total[10m]),
+                  1
+                )
+              ) > 0.10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Announce proof-of-work failure rate above 10%.
+          description: |
+            Announce proof-of-work failures exceeded 10% in the last 10 minutes. Investigate control-plane abuse
+            and consider incrementing ANNOUNCE_POW difficulty or tightening announce throttles.
+
+      - alert: EphemeralNetStorePowFailureRateHigh
+        expr: (
+                increase(ephemeralnet_command_store_pow_failures_total[10m]) /
+                clamp_min(
+                  increase(ephemeralnet_command_store_success_total[10m]) +
+                  increase(ephemeralnet_command_store_pow_failures_total[10m]),
+                  1
+                )
+              ) > 0.04
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Store proof-of-work rejection rate above 4%.
+          description: |
+            STORE commands rejected due to invalid proof-of-work exceeded 4% of total STORE volume in the last 10 minutes.
+            Confirm clients are upgraded and difficulty targets (STORE_POW) remain feasible.
+
+      - alert: EphemeralNetPowDifficultyChanged
+        expr: |
+          changes(ephemeralnet_handshake_pow_difficulty_bits[5m]) > 0
+          or changes(ephemeralnet_store_pow_difficulty_bits[5m]) > 0
+          or changes(ephemeralnet_announce_pow_difficulty_bits[5m]) > 0
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: EphemeralNet proof-of-work difficulty changed.
+          description: |
+            At least one proof-of-work difficulty gauge changed within the last five minutes.
+            Validate the change against the rollout plan and ensure all clients refresh defaults.

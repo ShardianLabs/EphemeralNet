@@ -1,0 +1,135 @@
+{
+  "__inputs": [],
+  "__requires": [
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
+    { "type": "panel", "name": "Graph", "id": "graph", "version": "7.5.0" },
+    { "type": "panel", "name": "Stat", "id": "stat", "version": "7.5.0" }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": null,
+  "iteration": 1700000000000,
+  "links": [],
+  "panels": [
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        { "expr": "ephemeralnet_handshake_pow_success_total", "legendFormat": "Handshake success", "refId": "A" },
+        { "expr": "ephemeralnet_handshake_pow_failure_total", "legendFormat": "Handshake failure", "refId": "B" }
+      ],
+      "title": "Handshake PoW Counters",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "expr": "increase(ephemeralnet_handshake_pow_failure_total[$__rate_interval]) / clamp_min(increase(ephemeralnet_handshake_pow_failure_total[$__rate_interval]) + increase(ephemeralnet_handshake_pow_success_total[$__rate_interval]), 1)",
+          "legendFormat": "Handshake failure rate",
+          "refId": "A"
+        },
+        {
+          "expr": "increase(ephemeralnet_announce_pow_failure_total[$__rate_interval]) / clamp_min(increase(ephemeralnet_announce_pow_failure_total[$__rate_interval]) + increase(ephemeralnet_announce_pow_success_total[$__rate_interval]), 1)",
+          "legendFormat": "Announce failure rate",
+          "refId": "B"
+        },
+        {
+          "expr": "increase(ephemeralnet_command_store_pow_failures_total[$__rate_interval]) / clamp_min(increase(ephemeralnet_command_store_pow_failures_total[$__rate_interval]) + increase(ephemeralnet_command_store_success_total[$__rate_interval]), 1)",
+          "legendFormat": "Store failure rate",
+          "refId": "C"
+        }
+      ],
+      "title": "Proof-of-Work Failure Rates",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 12 } ] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": [ "last" ], "fields": "" },
+        "textMode": "auto"
+      },
+      "targets": [
+        { "expr": "ephemeralnet_handshake_pow_difficulty_bits", "legendFormat": "Handshake bits", "refId": "A" },
+        { "expr": "ephemeralnet_announce_pow_difficulty_bits", "legendFormat": "Announce bits", "refId": "B" },
+        { "expr": "ephemeralnet_store_pow_difficulty_bits", "legendFormat": "Store bits", "refId": "C" }
+      ],
+      "title": "Configured Difficulty",
+      "type": "stat"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 26,
+  "style": "dark",
+  "tags": ["ephemeralnet", "pow"],
+  "templating": {
+    "list": [
+      {
+        "current": { "text": "Prometheus", "value": "Prometheus" },
+        "label": "Datasource",
+        "name": "DS_PROMETHEUS",
+        "query": "prometheus",
+        "type": "datasource",
+        "refresh": 1
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": { "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m"] },
+  "timezone": "",
+  "title": "EphemeralNet Proof-of-Work",
+  "uid": "ephemeralnet-pow"
+}
