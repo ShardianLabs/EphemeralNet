@@ -1533,21 +1533,53 @@ bool Node::request_chunk(const PeerId& peer_id,
 std::optional<ChunkData> Node::fetch_chunk(const ChunkId& chunk_id) {
     if (auto record = chunk_store_.get_record(chunk_id)) {
         if (record->encrypted) {
-            const auto shard_info = dht_.shard_record(chunk_id);
-            if (!shard_info.has_value() || shard_info->threshold == 0 || shard_info->shards.size() < shard_info->threshold) {
+            std::vector<protocol::KeyShard> shard_source;
+            std::uint8_t shard_threshold = 0;
+
+            if (const auto shard_info = dht_.shard_record(chunk_id)) {
+                if (shard_info->threshold > 0 && shard_info->shards.size() >= shard_info->threshold) {
+                    shard_source = shard_info->shards;
+                    shard_threshold = shard_info->threshold;
+                }
+            }
+
+            if (shard_threshold == 0) {
+                if (const auto manifest_opt = manifest_for_chunk(chunk_id)) {
+                    const auto& manifest = *manifest_opt;
+                    if (manifest.threshold > 0 && manifest.shards.size() >= manifest.threshold) {
+                        shard_source = manifest.shards;
+                        shard_threshold = manifest.threshold;
+                        if (const auto ttl = manifest_ttl(manifest, config_)) {
+                            dht_.publish_shards(manifest.chunk_id,
+                                                manifest.shards,
+                                                manifest.threshold,
+                                                manifest.total_shares,
+                                                *ttl);
+                        }
+                    }
+                }
+            }
+
+            if (shard_threshold == 0) {
+                const auto providers = dht_.find_providers(chunk_id);
+                if (providers.empty()) {
+                    std::cout << "[Node] No providers available for chunk " << chunk_id_to_string(chunk_id) << "\n";
+                } else {
+                    std::cout << "[Node] Providers known for chunk " << chunk_id_to_string(chunk_id) << ": " << providers.size() << "\n";
+                }
                 return std::nullopt;
             }
 
             std::vector<crypto::ShamirShare> shares;
-            shares.reserve(shard_info->shards.size());
-            for (const auto& shard : shard_info->shards) {
+            shares.reserve(shard_source.size());
+            for (const auto& shard : shard_source) {
                 crypto::ShamirShare share{};
                 share.index = shard.index;
                 share.value = shard.value;
                 shares.push_back(share);
             }
 
-            const auto secret_bytes = crypto::Shamir::combine(shares, shard_info->threshold);
+            const auto secret_bytes = crypto::Shamir::combine(shares, shard_threshold);
             crypto::Key chunk_key{};
             chunk_key.bytes = secret_bytes;
 

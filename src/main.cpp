@@ -12,6 +12,7 @@
 #include <charconv>
 #include <chrono>
 #include <csignal>
+#include <cstring>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -40,6 +41,13 @@
 #include <windows.h>
 #else
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 #endif
 
 #ifndef EPHEMERALNET_VERSION
@@ -1235,9 +1243,38 @@ void load_configuration(GlobalOptions& options) {
 }
 std::atomic_bool g_run_loop{true};
 
-void signal_handler(int) {
-    g_run_loop.store(false);
+void signal_handler(int signal_code) {
+    switch (signal_code) {
+    case SIGINT:
+    case SIGTERM:
+#ifdef SIGQUIT
+    case SIGQUIT:
+#endif
+#ifdef SIGBREAK
+    case SIGBREAK:
+#endif
+        g_run_loop.store(false);
+        break;
+    default:
+        break;
+    }
 }
+
+#ifdef _WIN32
+BOOL WINAPI windows_console_ctrl_handler(DWORD control_type) {
+    switch (control_type) {
+    case CTRL_C_EVENT:
+    case CTRL_BREAK_EVENT:
+    case CTRL_CLOSE_EVENT:
+    case CTRL_LOGOFF_EVENT:
+    case CTRL_SHUTDOWN_EVENT:
+        g_run_loop.store(false);
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+#endif
 
 void print_usage() {
     std::cout << "EphemeralNet CLI" << std::endl;
@@ -1295,7 +1332,7 @@ bool is_help_flag(std::string_view value) {
 
 void print_start_usage() {
     std::cout << "Usage: eph start\n"
-              << "Launch the daemon in the background on Windows and wait for readiness." << std::endl;
+              << "Launch the daemon in the background and wait for readiness." << std::endl;
 }
 
 void print_stop_usage() {
@@ -1381,7 +1418,7 @@ void print_manual() {
               << "    --version             Print CLI version and exit.\n\n";
     std::cout << "COMMANDS\n"
               << "    serve                  Run the daemon in the foreground.\n"
-              << "    start                  Launch the daemon in the background (Windows).\n"
+              << "    start                  Launch the daemon in the background.\n"
               << "    stop                   Stop the running daemon.\n"
               << "    status                 Show peer counts, chunks, and transport port.\n"
               << "    list                   List local chunks with TTL and encryption status.\n"
@@ -1815,7 +1852,7 @@ std::vector<std::string> build_daemon_arguments(const GlobalOptions& options) {
     return args;
 }
 
-std::filesystem::path executable_path() {
+std::filesystem::path executable_path(const char* argv0 = nullptr) {
 #ifdef _WIN32
     std::wstring buffer(512, L'\0');
     DWORD length = 0;
@@ -1832,7 +1869,40 @@ std::filesystem::path executable_path() {
     }
     return std::filesystem::path(buffer);
 #else
-    return std::filesystem::canonical("/proc/self/exe");
+#ifdef __APPLE__
+    uint32_t size = 0;
+    if (_NSGetExecutablePath(nullptr, &size) == -1) {
+        std::string storage(size, '\0');
+        if (_NSGetExecutablePath(storage.data(), &size) == 0) {
+            std::error_code ec;
+            const auto canonical = std::filesystem::canonical(storage, ec);
+            if (!ec) {
+                return canonical;
+            }
+            return std::filesystem::path(storage);
+        }
+    }
+#endif
+    std::error_code ec;
+    const auto proc_path = std::filesystem::canonical("/proc/self/exe", ec);
+    if (!ec) {
+        return proc_path;
+    }
+    if (argv0 && std::strlen(argv0) > 0) {
+        std::error_code argv_ec;
+        std::filesystem::path candidate(argv0);
+        if (!candidate.is_absolute()) {
+            candidate = std::filesystem::absolute(candidate, argv_ec);
+        }
+        if (!argv_ec) {
+            const auto resolved = std::filesystem::canonical(candidate, argv_ec);
+            if (!argv_ec) {
+                return resolved;
+            }
+        }
+        return candidate;
+    }
+    throw std::runtime_error("Could not resolve executable path");
 #endif
 }
 
@@ -1938,9 +2008,56 @@ bool launch_detached(const std::filesystem::path& exe, const std::vector<std::st
 
     return created != FALSE;
 #else
-    (void)exe;
-    (void)args;
-    return false;
+    pid_t first = ::fork();
+    if (first < 0) {
+        return false;
+    }
+    if (first > 0) {
+        int status = 0;
+        if (::waitpid(first, &status, 0) < 0) {
+            return false;
+        }
+        return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    }
+
+    if (::setsid() < 0) {
+        _exit(1);
+    }
+
+    pid_t second = ::fork();
+    if (second < 0) {
+        _exit(1);
+    }
+    if (second > 0) {
+        _exit(0);
+    }
+
+    const int dev_null = ::open("/dev/null", O_RDWR);
+    if (dev_null >= 0) {
+        ::dup2(dev_null, STDIN_FILENO);
+        ::dup2(dev_null, STDOUT_FILENO);
+        ::dup2(dev_null, STDERR_FILENO);
+        if (dev_null > STDERR_FILENO) {
+            ::close(dev_null);
+        }
+    }
+
+    std::vector<std::string> argv_storage;
+    argv_storage.reserve(args.size() + 1);
+    argv_storage.push_back(exe.string());
+    for (const auto& arg : args) {
+        argv_storage.push_back(arg);
+    }
+
+    std::vector<char*> argv_ptrs;
+    argv_ptrs.reserve(argv_storage.size() + 1);
+    for (auto& value : argv_storage) {
+        argv_ptrs.push_back(value.data());
+    }
+    argv_ptrs.push_back(nullptr);
+
+    ::execv(argv_storage.front().c_str(), argv_ptrs.data());
+    _exit(127);
 #endif
 }
 
@@ -2326,6 +2443,15 @@ int main(int argc, char** argv) {
 
             std::signal(SIGINT, signal_handler);
             std::signal(SIGTERM, signal_handler);
+#ifdef SIGQUIT
+            std::signal(SIGQUIT, signal_handler);
+#endif
+#ifdef SIGBREAK
+            std::signal(SIGBREAK, signal_handler);
+#endif
+#ifdef _WIN32
+            SetConsoleCtrlHandler(windows_console_ctrl_handler, TRUE);
+#endif
 
             {
                 std::scoped_lock lock(node_mutex);
@@ -2349,6 +2475,9 @@ int main(int argc, char** argv) {
                 node.stop_transport();
             }
             control_server.stop();
+#ifdef _WIN32
+            SetConsoleCtrlHandler(windows_console_ctrl_handler, FALSE);
+#endif
             std::cout << "Daemon stopped." << std::endl;
             return 0;
         }
@@ -2371,7 +2500,7 @@ int main(int argc, char** argv) {
             }
 
 #ifdef _WIN32
-            const auto exe = executable_path();
+            const auto exe = executable_path(argc > 0 ? argv[0] : nullptr);
             const auto args_to_launch = build_daemon_arguments(options);
             if (!launch_detached(exe, args_to_launch)) {
                 std::cerr << "Failed to launch the daemon in the background." << std::endl;
@@ -2385,9 +2514,6 @@ int main(int argc, char** argv) {
 
             std::cout << "Daemon started in the background." << std::endl;
             return 0;
-#else
-            std::cerr << "The start command is only supported on Windows in this release." << std::endl;
-            return 1;
 #endif
         }
 
