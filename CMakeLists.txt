@@ -68,6 +68,7 @@ endif()
 
 add_executable(ephemeralnet
     src/main.cpp
+    src/daemon/ControlPlane.cpp
     src/daemon/ControlClient.cpp
     src/daemon/ControlServer.cpp
     src/daemon/StructuredLogger.cpp

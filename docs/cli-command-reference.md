@@ -28,6 +28,7 @@ Run the client as `eph [global options] <command> [command options]`. Global opt
 | `--control-host <host>` | TCP host for the control plane. | Defaults to `127.0.0.1`. |
 | `--control-port <port>` | TCP port for the control plane. | 1–65535; default `47777`. |
 | `--control-token <secret>` | Shared secret for control auth. | Whitespace not allowed. |
+| `--max-store-bytes <bytes>` | Control-plane upload cap. | `0` disables the cap; default `33554432`. |
 | `--fetch-parallel <0-65535>` | Concurrent fetch operations. | `0` = unlimited. |
 | `--upload-parallel <0-65535>` | Concurrent upload operations. | `0` = unlimited. |
 | `--fetch-default-dir <path>` | Default destination when `fetch` omits `--out`. | Created lazily if missing. |
@@ -98,7 +99,7 @@ Upload a file to the daemon and receive an `eph://` manifest URI.
   - `--ttl <seconds>`: Override the daemon default TTL for this upload.
   - `--help` / `-h`: Show usage and exit.
 - Behavioural notes:
-  - Files larger than 32 MiB (control-plane upload cap) are rejected.
+  - Files larger than the configured control-plane cap (`--max-store-bytes`, default 32 MiB) are rejected.
   - When PoW is enabled the client pre-computes an acceptable nonce.
   - Confirmation prompt can be auto-accepted via `--yes`.
 - Example:

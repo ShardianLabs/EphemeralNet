@@ -184,7 +184,8 @@ ControlResponse parse_response(NativeSocket socket) {
     }
 
     if (payload_length.has_value()) {
-    if (*payload_length > kMaxControlStreamBytes) {
+        const auto limit = max_control_stream_bytes();
+        if (*payload_length > limit) {
             response.success = false;
             response.has_payload = false;
             response.payload.clear();
@@ -220,7 +221,8 @@ public:
                                         const ControlFields& fields,
                                         std::span<const std::uint8_t> payload) {
         const bool include_payload = payload.data() != nullptr || payload.size() > 0;
-        if (include_payload && payload.size() > kMaxControlStreamBytes) {
+        const auto limit = max_control_stream_bytes();
+        if (include_payload && payload.size() > limit) {
             return std::nullopt;
         }
 

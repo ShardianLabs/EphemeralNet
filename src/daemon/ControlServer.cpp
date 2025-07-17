@@ -91,7 +91,6 @@ void close_socket(NativeSocket socket) {
 #endif
 
 constexpr std::size_t kMaxLineLength = 16 * 1024;
-constexpr std::size_t kMaxStreamPayloadBytes = kMaxControlStreamBytes;
 constexpr std::chrono::seconds kStoreRateWindow{std::chrono::seconds(30)};
 constexpr std::size_t kStoreRateBurstLimit = 6;
 constexpr std::chrono::seconds kStorePowFailureWindow{std::chrono::seconds(120)};
@@ -244,10 +243,11 @@ ParseResult parse_request(NativeSocket client) {
                 result.error_hint = "Upgrade the CLI and retry";
                 return result;
             }
-            if (*parsed > kMaxControlStreamBytes) {
+            const auto stream_limit = max_control_stream_bytes();
+            if (*parsed > stream_limit) {
                 result.error_code = "ERR_CONTROL_PAYLOAD_TOO_LARGE";
                 result.error_message = "Payload exceeds server allowance";
-                result.error_hint = "Reduce the file below 32 MiB";
+                result.error_hint = "Lower the payload size or raise --max-store-bytes";
                 return result;
             }
             payload_length = static_cast<std::size_t>(*parsed);
@@ -457,6 +457,7 @@ public:
     Impl(Node& node, std::mutex& node_mutex, StopCallback stop_callback)
         : node_(node), node_mutex_(node_mutex), stop_callback_(std::move(stop_callback)) {
         winsock_runtime();
+        set_max_control_stream_bytes(node_.config().control_stream_max_bytes);
     }
 
     ~Impl() {
@@ -814,6 +815,7 @@ private:
                              {"STORE_POW", std::to_string(config_copy.store_pow_difficulty)},
                              {"CONTROL_HOST", config_copy.control_host},
                              {"CONTROL_PORT", std::to_string(config_copy.control_port)},
+                             {"CONTROL_STREAM_MAX", std::to_string(config_copy.control_stream_max_bytes)},
                              {"STORAGE_PERSISTENT", config_copy.storage_persistent_enabled ? "1" : "0"},
                              {"STORAGE_DIR", config_copy.storage_directory},
                              {"FETCH_MAX_PARALLEL", std::to_string(config_copy.fetch_max_parallel_requests)},
@@ -874,10 +876,11 @@ private:
             return;
         }
 
-        if (request.payload.size() > kMaxControlStreamBytes) {
+        const auto stream_limit = max_control_stream_bytes();
+        if (request.payload.size() > stream_limit) {
             auto error = make_error("ERR_STORE_PAYLOAD_TOO_LARGE",
                                     "Payload exceeds server allowance",
-                                    "Reduce the file below 32 MiB");
+                                    "Lower the payload size or adjust --max-store-bytes");
             respond_error(std::move(error), "payload_too_large");
             return;
         }
@@ -1167,10 +1170,11 @@ private:
                 return;
             }
 
-            if (chunk->size() > kMaxStreamPayloadBytes) {
+            const auto stream_limit = max_control_stream_bytes();
+            if (chunk->size() > stream_limit) {
                 auto error = make_error("ERR_FETCH_PAYLOAD_TOO_LARGE",
                                         "Chunk exceeds streaming allowance",
-                                        "Adjust the payload limit or fetch locally on the daemon host");
+                                        "Adjust --max-store-bytes or fetch locally on the daemon host");
                 respond_error(std::move(error), "payload_too_large");
                 return;
             }

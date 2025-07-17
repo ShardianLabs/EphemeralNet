@@ -40,6 +40,7 @@ struct Config {
     std::string control_host{"127.0.0.1"};
     std::uint16_t control_port{47777};
     std::optional<std::string> control_token{};
+    std::size_t control_stream_max_bytes{32ull * 1024ull * 1024ull};
     std::optional<std::uint32_t> identity_seed{};
     std::uint8_t shard_threshold{3};
     std::uint8_t shard_total{5};

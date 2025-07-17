@@ -2,6 +2,7 @@
 
 #include "ephemeralnet/core/Node.hpp"
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -15,7 +16,13 @@ namespace ephemeralnet::daemon {
 
 using ControlFields = std::unordered_map<std::string, std::string>;
 
-constexpr std::size_t kMaxControlStreamBytes = 32 * 1024 * 1024;
+constexpr std::size_t kDefaultControlStreamBytes = 32 * 1024 * 1024;
+
+// Returns the current control-plane stream ceiling in bytes (std::numeric_limits<size_t>::max for unlimited).
+std::size_t max_control_stream_bytes();
+
+// Sets the control-plane stream ceiling; pass 0 to disable the limit entirely.
+void set_max_control_stream_bytes(std::size_t bytes);
 
 struct ControlResponse {
     bool success{false};

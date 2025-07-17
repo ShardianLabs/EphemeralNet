@@ -12,6 +12,9 @@
 #include <charconv>
 #include <chrono>
 #include <csignal>
+#ifndef _WIN32
+#include <signal.h>
+#endif
 #include <cstring>
 #include <cctype>
 #include <cmath>
@@ -62,8 +65,6 @@ namespace protocol = ephemeralnet::protocol;
 
 using namespace std::chrono_literals;
 
-constexpr std::size_t kMaxControlUploadBytes = 32 * 1024 * 1024;
-
 struct GlobalOptions {
     bool persistent{false};
     bool persistent_set{false};
@@ -85,6 +86,7 @@ struct GlobalOptions {
     std::optional<std::string> control_host{};
     std::optional<std::uint16_t> control_port{};
     std::optional<std::string> control_token{};
+    std::optional<std::uint64_t> control_stream_max_bytes{};
     std::optional<std::uint16_t> fetch_parallel{};
     std::optional<std::uint16_t> upload_parallel{};
     std::optional<std::string> fetch_default_directory{};
@@ -1070,6 +1072,18 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
         }
     }
 
+    if (!options.control_stream_max_bytes) {
+        if (auto limit = config::get_int64_any(profile,
+                                               {{"control", "stream_max_bytes"},
+                                                {"control", "max_stream_bytes"},
+                                                {"control", "max_store_bytes"}})) {
+            if (*limit < 0) {
+                throw config::ConfigError("E_CONFIG_VALUE", "control.stream_max_bytes must be non-negative");
+            }
+            options.control_stream_max_bytes = static_cast<std::uint64_t>(*limit);
+        }
+    }
+
     if (!options.identity_seed) {
         if (auto seed = config::get_int64_any(profile, { {"node", "identity_seed"}, {"identity", "seed"} })) {
             if (*seed < 0 || *seed > std::numeric_limits<std::uint32_t>::max()) {
@@ -1241,9 +1255,13 @@ void load_configuration(GlobalOptions& options) {
     config::Value effective_profile = config::merge_objects(base_profile, overrides);
     apply_profile_to_options(effective_profile, options);
 }
-std::atomic_bool g_run_loop{true};
+std::atomic<bool> g_run_loop{false};
 
-void signal_handler(int signal_code) {
+void request_shutdown() noexcept {
+    g_run_loop.store(false, std::memory_order_relaxed);
+}
+
+extern "C" void signal_handler(int signal_code) {
     switch (signal_code) {
     case SIGINT:
     case SIGTERM:
@@ -1253,7 +1271,7 @@ void signal_handler(int signal_code) {
 #ifdef SIGBREAK
     case SIGBREAK:
 #endif
-        g_run_loop.store(false);
+        request_shutdown();
         break;
     default:
         break;
@@ -1268,13 +1286,54 @@ BOOL WINAPI windows_console_ctrl_handler(DWORD control_type) {
     case CTRL_CLOSE_EVENT:
     case CTRL_LOGOFF_EVENT:
     case CTRL_SHUTDOWN_EVENT:
-        g_run_loop.store(false);
+        request_shutdown();
         return TRUE;
     default:
         return FALSE;
     }
 }
 #endif
+
+void install_termination_handlers() {
+#ifdef _WIN32
+    std::signal(SIGINT, signal_handler);
+    std::signal(SIGTERM, signal_handler);
+#ifdef SIGBREAK
+    std::signal(SIGBREAK, signal_handler);
+#endif
+    SetConsoleCtrlHandler(windows_console_ctrl_handler, TRUE);
+#else
+    auto install = [](int sig) {
+        struct sigaction action{};
+        action.sa_handler = signal_handler;
+        sigemptyset(&action.sa_mask);
+        action.sa_flags = 0;
+        sigaction(sig, &action, nullptr);
+    };
+    install(SIGINT);
+    install(SIGTERM);
+#ifdef SIGQUIT
+    install(SIGQUIT);
+#endif
+#endif
+}
+
+void uninstall_termination_handlers() {
+#ifdef _WIN32
+    SetConsoleCtrlHandler(windows_console_ctrl_handler, FALSE);
+    std::signal(SIGINT, SIG_DFL);
+    std::signal(SIGTERM, SIG_DFL);
+#ifdef SIGBREAK
+    std::signal(SIGBREAK, SIG_DFL);
+#endif
+#else
+    std::signal(SIGINT, SIG_DFL);
+    std::signal(SIGTERM, SIG_DFL);
+#ifdef SIGQUIT
+    std::signal(SIGQUIT, SIG_DFL);
+#endif
+#endif
+}
 
 void print_usage() {
     std::cout << "EphemeralNet CLI" << std::endl;
@@ -1298,6 +1357,7 @@ void print_usage() {
               << "  --control-host <host>     Control socket host (default 127.0.0.1)\n"
               << "  --control-port <port>     Control socket port (default 47777)\n"
               << "  --control-token <secret>  Pre-shared token for control-plane authentication\n"
+              << "  --max-store-bytes <n>     Control-plane upload cap in bytes (0 = unlimited)\n"
               << "  --fetch-parallel <n>      Fetch concurrency limit (0 = unlimited)\n"
               << "  --upload-parallel <n>     Upload concurrency limit (0 = unlimited)\n"
               << "  --fetch-default-dir <path>\n"
@@ -1404,6 +1464,7 @@ void print_manual() {
               << "    --control-host <host>  Control socket host.\n"
               << "    --control-port <port>  Control socket port.\n"
               << "    --control-token <tok>  Control-plane authentication token.\n"
+              << "    --max-store-bytes <n>  Control-plane upload cap in bytes (0 = unlimited).\n"
               << "    --fetch-parallel <n>   Fetch concurrency (0 = unlimited).\n"
               << "    --upload-parallel <n>  Upload concurrency (0 = unlimited).\n"
               << "    --fetch-default-dir <path>\n"
@@ -1585,6 +1646,15 @@ void validate_global_options(GlobalOptions& options) {
         options.control_token = token;
     }
 
+    if (options.control_stream_max_bytes) {
+        const auto requested = *options.control_stream_max_bytes;
+        if (requested > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+            throw_cli_error("E_INVALID_STORE_LIMIT",
+                            "--max-store-bytes exceeds this platform's size_t range",
+                            "Choose a value up to " + std::to_string(std::numeric_limits<std::size_t>::max()));
+        }
+    }
+
     if (options.peer_id_hex) {
         auto candidate = strip_quotes(*options.peer_id_hex);
         candidate = trim(candidate);
@@ -1763,6 +1833,9 @@ ephemeralnet::Config build_config(const GlobalOptions& options) {
     if (options.control_token) {
         config.control_token = strip_quotes(*options.control_token);
     }
+    if (options.control_stream_max_bytes) {
+        config.control_stream_max_bytes = static_cast<std::size_t>(*options.control_stream_max_bytes);
+    }
     if (options.fetch_parallel) {
         config.fetch_max_parallel_requests = *options.fetch_parallel;
     }
@@ -1839,6 +1912,10 @@ std::vector<std::string> build_daemon_arguments(const GlobalOptions& options) {
     if (options.control_token) {
         args.emplace_back("--control-token");
         args.emplace_back(strip_quotes(*options.control_token));
+    }
+    if (options.control_stream_max_bytes) {
+        args.emplace_back("--max-store-bytes");
+        args.emplace_back(std::to_string(*options.control_stream_max_bytes));
     }
     if (options.fetch_parallel) {
         args.emplace_back("--fetch-parallel");
@@ -2347,6 +2424,17 @@ int main(int argc, char** argv) {
                 options.control_token = require_value(opt);
                 continue;
             }
+            if (opt == "--max-store-bytes") {
+                const auto value = require_value(opt);
+                std::uint64_t limit{};
+                if (!parse_uint64(value, limit)) {
+                    throw_cli_error("E_INVALID_STORE_LIMIT",
+                                    "--max-store-bytes must be zero or a positive integer",
+                                    "Use 0 to disable the limit or specify the maximum payload size in bytes");
+                }
+                options.control_stream_max_bytes = limit;
+                continue;
+            }
             if (opt == "--fetch-parallel") {
                 const auto value = require_value(opt);
                 std::uint64_t parallel{};
@@ -2423,6 +2511,7 @@ int main(int argc, char** argv) {
         }
 
         const auto config = build_config(options);
+        ephemeralnet::daemon::set_max_control_stream_bytes(config.control_stream_max_bytes);
 
         if (command == "serve") {
             if (index < args.size()) {
@@ -2438,20 +2527,11 @@ int main(int argc, char** argv) {
             ephemeralnet::Node node(peer_id, config);
 
             std::mutex node_mutex;
-            ephemeralnet::daemon::ControlServer control_server(node, node_mutex, []() { g_run_loop.store(false); });
+            g_run_loop.store(true, std::memory_order_relaxed);
+            ephemeralnet::daemon::ControlServer control_server(node, node_mutex, []() { request_shutdown(); });
             control_server.start(config.control_host, config.control_port);
 
-            std::signal(SIGINT, signal_handler);
-            std::signal(SIGTERM, signal_handler);
-#ifdef SIGQUIT
-            std::signal(SIGQUIT, signal_handler);
-#endif
-#ifdef SIGBREAK
-            std::signal(SIGBREAK, signal_handler);
-#endif
-#ifdef _WIN32
-            SetConsoleCtrlHandler(windows_console_ctrl_handler, TRUE);
-#endif
+            install_termination_handlers();
 
             {
                 std::scoped_lock lock(node_mutex);
@@ -2475,14 +2555,12 @@ int main(int argc, char** argv) {
                 node.stop_transport();
             }
             control_server.stop();
-#ifdef _WIN32
-            SetConsoleCtrlHandler(windows_console_ctrl_handler, FALSE);
-#endif
+            uninstall_termination_handlers();
             std::cout << "Daemon stopped." << std::endl;
             return 0;
         }
 
-    ephemeralnet::daemon::ControlClient client(config.control_host, config.control_port, config.control_token);
+        ephemeralnet::daemon::ControlClient client(config.control_host, config.control_port, config.control_token);
 
         if (command == "start") {
             if (index < args.size()) {
@@ -2635,6 +2713,7 @@ int main(int argc, char** argv) {
             const auto store_pow = response->fields.contains("STORE_POW") ? response->fields.at("STORE_POW") : std::string("0");
             const auto control_host = response->fields.contains("CONTROL_HOST") ? response->fields.at("CONTROL_HOST") : std::string("127.0.0.1");
             const auto control_port = response->fields.contains("CONTROL_PORT") ? response->fields.at("CONTROL_PORT") : std::string("47777");
+            const auto control_stream_max = response->fields.contains("CONTROL_STREAM_MAX") ? response->fields.at("CONTROL_STREAM_MAX") : std::string("0");
             const auto storage_persistent = response->fields.contains("STORAGE_PERSISTENT") ? response->fields.at("STORAGE_PERSISTENT") : std::string("0");
             const auto storage_dir = response->fields.contains("STORAGE_DIR") ? response->fields.at("STORAGE_DIR") : std::string("storage");
             const auto fetch_parallel = response->fields.contains("FETCH_MAX_PARALLEL") ? response->fields.at("FETCH_MAX_PARALLEL") : std::string("0");
@@ -2649,6 +2728,7 @@ int main(int argc, char** argv) {
             std::cout << "  Handshake PoW:      " << handshake_pow << " leading zero bits" << std::endl;
             std::cout << "  Store PoW:          " << store_pow << " leading zero bits" << std::endl;
             std::cout << "  Control endpoint:   " << control_host << ':' << control_port << std::endl;
+            std::cout << "  Control cap:        " << control_stream_max << " bytes (0 = unlimited)" << std::endl;
             std::cout << "  Persistent storage: "
                       << (storage_persistent == "1" ? "enabled" : "disabled")
                       << std::endl;
@@ -2718,10 +2798,12 @@ int main(int argc, char** argv) {
             }
 
             const auto file_size = std::filesystem::file_size(input_path);
-            if (file_size > kMaxControlUploadBytes) {
+            const auto stream_limit = config.control_stream_max_bytes;
+            if (stream_limit != 0 && file_size > stream_limit) {
                 throw_cli_error("E_STORE_PAYLOAD_TOO_LARGE",
-                                "File exceeds the control-plane upload limit",
-                                "Reduce the file size below " + std::to_string(kMaxControlUploadBytes) + " bytes");
+                                "File exceeds the daemon control-plane upload cap",
+                                "Increase --max-store-bytes (current cap: " + std::to_string(stream_limit) +
+                                    ") or set it to 0 for unlimited uploads");
             }
 
             if (!confirm_action("Store " + input_path.filename().string() + " (" + std::to_string(file_size) +
