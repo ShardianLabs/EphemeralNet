@@ -77,23 +77,6 @@ Query runtime state (peer count, chunk count, transport port).
 - Example:
   ```bash
   eph --control-host 10.0.0.5 --control-port 47777 status
-  ```
-
-### `list`
-List local storage entries with size, state, and remaining TTL.
-
-- Command options: none.
-- Output mirrors the `LIST` control response and includes the total count.
-
-### `defaults`
-Display daemon defaults plus local CLI fetch defaults.
-
-- Command options: none.
-- Useful for confirming profile/global overrides (TTL, PoW, concurrency, control endpoint, storage path, fetch naming policy).
-
-### `store`
-Upload a file to the daemon and receive an `eph://` manifest URI.
-
 - Required argument: path to a regular file.
 - Command options:
   - `--ttl <seconds>`: Override the daemon default TTL for this upload.
@@ -106,8 +89,21 @@ Upload a file to the daemon and receive an `eph://` manifest URI.
   ```bash
   eph --control-token secret store ./payload.bin --ttl 7200
   ```
+- Command options: none.
+- Useful for confirming profile/global overrides (TTL, PoW, concurrency, control endpoint, storage path, fetch naming policy).
 
-### `fetch`
+### `store`
+- Re-executes the current `eph` binary with the accumulated global options and `serve`.
+- Detaches from the current terminal (Windows uses `CreateProcess`; POSIX does a double-fork and redirects to `/dev/null`).
+- Command options: none.
+- Typical usage (same flags as `serve`):
+  ```bash
+  eph --config /etc/ephemeralnet.yaml start
+  ```
+- After the background daemon boots, reuse the same global options for management commands (`status`, `stop`, etc.).
+
+### `store`
+- `--help` / `-h`: Show usage and exit.
 Retrieve a manifest payload to a local file or directory.
 
 - Required argument: `eph://…` manifest URI.
@@ -137,6 +133,7 @@ Alias for `--help` that prints the global usage summary.
   ```bash
   eph --control-host 198.51.100.10 \
       --control-port 47777 \
+### `fetch`
       --control-token $(cat token.txt) \
       status
   ```

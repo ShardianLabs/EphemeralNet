@@ -387,19 +387,26 @@ private:
             return object;
         }
 
+        auto& fields = object.as_object();
         while (true) {
             skip_whitespace();
             if (peek() != '"') {
                 throw ConfigError("E_CONFIG_PARSE", "Expected string key in JSON object");
             }
+
             std::string key = parse_string();
             skip_whitespace();
             if (get() != ':') {
                 throw ConfigError("E_CONFIG_PARSE", "Expected ':' after key in JSON object");
             }
+
             Value value = parse_value();
-            object.as_object()[std::move(key)] = std::move(value);
+            fields.emplace(std::move(key), std::move(value));
+
             skip_whitespace();
+            if (at_end()) {
+                throw ConfigError("E_CONFIG_PARSE", "Unexpected end of JSON while parsing object");
+            }
             const char ch = get();
             if (ch == '}') {
                 break;
@@ -407,6 +414,7 @@ private:
             if (ch != ',') {
                 throw ConfigError("E_CONFIG_PARSE", "Expected ',' or '}' in JSON object");
             }
+            skip_whitespace();
         }
         return object;
     }
@@ -420,10 +428,13 @@ private:
             return array;
         }
 
+        auto& elements = array.as_array();
         while (true) {
-            Value value = parse_value();
-            array.as_array().push_back(std::move(value));
+            elements.push_back(parse_value());
             skip_whitespace();
+            if (at_end()) {
+                throw ConfigError("E_CONFIG_PARSE", "Unexpected end of JSON while parsing array");
+            }
             const char ch = get();
             if (ch == ']') {
                 break;
@@ -431,6 +442,7 @@ private:
             if (ch != ',') {
                 throw ConfigError("E_CONFIG_PARSE", "Expected ',' or ']' in JSON array");
             }
+            skip_whitespace();
         }
         return array;
     }
@@ -1392,7 +1404,7 @@ bool is_help_flag(std::string_view value) {
 
 void print_start_usage() {
     std::cout << "Usage: eph start\n"
-              << "Launch the daemon in the background and wait for readiness." << std::endl;
+              << "Launch the daemon in the background, wait for readiness, and detach." << std::endl;
 }
 
 void print_stop_usage() {
@@ -2562,7 +2574,8 @@ int main(int argc, char** argv) {
 
         ephemeralnet::daemon::ControlClient client(config.control_host, config.control_port, config.control_token);
 
-        if (command == "start") {
+    if (command == "start") {
+#ifdef _WIN32
             if (index < args.size()) {
                 if (is_help_flag(args[index])) {
                     print_start_usage();
@@ -2576,8 +2589,6 @@ int main(int argc, char** argv) {
                 std::cout << "Daemon is already running." << std::endl;
                 return 0;
             }
-
-#ifdef _WIN32
             const auto exe = executable_path(argc > 0 ? argv[0] : nullptr);
             const auto args_to_launch = build_daemon_arguments(options);
             if (!launch_detached(exe, args_to_launch)) {
@@ -2592,6 +2603,19 @@ int main(int argc, char** argv) {
 
             std::cout << "Daemon started in the background." << std::endl;
             return 0;
+#else
+            if (index < args.size()) {
+                if (is_help_flag(args[index])) {
+                    print_start_usage();
+                    return 0;
+                }
+                throw_cli_error("E_START_UNKNOWN_OPTION",
+                                "Unknown option for start: " + std::string(args[index]),
+                                "Run 'eph --help' to view usage");
+            }
+            throw_cli_error("E_START_UNSUPPORTED",
+                            "The 'start' command is only supported on Windows builds",
+                            "Run 'eph serve' in the foreground or use a supervisor such as systemd");
 #endif
         }
 
