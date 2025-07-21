@@ -2574,8 +2574,7 @@ int main(int argc, char** argv) {
 
         ephemeralnet::daemon::ControlClient client(config.control_host, config.control_port, config.control_token);
 
-    if (command == "start") {
-#ifdef _WIN32
+        if (command == "start") {
             if (index < args.size()) {
                 if (is_help_flag(args[index])) {
                     print_start_usage();
@@ -2589,6 +2588,7 @@ int main(int argc, char** argv) {
                 std::cout << "Daemon is already running." << std::endl;
                 return 0;
             }
+
             const auto exe = executable_path(argc > 0 ? argv[0] : nullptr);
             const auto args_to_launch = build_daemon_arguments(options);
             if (!launch_detached(exe, args_to_launch)) {
@@ -2603,20 +2603,6 @@ int main(int argc, char** argv) {
 
             std::cout << "Daemon started in the background." << std::endl;
             return 0;
-#else
-            if (index < args.size()) {
-                if (is_help_flag(args[index])) {
-                    print_start_usage();
-                    return 0;
-                }
-                throw_cli_error("E_START_UNKNOWN_OPTION",
-                                "Unknown option for start: " + std::string(args[index]),
-                                "Run 'eph --help' to view usage");
-            }
-            throw_cli_error("E_START_UNSUPPORTED",
-                            "The 'start' command is only supported on Windows builds",
-                            "Run 'eph serve' in the foreground or use a supervisor such as systemd");
-#endif
         }
 
         if (command == "stop") {
