@@ -1270,7 +1270,7 @@ void load_configuration(GlobalOptions& options) {
 std::atomic<bool> g_run_loop{false};
 
 void request_shutdown() noexcept {
-    g_run_loop.store(false, std::memory_order_relaxed);
+    g_run_loop.store(false, std::memory_order_release);
 }
 
 extern "C" void signal_handler(int signal_code) {
@@ -2539,7 +2539,7 @@ int main(int argc, char** argv) {
             ephemeralnet::Node node(peer_id, config);
 
             std::mutex node_mutex;
-            g_run_loop.store(true, std::memory_order_relaxed);
+            g_run_loop.store(true, std::memory_order_release);
             ephemeralnet::daemon::ControlServer control_server(node, node_mutex, []() { request_shutdown(); });
             control_server.start(config.control_host, config.control_port);
 
@@ -2554,7 +2554,7 @@ int main(int argc, char** argv) {
             std::cout << "Transport port: " << node.transport_port() << std::endl;
             std::cout << "Press Ctrl+C or run 'eph stop' to exit." << std::endl;
 
-            while (g_run_loop.load()) {
+            while (g_run_loop.load(std::memory_order_acquire)) {
                 {
                     std::scoped_lock lock(node_mutex);
                     node.tick();
