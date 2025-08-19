@@ -1267,9 +1267,17 @@ void load_configuration(GlobalOptions& options) {
     config::Value effective_profile = config::merge_objects(base_profile, overrides);
     apply_profile_to_options(effective_profile, options);
 }
-std::atomic<bool> g_run_loop{false};
+enum class ShutdownReason {
+    None,
+    Signal,
+    Control
+};
 
-void request_shutdown() noexcept {
+std::atomic<bool> g_run_loop{false};
+std::atomic<ShutdownReason> g_shutdown_reason{ShutdownReason::None};
+
+void request_shutdown(ShutdownReason reason) noexcept {
+    g_shutdown_reason.store(reason, std::memory_order_release);
     g_run_loop.store(false, std::memory_order_release);
 }
 
@@ -1283,7 +1291,7 @@ extern "C" void signal_handler(int signal_code) {
 #ifdef SIGBREAK
     case SIGBREAK:
 #endif
-        request_shutdown();
+        request_shutdown(ShutdownReason::Signal);
         break;
     default:
         break;
@@ -1298,7 +1306,7 @@ BOOL WINAPI windows_console_ctrl_handler(DWORD control_type) {
     case CTRL_CLOSE_EVENT:
     case CTRL_LOGOFF_EVENT:
     case CTRL_SHUTDOWN_EVENT:
-        request_shutdown();
+        request_shutdown(ShutdownReason::Signal);
         return TRUE;
     default:
         return FALSE;
@@ -1326,6 +1334,11 @@ void install_termination_handlers() {
     install(SIGTERM);
 #ifdef SIGQUIT
     install(SIGQUIT);
+#endif
+    std::signal(SIGINT, signal_handler);
+    std::signal(SIGTERM, signal_handler);
+#ifdef SIGQUIT
+    std::signal(SIGQUIT, signal_handler);
 #endif
 #endif
 }
@@ -2539,8 +2552,12 @@ int main(int argc, char** argv) {
             ephemeralnet::Node node(peer_id, config);
 
             std::mutex node_mutex;
+            g_shutdown_reason.store(ShutdownReason::None, std::memory_order_release);
             g_run_loop.store(true, std::memory_order_release);
-            ephemeralnet::daemon::ControlServer control_server(node, node_mutex, []() { request_shutdown(); });
+            ephemeralnet::daemon::ControlServer control_server(
+                node,
+                node_mutex,
+                []() { request_shutdown(ShutdownReason::Control); });
             control_server.start(config.control_host, config.control_port);
 
             install_termination_handlers();
@@ -2554,12 +2571,20 @@ int main(int argc, char** argv) {
             std::cout << "Transport port: " << node.transport_port() << std::endl;
             std::cout << "Press Ctrl+C or run 'eph stop' to exit." << std::endl;
 
-            while (g_run_loop.load(std::memory_order_acquire)) {
+            while (true) {
+                if (!g_run_loop.load(std::memory_order_acquire)) {
+                    break;
+                }
                 {
                     std::scoped_lock lock(node_mutex);
                     node.tick();
                 }
                 std::this_thread::sleep_for(1s);
+            }
+
+            const auto shutdown_reason = g_shutdown_reason.exchange(ShutdownReason::None, std::memory_order_acq_rel);
+            if (shutdown_reason == ShutdownReason::Signal) {
+                std::cout << "\nInterrupt received, shutting down..." << std::endl;
             }
 
             {
