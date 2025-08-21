@@ -128,7 +128,7 @@ private:
 [[noreturn]] void throw_daemon_unreachable() {
     throw_cli_error("E_DAEMON_UNREACHABLE",
                     "Could not contact the daemon.",
-                    "Start it with 'eph start' (Windows) or 'eph serve' in another terminal, and verify --control-host/--control-port");
+                    "Start it with 'eph start' or 'eph serve' in another terminal, and verify --control-host/--control-port");
 }
 
 std::string trim(std::string value) {
@@ -1334,11 +1334,6 @@ void install_termination_handlers() {
     install(SIGTERM);
 #ifdef SIGQUIT
     install(SIGQUIT);
-#endif
-    std::signal(SIGINT, signal_handler);
-    std::signal(SIGTERM, signal_handler);
-#ifdef SIGQUIT
-    std::signal(SIGQUIT, signal_handler);
 #endif
 #endif
 }
@@ -2587,11 +2582,16 @@ int main(int argc, char** argv) {
                 std::cout << "\nInterrupt received, shutting down..." << std::endl;
             }
 
+            std::cout << "Stopping control server..." << std::endl;
+            control_server.stop();
+            std::cout << "Control server stopped." << std::endl;
+
             {
                 std::scoped_lock lock(node_mutex);
+                std::cout << "Stopping transport..." << std::endl;
                 node.stop_transport();
             }
-            control_server.stop();
+            std::cout << "Transport stopped." << std::endl;
             uninstall_termination_handlers();
             std::cout << "Daemon stopped." << std::endl;
             return 0;
