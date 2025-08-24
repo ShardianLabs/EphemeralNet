@@ -505,7 +505,7 @@ public:
         }
 
         listen_socket_ = server;
-        running_ = true;
+        running_.store(true, std::memory_order_release);
         accept_thread_ = std::thread(&Impl::accept_loop, this);
     }
 
@@ -513,16 +513,26 @@ public:
         if (!running_) {
             return;
         }
-        running_ = false;
-        close_socket(listen_socket_);
+        running_.store(false, std::memory_order_release);
+        const auto socket = listen_socket_;
         listen_socket_ = kInvalidSocket;
+#ifdef _WIN32
+        if (socket != kInvalidSocket) {
+            ::shutdown(socket, SD_BOTH);
+        }
+#else
+        if (socket != kInvalidSocket) {
+            ::shutdown(socket, SHUT_RDWR);
+        }
+#endif
+        close_socket(socket);
         if (accept_thread_.joinable()) {
             accept_thread_.join();
         }
     }
 
     bool running() const noexcept {
-        return running_.load();
+        return running_.load(std::memory_order_acquire);
     }
 
 private:
@@ -586,7 +596,7 @@ private:
     }
 
     void accept_loop() {
-        while (running_) {
+    while (running_.load(std::memory_order_acquire)) {
             sockaddr_in client_addr{};
 #ifdef _WIN32
             int addr_len = sizeof(client_addr);
@@ -595,7 +605,7 @@ private:
 #endif
             const auto client = ::accept(listen_socket_, reinterpret_cast<sockaddr*>(&client_addr), &addr_len);
             if (client == kInvalidSocket) {
-                if (running_) {
+                if (running_.load(std::memory_order_acquire)) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 }
                 continue;
