@@ -74,6 +74,7 @@ void close_socket(NativeSocket socket) {
 #endif
 
 constexpr std::size_t kMaxLineLength = 16 * 1024;
+constexpr std::size_t kTransferChunk = 64 * 1024;
 std::string to_upper(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
         return static_cast<char>(std::toupper(ch));
@@ -123,7 +124,10 @@ bool recv_line(NativeSocket socket, std::string& line) {
     return true;
 }
 
-bool recv_exact(NativeSocket socket, std::uint8_t* buffer, std::size_t length) {
+bool recv_exact(NativeSocket socket,
+                std::uint8_t* buffer,
+                std::size_t length,
+                const ControlTransferProgress* progress) {
     std::size_t received_total = 0;
     while (received_total < length) {
 #ifdef _WIN32
@@ -137,11 +141,14 @@ bool recv_exact(NativeSocket socket, std::uint8_t* buffer, std::size_t length) {
             return false;
         }
         received_total += static_cast<std::size_t>(received);
+        if (progress && progress->on_download) {
+            progress->on_download(received_total, length);
+        }
     }
     return true;
 }
 
-ControlResponse parse_response(NativeSocket socket) {
+ControlResponse parse_response(NativeSocket socket, const ControlTransferProgress* progress) {
     ControlResponse response{};
     std::string line;
     bool status_seen = false;
@@ -196,7 +203,10 @@ ControlResponse parse_response(NativeSocket socket) {
         response.has_payload = true;
         response.payload.resize(*payload_length);
         if (*payload_length > 0) {
-            if (!recv_exact(socket, response.payload.data(), *payload_length)) {
+            if (progress && progress->on_download) {
+                progress->on_download(0, *payload_length);
+            }
+            if (!recv_exact(socket, response.payload.data(), *payload_length, progress)) {
                 response.success = false;
                 response.has_payload = false;
                 response.payload.clear();
@@ -219,7 +229,8 @@ public:
 
     std::optional<ControlResponse> send(const std::string& command,
                                         const ControlFields& fields,
-                                        std::span<const std::uint8_t> payload) {
+                                        std::span<const std::uint8_t> payload,
+                                        const ControlTransferProgress* progress) {
         const bool include_payload = payload.data() != nullptr || payload.size() > 0;
         const auto limit = max_control_stream_bytes();
         if (include_payload && payload.size() > limit) {
@@ -273,15 +284,36 @@ public:
         }
 
         if (include_payload && payload.size() > 0) {
-            if (!send_all(socket,
-                          reinterpret_cast<const char*>(payload.data()),
-                          payload.size())) {
-                close_socket(socket);
-                return std::nullopt;
+            if (progress && progress->on_upload) {
+                progress->on_upload(0, payload.size());
+            }
+            std::size_t sent_total = 0;
+            while (sent_total < payload.size()) {
+                const auto remaining = payload.size() - sent_total;
+                const auto chunk = remaining < kTransferChunk ? remaining : kTransferChunk;
+#ifdef _WIN32
+                const auto sent = ::send(socket,
+                                         reinterpret_cast<const char*>(payload.data() + sent_total),
+                                         static_cast<int>(chunk),
+                                         0);
+#else
+                const auto sent = ::send(socket,
+                                         reinterpret_cast<const char*>(payload.data() + sent_total),
+                                         chunk,
+                                         0);
+#endif
+                if (sent <= 0) {
+                    close_socket(socket);
+                    return std::nullopt;
+                }
+                sent_total += static_cast<std::size_t>(sent);
+                if (progress && progress->on_upload) {
+                    progress->on_upload(sent_total, payload.size());
+                }
             }
         }
 
-        const auto response = parse_response(socket);
+        const auto response = parse_response(socket, progress);
         close_socket(socket);
         return response;
     }
@@ -299,8 +331,9 @@ ControlClient::~ControlClient() = default;
 
 std::optional<ControlResponse> ControlClient::send(const std::string& command,
                                                    const ControlFields& fields,
-                                                   std::span<const std::uint8_t> payload) {
-    return impl_->send(command, fields, payload);
+                                                   std::span<const std::uint8_t> payload,
+                                                   const ControlTransferProgress* progress) {
+    return impl_->send(command, fields, payload, progress);
 }
 
 }  // namespace ephemeralnet::daemon

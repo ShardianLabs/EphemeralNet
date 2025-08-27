@@ -23,6 +23,7 @@
 #include <exception>
 #include <fstream>
 #include <filesystem>
+#include <iomanip>
 #include <system_error>
 #include <initializer_list>
 #include <iostream>
@@ -211,6 +212,80 @@ void print_cli_error(const CliException& ex) {
         std::cerr << "Hint: " << ex.hint() << std::endl;
     }
 }
+
+std::string format_bytes(std::size_t bytes) {
+    constexpr std::array<const char*, 5> kUnits{"B", "KiB", "MiB", "GiB", "TiB"};
+    double value = static_cast<double>(bytes);
+    std::size_t unit_index = 0;
+    while (value >= 1024.0 && unit_index + 1 < kUnits.size()) {
+        value /= 1024.0;
+        ++unit_index;
+    }
+
+    std::ostringstream oss;
+    oss << std::fixed;
+    if (unit_index == 0 || value >= 100.0) {
+        oss << std::setprecision(0);
+    } else {
+        oss << std::setprecision(1);
+    }
+    oss << value << ' ' << kUnits[unit_index];
+    return oss.str();
+}
+
+class ProgressPrinter {
+public:
+    explicit ProgressPrinter(std::string label) : label_(std::move(label)) {}
+
+    void update(std::size_t current, std::size_t total) {
+        if (finished_) {
+            return;
+        }
+        started_ = true;
+        const double ratio = total == 0
+                                  ? 1.0
+                                  : std::clamp(static_cast<double>(current) / static_cast<double>(total), 0.0, 1.0);
+        const int percent = static_cast<int>(std::round(ratio * 100.0));
+        if (percent == last_percent_ && current < total) {
+            return;
+        }
+        last_percent_ = percent;
+        std::cout << '\r' << label_ << ": "
+                  << std::setw(3) << percent << "% ("
+                  << format_bytes(current) << " / "
+                  << format_bytes(total) << ')'
+                  << std::flush;
+        if (current >= total || total == 0) {
+            std::cout << std::endl;
+            finished_ = true;
+        }
+    }
+
+    void finish(std::size_t total) {
+        if (!started_) {
+            started_ = true;
+        }
+        if (!finished_) {
+            update(total, total);
+        }
+    }
+
+    void cancel() {
+        if (started_ && !finished_) {
+            std::cout << std::endl;
+            finished_ = true;
+        }
+    }
+
+    bool started() const noexcept { return started_; }
+    bool finished() const noexcept { return finished_; }
+
+private:
+    std::string label_;
+    int last_percent_{-1};
+    bool started_{false};
+    bool finished_{false};
+};
 
 namespace config {
 
@@ -2850,6 +2925,7 @@ int main(int argc, char** argv) {
             }
 
             std::vector<std::uint8_t> payload(static_cast<std::size_t>(file_size));
+            ProgressPrinter read_progress("Reading file");
             if (file_size > 0) {
                 std::ifstream input_stream(input_path, std::ios::binary);
                 if (!input_stream) {
@@ -2857,13 +2933,34 @@ int main(int argc, char** argv) {
                                     "Failed to open file for reading",
                                     "Verify permissions and that the path is accessible");
                 }
-                input_stream.read(reinterpret_cast<char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
-                if (input_stream.gcount() != static_cast<std::streamsize>(payload.size())) {
+                constexpr std::size_t kReadChunk = 1 * 1024 * 1024;
+                std::size_t offset = 0;
+                while (offset < payload.size()) {
+                    const auto remaining = payload.size() - offset;
+                    const auto to_read = remaining < kReadChunk ? remaining : kReadChunk;
+                    input_stream.read(reinterpret_cast<char*>(payload.data() + offset),
+                                      static_cast<std::streamsize>(to_read));
+                    const auto read_count = static_cast<std::size_t>(input_stream.gcount());
+                    if (read_count == 0) {
+                        throw_cli_error("E_STORE_READ_FAILED",
+                                        "Could not read the entire file",
+                                        "Ensure the file is not locked and try again");
+                    }
+                    offset += read_count;
+                    read_progress.update(offset, payload.size());
+                    if (read_count < to_read && offset < payload.size()) {
+                        throw_cli_error("E_STORE_READ_FAILED",
+                                        "Could not read the entire file",
+                                        "Ensure the file is not locked and try again");
+                    }
+                }
+                if (!input_stream && !input_stream.eof()) {
                     throw_cli_error("E_STORE_READ_FAILED",
-                                    "Could not read the entire file",
-                                    "Ensure the file is not locked and try again");
+                                    "Failed to read file contents",
+                                    "Check for hardware or filesystem errors");
                 }
             }
+            read_progress.finish(payload.size());
 
             std::uint8_t store_pow_difficulty = 0;
             if (const auto defaults = client.send("DEFAULTS"); defaults) {
@@ -2913,12 +3010,21 @@ int main(int argc, char** argv) {
                 fields["STORE-POW"] = std::to_string(*store_pow_nonce);
             }
 
+            ProgressPrinter upload_progress("Uploading");
+            ephemeralnet::daemon::ControlTransferProgress transfer_progress{};
+            transfer_progress.on_upload = [&upload_progress](std::size_t current, std::size_t total) {
+                upload_progress.update(current, total);
+            };
+
             const auto response = client.send("STORE",
                                               fields,
-                                              std::span<const std::uint8_t>(payload.data(), payload.size()));
+                                              std::span<const std::uint8_t>(payload.data(), payload.size()),
+                                              &transfer_progress);
             if (!response) {
+                upload_progress.cancel();
                 throw_daemon_unreachable();
             }
+            upload_progress.finish(payload.size());
             if (!response->success) {
                 print_daemon_failure(*response);
                 return 1;
@@ -3089,9 +3195,23 @@ int main(int argc, char** argv) {
             ephemeralnet::daemon::ControlFields fields{{"MANIFEST", manifest_uri},
                                                        {"STREAM", "client"}};
 
-            const auto response = client.send("FETCH", fields);
+            ProgressPrinter download_progress("Downloading");
+            ephemeralnet::daemon::ControlTransferProgress fetch_progress{};
+            fetch_progress.on_download = [&download_progress](std::size_t current, std::size_t total) {
+                download_progress.update(current, total);
+            };
+
+            const auto response = client.send("FETCH", fields, {}, &fetch_progress);
             if (!response) {
+                download_progress.cancel();
                 throw_daemon_unreachable();
+            }
+            if (download_progress.started() && !download_progress.finished()) {
+                if (response->has_payload) {
+                    download_progress.finish(response->payload.size());
+                } else {
+                    download_progress.cancel();
+                }
             }
             if (!response->success) {
                 print_daemon_failure(*response);

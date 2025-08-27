@@ -31,6 +31,11 @@ struct ControlResponse {
     std::vector<std::uint8_t> payload;
 };
 
+struct ControlTransferProgress {
+    std::function<void(std::size_t current, std::size_t total)> on_upload;
+    std::function<void(std::size_t current, std::size_t total)> on_download;
+};
+
 class ControlServer {
 public:
     using StopCallback = std::function<void()>;
@@ -60,7 +65,8 @@ public:
 
     std::optional<ControlResponse> send(const std::string& command,
                                         const ControlFields& fields = {},
-                                        std::span<const std::uint8_t> payload = {});
+                                        std::span<const std::uint8_t> payload = {},
+                                        const ControlTransferProgress* progress = nullptr);
 
 private:
     class Impl;
