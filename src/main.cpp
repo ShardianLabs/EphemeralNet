@@ -2916,6 +2916,38 @@ int main(int argc, char** argv) {
                                     ") or set it to 0 for unlimited uploads");
             }
 
+            std::uint8_t store_pow_difficulty = 0;
+            std::optional<std::size_t> daemon_stream_limit;
+            if (const auto defaults = client.send("DEFAULTS"); defaults) {
+                if (!defaults->success) {
+                    print_daemon_failure(*defaults);
+                    return 1;
+                }
+                if (const auto pow_it = defaults->fields.find("STORE_POW"); pow_it != defaults->fields.end()) {
+                    std::uint64_t parsed = 0;
+                    if (parse_uint64(pow_it->second, parsed)) {
+                        if (parsed > ephemeralnet::security::kMaxStorePowDifficulty) {
+                            parsed = ephemeralnet::security::kMaxStorePowDifficulty;
+                        }
+                        store_pow_difficulty = static_cast<std::uint8_t>(parsed);
+                    }
+                }
+                if (const auto limit_it = defaults->fields.find("CONTROL_STREAM_MAX"); limit_it != defaults->fields.end()) {
+                    std::uint64_t parsed = 0;
+                    if (parse_uint64(limit_it->second, parsed)) {
+                        daemon_stream_limit = static_cast<std::size_t>(parsed);
+                    }
+                }
+            } else {
+                throw_daemon_unreachable();
+            }
+
+            if (daemon_stream_limit.has_value() && *daemon_stream_limit != 0 && file_size > *daemon_stream_limit) {
+                throw_cli_error("E_STORE_SERVER_CAP",
+                                "File exceeds the daemon control-plane upload cap",
+                                "Restart the daemon with --max-store-bytes 0 or a larger value to upload this file");
+            }
+
             if (!confirm_action("Store " + input_path.filename().string() + " (" + std::to_string(file_size) +
                                     " bytes). Continue?",
                                 true,
@@ -2961,25 +2993,6 @@ int main(int argc, char** argv) {
                 }
             }
             read_progress.finish(payload.size());
-
-            std::uint8_t store_pow_difficulty = 0;
-            if (const auto defaults = client.send("DEFAULTS"); defaults) {
-                if (!defaults->success) {
-                    print_daemon_failure(*defaults);
-                    return 1;
-                }
-                if (const auto pow_it = defaults->fields.find("STORE_POW"); pow_it != defaults->fields.end()) {
-                    std::uint64_t parsed = 0;
-                    if (parse_uint64(pow_it->second, parsed)) {
-                        if (parsed > ephemeralnet::security::kMaxStorePowDifficulty) {
-                            parsed = ephemeralnet::security::kMaxStorePowDifficulty;
-                        }
-                        store_pow_difficulty = static_cast<std::uint8_t>(parsed);
-                    }
-                }
-            } else {
-                throw_daemon_unreachable();
-            }
 
             const auto chunk_id = ephemeralnet::security::derive_chunk_id(
                 std::span<const std::uint8_t>(payload.data(), payload.size()));
