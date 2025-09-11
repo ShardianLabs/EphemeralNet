@@ -65,43 +65,62 @@ void write_be32(std::uint8_t* out, std::uint32_t value) {
 
 Sha256::Sha256()
     : state_{0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u, 0xa54ff53au, 0x510e527fu, 0x9b05688cu, 0x1f83d9abu, 0x5be0cd19u},
-      buffer_(),
+      buffer_{},
+      buffer_size_(0),
       bit_len_(0) {}
 
 void Sha256::update(std::span<const std::uint8_t> data) {
-    bit_len_ += static_cast<std::uint64_t>(data.size()) * 8;
-    buffer_.insert(buffer_.end(), data.begin(), data.end());
+    if (data.empty()) {
+        return;
+    }
 
-    while (buffer_.size() >= 64) {
-        transform(buffer_.data());
-        buffer_.erase(buffer_.begin(), buffer_.begin() + 64);
+    bit_len_ += static_cast<std::uint64_t>(data.size()) * 8;
+
+    std::size_t offset = 0;
+    while (offset < data.size()) {
+        const auto space = static_cast<std::size_t>(64 - buffer_size_);
+        const auto chunk = std::min<std::size_t>(space, data.size() - offset);
+        std::memcpy(buffer_.data() + buffer_size_, data.data() + offset, chunk);
+        buffer_size_ += chunk;
+        offset += chunk;
+
+        if (buffer_size_ == 64) {
+            transform(buffer_.data());
+            buffer_size_ = 0;
+        }
     }
 }
 
 std::array<std::uint8_t, 32> Sha256::finalize() {
-    std::vector<std::uint8_t> padding{};
-    padding.push_back(0x80);
+    // Append the 0x80 terminator.
+    buffer_[buffer_size_++] = 0x80;
 
-    const auto remainder = (buffer_.size() + 1) % 64;
-    const auto pad_len = remainder <= 56 ? (56 - remainder) : (120 - remainder);
-    padding.insert(padding.end(), pad_len, 0x00);
-
-    std::array<std::uint8_t, 8> length_bytes{};
-    std::uint64_t bit_len_be = bit_len_;
-    for (int i = 7; i >= 0; --i) {
-        length_bytes[i] = static_cast<std::uint8_t>(bit_len_be & 0xFFu);
-        bit_len_be >>= 8;
+    if (buffer_size_ > 56) {
+        // Fill the current block with zeros and process it.
+        std::fill(buffer_.begin() + static_cast<std::ptrdiff_t>(buffer_size_), buffer_.end(), 0);
+        transform(buffer_.data());
+        buffer_size_ = 0;
     }
 
-    update(padding);
-    update(length_bytes);
+    // Pad with zeros until we have 56 bytes (leaving room for the length field).
+    std::fill(buffer_.begin() + static_cast<std::ptrdiff_t>(buffer_size_), buffer_.begin() + 56, 0);
+    buffer_size_ = 56;
+
+    // Append the message length in bits as big-endian.
+    for (int i = 7; i >= 0; --i) {
+        buffer_[buffer_size_++] = static_cast<std::uint8_t>((bit_len_ >> (i * 8)) & 0xFFu);
+    }
+
+    transform(buffer_.data());
+    buffer_size_ = 0;
 
     std::array<std::uint8_t, 32> digest{};
     for (std::size_t i = 0; i < state_.size(); ++i) {
         write_be32(digest.data() + static_cast<std::ptrdiff_t>(i * 4), state_[i]);
     }
 
-    buffer_.clear();
+    buffer_.fill(0);
+    buffer_size_ = 0;
     bit_len_ = 0;
     return digest;
 }
