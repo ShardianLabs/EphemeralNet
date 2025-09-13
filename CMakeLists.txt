@@ -32,6 +32,7 @@ add_library(ephemeralnet_core
     src/core/SwarmCoordinator.cpp
     src/protocol/Manifest.cpp
     src/protocol/Message.cpp
+    src/bootstrap/TokenChallenge.cpp
 )
 
 add_library(ephemeralnet::core ALIAS ephemeralnet_core)

@@ -19,6 +19,24 @@ struct KeyShard {
     std::array<std::uint8_t, 32> value{};
 };
 
+struct DiscoveryHint {
+    std::string transport;
+    std::string endpoint;
+    std::uint8_t priority{0};
+};
+
+struct SecurityAssessment {
+    std::string advisory;
+    std::array<std::uint8_t, 32> attestation_digest{};
+    bool has_attestation_digest{false};
+    std::uint8_t token_challenge_bits{0};
+};
+
+struct FallbackHint {
+    std::string uri;
+    std::uint8_t priority{0};
+};
+
 struct Manifest {
     ChunkId chunk_id{};
     std::array<std::uint8_t, 32> chunk_hash{};
@@ -28,6 +46,9 @@ struct Manifest {
     std::chrono::system_clock::time_point expires_at{};
     std::vector<KeyShard> shards;
     std::map<std::string, std::string> metadata;
+    std::vector<DiscoveryHint> discovery_hints;
+    SecurityAssessment security;
+    std::vector<FallbackHint> fallback_hints;
 };
 
 std::string encode_manifest(const Manifest& manifest);

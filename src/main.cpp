@@ -5,6 +5,7 @@
 #include "ephemeralnet/daemon/ControlPlane.hpp"
 #include "ephemeralnet/security/StoreProof.hpp"
 #include "ephemeralnet/protocol/Manifest.hpp"
+#include "ephemeralnet/bootstrap/TokenChallenge.hpp"
 
 #include <algorithm>
 #include <array>
@@ -63,6 +64,7 @@ namespace {
 constexpr std::string_view kEphemeralNetVersion = EPHEMERALNET_VERSION;
 
 namespace protocol = ephemeralnet::protocol;
+namespace bootstrap = ephemeralnet::bootstrap;
 
 using namespace std::chrono_literals;
 
@@ -231,6 +233,69 @@ std::string format_bytes(std::size_t bytes) {
     }
     oss << value << ' ' << kUnits[unit_index];
     return oss.str();
+}
+
+struct FetchBootstrapOptions {
+    bool enabled{false};
+    bool bootstrap_only{false};
+    bool auto_token{true};
+    std::uint64_t max_attempts{250'000};
+    std::optional<std::string> token_override{};
+};
+
+struct BootstrapAttemptLog {
+    std::string endpoint;
+    std::string message;
+};
+
+std::optional<std::pair<std::string, std::uint16_t>> parse_control_endpoint(const std::string& endpoint) {
+    if (endpoint.empty()) {
+        return std::nullopt;
+    }
+    const auto pos = endpoint.find_last_of(':');
+    if (pos == std::string::npos) {
+        return std::nullopt;
+    }
+    std::string host = endpoint.substr(0, pos);
+    std::string port_text = endpoint.substr(pos + 1);
+    if (host.empty() || port_text.empty()) {
+        return std::nullopt;
+    }
+    try {
+        const auto numeric = std::stoul(port_text);
+        if (numeric == 0 || numeric > std::numeric_limits<std::uint16_t>::max()) {
+            return std::nullopt;
+        }
+        return std::make_pair(host, static_cast<std::uint16_t>(numeric));
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
+std::string describe_endpoint(const std::string& host, std::uint16_t port) {
+    return host + ":" + std::to_string(port);
+}
+
+std::optional<std::string> compute_bootstrap_token(const protocol::Manifest& manifest,
+                                                   const protocol::DiscoveryHint& hint,
+                                                   const FetchBootstrapOptions& options) {
+    if (options.token_override.has_value()) {
+        return options.token_override;
+    }
+    if (manifest.security.token_challenge_bits == 0) {
+        return std::string{"0"};
+    }
+    if (!options.auto_token) {
+        return std::nullopt;
+    }
+    const auto solved = bootstrap::solve_token_challenge(manifest,
+                                                         hint,
+                                                         manifest.security.token_challenge_bits,
+                                                         options.max_attempts);
+    if (!solved.has_value()) {
+        return std::nullopt;
+    }
+    return std::to_string(*solved);
 }
 
 class ProgressPrinter {
@@ -3083,6 +3148,7 @@ int main(int argc, char** argv) {
             }
 
             std::optional<std::filesystem::path> output_spec;
+            FetchBootstrapOptions bootstrap_options{};
             while (index < args.size()) {
                 const auto& opt = args[index];
                 if (opt == "--out") {
@@ -3098,6 +3164,52 @@ int main(int argc, char** argv) {
                                         "Supply only one output path or directory");
                     }
                     output_spec = std::filesystem::absolute(std::filesystem::path(args[index++]));
+                    continue;
+                }
+                if (opt == "--bootstrap") {
+                    bootstrap_options.enabled = true;
+                    ++index;
+                    continue;
+                }
+                if (opt == "--bootstrap-only") {
+                    bootstrap_options.enabled = true;
+                    bootstrap_options.bootstrap_only = true;
+                    ++index;
+                    continue;
+                }
+                if (opt == "--bootstrap-token") {
+                    ++index;
+                    if (index >= args.size()) {
+                        throw_cli_error("E_FETCH_BOOTSTRAP_TOKEN_MISSING",
+                                        "--bootstrap-token expects a value",
+                                        "Example: --bootstrap-token 123456");
+                    }
+                    bootstrap_options.enabled = true;
+                    bootstrap_options.token_override = args[index++];
+                    continue;
+                }
+                if (opt == "--bootstrap-max-attempts") {
+                    ++index;
+                    if (index >= args.size()) {
+                        throw_cli_error("E_FETCH_BOOTSTRAP_ATTEMPTS_MISSING",
+                                        "--bootstrap-max-attempts expects an integer",
+                                        "Example: --bootstrap-max-attempts 100000");
+                    }
+                    std::uint64_t attempts = 0;
+                    if (!parse_uint64(args[index], attempts) || attempts == 0) {
+                        throw_cli_error("E_FETCH_BOOTSTRAP_ATTEMPTS_INVALID",
+                                        "--bootstrap-max-attempts must be a positive integer",
+                                        "Set a value greater than zero (default 250000)");
+                    }
+                    bootstrap_options.enabled = true;
+                    bootstrap_options.max_attempts = attempts;
+                    ++index;
+                    continue;
+                }
+                if (opt == "--no-bootstrap-auto-token") {
+                    bootstrap_options.enabled = true;
+                    bootstrap_options.auto_token = false;
+                    ++index;
                     continue;
                 }
                 if (is_help_flag(opt)) {
@@ -3180,6 +3292,12 @@ int main(int argc, char** argv) {
                                 "Provide a writable file path or an existing directory");
             }
 
+            if (bootstrap_options.enabled && !decoded_manifest.has_value()) {
+                throw_cli_error("E_FETCH_BOOTSTRAP_UNAVAILABLE",
+                                "Manifest decoding failed; bootstrap flow cannot continue",
+                                "Retry with the exact eph:// URI returned by 'store'");
+            }
+
             const auto parent = resolved_output.parent_path();
             if (!parent.empty() && !std::filesystem::exists(parent)) {
                 if (treat_as_directory) {
@@ -3205,67 +3323,182 @@ int main(int argc, char** argv) {
                 return 0;
             }
 
-            ephemeralnet::daemon::ControlFields fields{{"MANIFEST", manifest_uri},
-                                                       {"STREAM", "client"}};
+            ephemeralnet::daemon::ControlFields base_fields{{"MANIFEST", manifest_uri},
+                                                            {"STREAM", "client"}};
 
-            ProgressPrinter download_progress("Downloading");
-            ephemeralnet::daemon::ControlTransferProgress fetch_progress{};
-            fetch_progress.on_download = [&download_progress](std::size_t current, std::size_t total) {
-                download_progress.update(current, total);
+            auto finalize_fetch = [&](const ephemeralnet::daemon::ControlResponse& response) {
+                const auto reported_size = response.fields.contains("SIZE") ? response.fields.at("SIZE") : "0";
+                if (response.has_payload) {
+                    try {
+                        std::ofstream out(resolved_output, std::ios::binary | std::ios::trunc);
+                        if (!out) {
+                            throw std::runtime_error("Failed to open output file");
+                        }
+                        if (!response.payload.empty()) {
+                            out.write(reinterpret_cast<const char*>(response.payload.data()),
+                                      static_cast<std::streamsize>(response.payload.size()));
+                        }
+                        out.flush();
+                        if (!out) {
+                            throw std::runtime_error("Failed to write complete payload");
+                        }
+                    } catch (const std::exception& ex) {
+                        throw_cli_error("E_FETCH_WRITE_FAILED",
+                                        ex.what(),
+                                        "Verify write permissions for " + resolved_output.string());
+                    }
+
+                    const auto local_size = !response.payload.empty()
+                                                ? std::to_string(response.payload.size())
+                                                : reported_size;
+                    std::cout << "File retrieved to " << resolved_output.string() << " (" << local_size << " bytes)" << std::endl;
+                } else {
+                    const auto output = response.fields.contains("OUTPUT") ? response.fields.at("OUTPUT")
+                                                                             : resolved_output.string();
+                    std::cout << "File retrieved to " << output << " (" << reported_size << " bytes)" << std::endl;
+                    if (output != resolved_output.string()) {
+                        std::cout << "Hint: File was written on the daemon host; copy it manually if needed." << std::endl;
+                    }
+                }
             };
 
-            const auto response = client.send("FETCH", fields, {}, &fetch_progress);
-            if (!response) {
-                download_progress.cancel();
-                throw_daemon_unreachable();
-            }
-            if (download_progress.started() && !download_progress.finished()) {
-                if (response->has_payload) {
-                    download_progress.finish(response->payload.size());
+            auto perform_fetch_request = [&](ephemeralnet::daemon::ControlClient& target_client,
+                                            ephemeralnet::daemon::ControlFields request_fields,
+                                            const std::string& progress_label,
+                                            std::string* error_out)
+                                            -> std::optional<ephemeralnet::daemon::ControlResponse> {
+                ProgressPrinter progress(progress_label);
+                ephemeralnet::daemon::ControlTransferProgress transfer_progress{};
+                transfer_progress.on_download = [&progress](std::size_t current, std::size_t total) {
+                    progress.update(current, total);
+                };
+
+                const auto response = target_client.send("FETCH", request_fields, {}, &transfer_progress);
+                if (!response) {
+                    progress.cancel();
+                    if (error_out) {
+                        *error_out = "Remote control endpoint unreachable";
+                    }
+                    return std::nullopt;
+                }
+                if (progress.started() && !progress.finished()) {
+                    if (response->has_payload) {
+                        progress.finish(response->payload.size());
+                    } else {
+                        progress.cancel();
+                    }
+                }
+                return response;
+            };
+
+            auto attempt_bootstrap_fetch = [&](const protocol::Manifest& manifest) -> bool {
+                if (!bootstrap_options.enabled) {
+                    return false;
+                }
+                if (manifest.discovery_hints.empty()) {
+                    throw_cli_error("E_FETCH_BOOTSTRAP_NO_HINTS",
+                                    "Manifest does not carry discovery hints",
+                                    "Store the payload with a daemon that advertises remote discovery metadata");
+                }
+
+                std::vector<protocol::DiscoveryHint> hints = manifest.discovery_hints;
+                std::stable_sort(hints.begin(), hints.end(), [](const auto& lhs, const auto& rhs) {
+                    return lhs.priority < rhs.priority;
+                });
+
+                std::vector<BootstrapAttemptLog> attempt_log;
+                for (const auto& hint : hints) {
+                    if (hint.transport != "control") {
+                        attempt_log.push_back({hint.endpoint, "Unsupported transport for this build"});
+                        continue;
+                    }
+                    const auto parsed = parse_control_endpoint(hint.endpoint);
+                    if (!parsed.has_value()) {
+                        attempt_log.push_back({hint.endpoint, "Invalid control endpoint"});
+                        continue;
+                    }
+                    const auto& [host, port] = *parsed;
+                    const auto endpoint_desc = describe_endpoint(host, port);
+
+                    const auto token_value = compute_bootstrap_token(manifest, hint, bootstrap_options);
+                    if (manifest.security.token_challenge_bits > 0 && !token_value.has_value()) {
+                        attempt_log.push_back({endpoint_desc,
+                                               "Token challenge not satisfied. Provide --bootstrap-token or enable auto solving."});
+                        continue;
+                    }
+
+                    ephemeralnet::daemon::ControlClient remote_client(host, port, token_value);
+                    auto request_fields = base_fields;
+                    request_fields["BOOTSTRAP"] = "1";
+                    request_fields["DISCOVERY-ENDPOINT"] = hint.endpoint;
+                    request_fields["DISCOVERY-TRANSPORT"] = hint.transport;
+                    request_fields["DISCOVERY-PRIORITY"] = std::to_string(hint.priority);
+
+                    std::string error_text;
+                    const auto response = perform_fetch_request(remote_client,
+                                                                request_fields,
+                                                                "Bootstrap download",
+                                                                &error_text);
+                    if (!response) {
+                        attempt_log.push_back({endpoint_desc, error_text});
+                        continue;
+                    }
+                    if (!response->success) {
+                        const auto message_it = response->fields.find("MESSAGE");
+                        const std::string reason = message_it != response->fields.end() ? message_it->second
+                                                                                         : "Remote daemon rejected request";
+                        attempt_log.push_back({endpoint_desc, reason});
+                        continue;
+                    }
+
+                    finalize_fetch(*response);
+                    std::cout << "Bootstrap fetch succeeded via " << endpoint_desc << std::endl;
+                    print_daemon_hint(*response);
+                    return true;
+                }
+
+                std::ostringstream oss;
+                oss << "Bootstrap discovery exhausted:";
+                for (const auto& entry : attempt_log) {
+                    oss << "\n  - " << (entry.endpoint.empty() ? std::string{"<unknown>"} : entry.endpoint)
+                        << ": " << entry.message;
+                }
+                throw_cli_error("E_FETCH_BOOTSTRAP_FAILED",
+                                oss.str(),
+                                "Provide --bootstrap-token or configure reachable discovery hints");
+                return false; // Unreachable, but keeps compilers satisfied.
+            };
+
+            if (!bootstrap_options.bootstrap_only) {
+                std::string local_error;
+                const auto response = perform_fetch_request(client, base_fields, "Downloading", &local_error);
+                if (!response) {
+                    if (!bootstrap_options.enabled) {
+                        throw_daemon_unreachable();
+                    }
+                } else if (!response->success) {
+                    if (!bootstrap_options.enabled) {
+                        print_daemon_failure(*response);
+                        return 1;
+                    }
                 } else {
-                    download_progress.cancel();
+                    finalize_fetch(*response);
+                    print_daemon_hint(*response);
+                    return 0;
                 }
-            }
-            if (!response->success) {
-                print_daemon_failure(*response);
-                return 1;
             }
 
-            const auto reported_size = response->fields.contains("SIZE") ? response->fields.at("SIZE") : "0";
-            if (response->has_payload) {
-                try {
-                    std::ofstream out(resolved_output, std::ios::binary | std::ios::trunc);
-                    if (!out) {
-                        throw std::runtime_error("Failed to open output file");
-                    }
-                    if (!response->payload.empty()) {
-                        out.write(reinterpret_cast<const char*>(response->payload.data()),
-                                  static_cast<std::streamsize>(response->payload.size()));
-                    }
-                    out.flush();
-                    if (!out) {
-                        throw std::runtime_error("Failed to write complete payload");
-                    }
-                } catch (const std::exception& ex) {
-                    throw_cli_error("E_FETCH_WRITE_FAILED",
-                                    ex.what(),
-                                    "Verify write permissions for " + resolved_output.string());
-                }
-
-                const auto local_size = !response->payload.empty()
-                                            ? std::to_string(response->payload.size())
-                                            : reported_size;
-                std::cout << "File retrieved to " << resolved_output.string() << " (" << local_size << " bytes)" << std::endl;
-            } else {
-                const auto output = response->fields.contains("OUTPUT") ? response->fields.at("OUTPUT")
-                                                                         : resolved_output.string();
-                std::cout << "File retrieved to " << output << " (" << reported_size << " bytes)" << std::endl;
-                if (output != resolved_output.string()) {
-                    std::cout << "Hint: File was written on the daemon host; copy it manually if needed." << std::endl;
+            if (bootstrap_options.enabled && decoded_manifest.has_value()) {
+                if (attempt_bootstrap_fetch(*decoded_manifest)) {
+                    return 0;
                 }
             }
-            print_daemon_hint(*response);
-            return 0;
+
+            throw_cli_error("E_FETCH_FAILED",
+                            "Fetch request failed",
+                            bootstrap_options.enabled
+                                ? "Bootstrap discovery did not yield any reachable peers"
+                                : "Retry with --bootstrap to use manifest discovery hints");
         }
 
         throw_cli_error("E_UNKNOWN_COMMAND",

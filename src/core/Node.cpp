@@ -1377,6 +1377,57 @@ protocol::Manifest Node::store_chunk(const ChunkId& chunk_id,
         }
     }
 
+    auto format_endpoint = [](const std::string& host, std::uint16_t port) {
+        return host + ":" + std::to_string(port);
+    };
+
+    auto add_discovery_entry = [&](const std::string& host, std::uint16_t port, std::uint8_t priority) {
+        if (host.empty() || port == 0) {
+            return;
+        }
+        protocol::DiscoveryHint hint{};
+        hint.transport = "control";
+        hint.endpoint = format_endpoint(host, port);
+        hint.priority = priority;
+        manifest.discovery_hints.push_back(hint);
+
+        protocol::FallbackHint fallback{};
+        fallback.uri = "control://" + hint.endpoint;
+        fallback.priority = static_cast<std::uint8_t>(std::min<int>(priority + 10, 255));
+        manifest.fallback_hints.push_back(fallback);
+    };
+
+    std::unordered_set<std::string> seen_endpoints;
+    auto try_add_endpoint = [&](const std::string& host, std::uint16_t port, std::uint8_t priority) {
+        if (host.empty() || port == 0) {
+            return;
+        }
+        const auto endpoint = format_endpoint(host, port);
+        if (seen_endpoints.insert(endpoint).second) {
+            add_discovery_entry(host, port, priority);
+        }
+    };
+
+    if (!config_.control_host.empty() && config_.control_host != "0.0.0.0") {
+        try_add_endpoint(config_.control_host, config_.control_port, 0);
+    }
+
+    std::uint8_t hint_priority = 1;
+    for (const auto& bootstrap : config_.bootstrap_nodes) {
+        try_add_endpoint(bootstrap.host, bootstrap.port, hint_priority);
+        if (hint_priority < std::numeric_limits<std::uint8_t>::max()) {
+            ++hint_priority;
+        }
+    }
+
+    std::copy(manifest.chunk_hash.begin(),
+              manifest.chunk_hash.end(),
+              manifest.security.attestation_digest.begin());
+    manifest.security.has_attestation_digest = true;
+    manifest.security.token_challenge_bits = std::min<std::uint8_t>(config_.handshake_pow_difficulty, kMaxHandshakePowDifficulty);
+    manifest.security.advisory =
+        "Manifest-only fetch bootstrap requires presenting a PoW token to seed control endpoints.";
+
     manifest_cache_[chunk_id_to_string(chunk_id)] = manifest;
     dht_.publish_shards(chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, sanitized_ttl);
     announce_chunk(chunk_id, sanitized_ttl);

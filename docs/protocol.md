@@ -58,14 +58,17 @@ TTL:3587
 
 ### Manifest
 
-Manifests encode chunk metadata such as:
+Manifests encode chunk metadata and rendezvous instructions:
 
 - `chunk_id`: 256-bit identifier derived from SHA-256 of the payload.
 - `expires_at`: Absolute expiry instant derived from TTL.
 - `replica_hint`: Desired replication factor for swarm propagation.
 - `metadata`: Key/value annotations. The daemon currently records the original filename (key `filename`) when available so clients can recreate the source name when downloading.
+- `discovery_hints`: Ordered list of `(transport, endpoint, priority)` tuples that the CLI can consult when it must bootstrap a manifest-only fetch. EphemeralNet currently emits `transport="control"` hints that point at public control-plane hosts (`host:port`), but the schema allows future HTTP(S) or QUIC transports as well. Lower `priority` numbers are attempted first.
+- `security`: Advisory text describing remote discovery requirements, the number of leading zero bits expected for the token challenge, and (when available) a 32-byte attestation digest that mirrors the chunk hash for integrity pinning.
+- `fallback_hints`: Optional URIs (`control://host:port`, `https://mirror/...`, etc.) that clients can pivot to after discovery hints fail. These are treated as mirrors/caches rather than first-class discovery mechanisms.
 
-Manifests are serialized and base64-encoded in the `eph://` URI returned to clients.
+Manifests are serialized and base64-encoded in the `eph://` URI returned to clients. Version 3 manifests carry the discovery, security, and fallback sections described above. Older readers understand versions 1 and 2 (which omitted these appendices); attempting to load a truncated or tampered version 3 manifest now raises an error because the bootstrap metadata is required for modern clients.
 
 ### Storage Lifecycle
 
