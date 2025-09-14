@@ -70,6 +70,11 @@ int main() {
             std::cerr << "Failure on --help. exit=" << help.exit_code << "\n" << help.output << std::endl;
             return 1;
         }
+        if (!expect_contains(help.output, "--control-expose") ||
+            !expect_contains(help.output, "--control-loopback")) {
+            std::cerr << "Global usage is missing the control exposure flags.\n" << help.output << std::endl;
+            return 1;
+        }
 
         const auto status = run_cli(executable, "status");
         if (status.exit_code == 0 || !expect_contains(status.output, "Could not contact the daemon.")) {

@@ -88,6 +88,7 @@ struct GlobalOptions {
     std::optional<std::uint64_t> announce_pow_difficulty{};
     std::optional<std::string> control_host{};
     std::optional<std::uint16_t> control_port{};
+    bool control_expose_requested{false};
     std::optional<std::string> control_token{};
     std::optional<std::uint64_t> control_stream_max_bytes{};
     std::optional<std::uint16_t> fetch_parallel{};
@@ -113,9 +114,17 @@ public:
         return formatted_.c_str();
     }
 
-    const std::string& code() const noexcept { return code_; }
-    const std::string& message() const noexcept { return message_; }
-    const std::string& hint() const noexcept { return hint_; }
+    const std::string& code() const& {
+        return code_;
+    }
+
+    const std::string& message() const& {
+        return message_;
+    }
+
+    const std::string& hint() const& {
+        return hint_;
+    }
 
 private:
     std::string code_;
@@ -181,6 +190,32 @@ bool confirm_action(const std::string& prompt, bool default_yes, bool assume_yes
         }
         std::cout << "Unrecognized answer. Type 'y' for yes or 'n' for no." << std::endl;
     }
+}
+
+bool acknowledge_control_exposure(const GlobalOptions& options, const ephemeralnet::Config& config) {
+    if (!options.control_expose_requested) {
+        return true;
+    }
+
+    const std::string endpoint = config.control_host + ':' + std::to_string(config.control_port);
+    const std::string prompt =
+        "WARNING: the control plane will listen on " + endpoint + " and accept remote connections. Proceed?";
+
+    if (!options.assume_yes) {
+        const bool proceed = confirm_action(prompt, false, false);
+        if (!proceed) {
+            std::cout << "Aborting; control plane will stay on loopback." << std::endl;
+            return false;
+        }
+    } else {
+        std::cout << "WARNING: exposing control plane on " << endpoint << " (auto-approved by --yes)." << std::endl;
+    }
+
+    if (!config.control_token.has_value()) {
+        std::cout << "Hint: set --control-token or control.token in your profile to avoid unauthenticated remote commands." << std::endl;
+    }
+
+    return true;
 }
 
 void print_daemon_failure(const ephemeralnet::daemon::ControlResponse& response) {
@@ -274,6 +309,15 @@ std::optional<std::pair<std::string, std::uint16_t>> parse_control_endpoint(cons
 
 std::string describe_endpoint(const std::string& host, std::uint16_t port) {
     return host + ":" + std::to_string(port);
+}
+
+std::optional<std::pair<std::string, std::uint16_t>> parse_control_uri(const std::string& uri) {
+    constexpr std::string_view kScheme{"control://"};
+    if (uri.rfind(kScheme, 0) != 0) {
+        return std::nullopt;
+    }
+    const auto address = uri.substr(kScheme.size());
+    return parse_control_endpoint(address);
 }
 
 std::optional<std::string> compute_bootstrap_token(const protocol::Manifest& manifest,
@@ -1174,28 +1218,35 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
         throw config::ConfigError("E_CONFIG_STRUCTURE", "Profile configuration must be a mapping");
     }
 
+    auto get_uint16 = [](std::int64_t value, const char* key) -> std::uint16_t {
+        if (value <= 0 || value > std::numeric_limits<std::uint16_t>::max()) {
+            throw config::ConfigError("E_CONFIG_VALUE", std::string(key) + " must be between 1 and 65535");
+        }
+        return static_cast<std::uint16_t>(value);
+    };
+
     if (!options.storage_dir) {
-        if (auto storage_dir = config::get_string_any(profile, { {"storage", "directory"}, {"storage-directory"} })) {
+        if (auto storage_dir = config::get_string_any(profile, {{"storage", "directory"}, {"storage-directory"}})) {
             options.storage_dir = *storage_dir;
         }
     }
 
     if (!options.persistent_set) {
-        if (auto persistent = config::get_bool_any(profile, { {"storage", "persistent"}, {"storage", "enable_persistent"} })) {
+        if (auto persistent = config::get_bool_any(profile, {{"storage", "persistent"}, {"storage", "enable_persistent"}})) {
             options.persistent = *persistent;
             options.persistent_set = true;
         }
     }
 
     if (!options.wipe_set) {
-        if (auto wipe = config::get_bool_any(profile, { {"storage", "wipe_on_expiry"}, {"storage", "wipe-on-expiry"} })) {
+        if (auto wipe = config::get_bool_any(profile, {{"storage", "wipe_on_expiry"}, {"storage", "wipe-on-expiry"}})) {
             options.wipe = *wipe;
             options.wipe_set = true;
         }
     }
 
     if (!options.wipe_passes_set) {
-        if (auto passes = config::get_int64_any(profile, { {"storage", "wipe_passes"}, {"storage", "wipe-passes"} })) {
+        if (auto passes = config::get_int64_any(profile, {{"storage", "wipe_passes"}, {"storage", "wipe-passes"}})) {
             if (*passes <= 0 || *passes > 255) {
                 throw config::ConfigError("E_CONFIG_VALUE", "storage.wipe_passes must be between 1 and 255");
             }
@@ -1205,30 +1256,25 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
     }
 
     if (!options.control_host) {
-        if (auto host = config::get_string_any(profile, { {"control", "host"}, {"network", "control_host"} })) {
+        if (auto host = config::get_string_any(profile, {{"control", "host"}, {"network", "control_host"}})) {
             options.control_host = *host;
         }
     }
+
     if (!options.control_port) {
-        if (auto port = config::get_int64_any(profile, { {"control", "port"}, {"network", "control_port"} })) {
-            if (*port <= 0 || *port > std::numeric_limits<std::uint16_t>::max()) {
-                throw config::ConfigError("E_CONFIG_VALUE", "control.port must be between 1 and 65535");
-            }
-            options.control_port = static_cast<std::uint16_t>(*port);
+        if (auto port = config::get_int64_any(profile, {{"control", "port"}, {"network", "control_port"}})) {
+            options.control_port = get_uint16(*port, "control.port");
         }
     }
 
     if (!options.control_token) {
-        if (auto token = config::get_string_any(profile, { {"control", "token"}, {"control-token"} })) {
+        if (auto token = config::get_string_any(profile, {{"control", "token"}, {"control-token"}})) {
             options.control_token = *token;
         }
     }
 
     if (!options.control_stream_max_bytes) {
-        if (auto limit = config::get_int64_any(profile,
-                                               {{"control", "stream_max_bytes"},
-                                                {"control", "max_stream_bytes"},
-                                                {"control", "max_store_bytes"}})) {
+        if (auto limit = config::get_int64_any(profile, {{"control", "stream_max_bytes"}, {"control", "max_stream_bytes"}, {"control", "max_store_bytes"}})) {
             if (*limit < 0) {
                 throw config::ConfigError("E_CONFIG_VALUE", "control.stream_max_bytes must be non-negative");
             }
@@ -1237,7 +1283,7 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
     }
 
     if (!options.identity_seed) {
-        if (auto seed = config::get_int64_any(profile, { {"node", "identity_seed"}, {"identity", "seed"} })) {
+        if (auto seed = config::get_int64_any(profile, {{"node", "identity_seed"}, {"identity", "seed"}})) {
             if (*seed < 0 || *seed > std::numeric_limits<std::uint32_t>::max()) {
                 throw config::ConfigError("E_CONFIG_VALUE", "node.identity_seed must fit within 32 bits");
             }
@@ -1246,7 +1292,7 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
     }
 
     if (!options.default_ttl_seconds) {
-        if (auto ttl = config::get_int64_any(profile, { {"node", "default_ttl_seconds"}, {"node", "default_ttl"} })) {
+        if (auto ttl = config::get_int64_any(profile, {{"node", "default_ttl_seconds"}, {"node", "default_ttl"}})) {
             if (*ttl <= 0) {
                 throw config::ConfigError("E_CONFIG_VALUE", "node.default_ttl_seconds must be positive");
             }
@@ -1255,7 +1301,7 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
     }
 
     if (!options.min_ttl_seconds) {
-        if (auto min_ttl = config::get_int64_any(profile, { {"node", "min_ttl_seconds"}, {"node", "min_ttl"} })) {
+        if (auto min_ttl = config::get_int64_any(profile, {{"node", "min_ttl_seconds"}, {"node", "min_ttl"}})) {
             if (*min_ttl <= 0) {
                 throw config::ConfigError("E_CONFIG_VALUE", "node.min_ttl_seconds must be positive");
             }
@@ -1264,18 +1310,16 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
     }
 
     if (!options.max_ttl_seconds) {
-        if (auto max_ttl = config::get_int64_any(profile, { {"node", "max_ttl_seconds"}, {"node", "max_ttl"} })) {
+        if (auto max_ttl = config::get_int64_any(profile, {{"node", "max_ttl_seconds"}, {"node", "max_ttl"}})) {
             if (*max_ttl <= 0) {
-    if (options.key_rotation_seconds) {
                 throw config::ConfigError("E_CONFIG_VALUE", "node.max_ttl_seconds must be positive");
-    }
             }
             options.max_ttl_seconds = static_cast<std::uint64_t>(*max_ttl);
         }
     }
 
     if (!options.key_rotation_seconds) {
-        if (auto rotation = config::get_int64_any(profile, { {"node", "key_rotation_seconds"}, {"node", "key_rotation_interval"}, {"security", "key_rotation_seconds"}, {"security", "key_rotation_interval"} })) {
+        if (auto rotation = config::get_int64_any(profile, {{"node", "key_rotation_seconds"}, {"node", "key_rotation_interval"}, {"security", "key_rotation_seconds"}, {"security", "key_rotation_interval"}})) {
             if (*rotation <= 0) {
                 throw config::ConfigError("E_CONFIG_VALUE", "key rotation interval must be positive");
             }
@@ -1284,14 +1328,16 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
     }
 
     if (!options.fetch_parallel) {
-        if (auto fetch_parallel = config::get_int64_any(profile, { {"node", "fetch_max_parallel"}, {"node", "fetch", "max_parallel"}, {"fetch", "max_parallel"} })) {
+        if (auto fetch_parallel = config::get_int64_any(profile, {{"node", "fetch_max_parallel"}, {"node", "fetch", "max_parallel"}, {"fetch", "max_parallel"}})) {
             if (*fetch_parallel < 0 || *fetch_parallel > std::numeric_limits<std::uint16_t>::max()) {
                 throw config::ConfigError("E_CONFIG_VALUE", "fetch.max_parallel must be between 0 and 65535");
             }
             options.fetch_parallel = static_cast<std::uint16_t>(*fetch_parallel);
+        }
+    }
 
     if (!options.announce_interval_seconds) {
-        if (auto announce_interval = config::get_int64_any(profile, { {"announce", "min_interval"}, {"node", "announce_min_interval"} })) {
+        if (auto announce_interval = config::get_int64_any(profile, {{"announce", "min_interval"}, {"node", "announce_min_interval"}})) {
             if (*announce_interval <= 0) {
                 throw config::ConfigError("E_CONFIG_VALUE", "announce.min_interval must be positive");
             }
@@ -1300,7 +1346,7 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
     }
 
     if (!options.announce_burst_limit) {
-        if (auto announce_burst = config::get_int64_any(profile, { {"announce", "burst_limit"}, {"node", "announce_burst_limit"} })) {
+        if (auto announce_burst = config::get_int64_any(profile, {{"announce", "burst_limit"}, {"node", "announce_burst_limit"}})) {
             if (*announce_burst <= 0) {
                 throw config::ConfigError("E_CONFIG_VALUE", "announce.burst_limit must be positive");
             }
@@ -1309,7 +1355,7 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
     }
 
     if (!options.announce_window_seconds) {
-        if (auto announce_window = config::get_int64_any(profile, { {"announce", "burst_window"}, {"node", "announce_burst_window"} })) {
+        if (auto announce_window = config::get_int64_any(profile, {{"announce", "burst_window"}, {"node", "announce_burst_window"}})) {
             if (*announce_window <= 0) {
                 throw config::ConfigError("E_CONFIG_VALUE", "announce.burst_window must be positive");
             }
@@ -1318,18 +1364,16 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
     }
 
     if (!options.announce_pow_difficulty) {
-        if (auto pow = config::get_int64_any(profile, { {"announce", "pow_difficulty"}, {"node", "announce_pow_difficulty"} })) {
+        if (auto pow = config::get_int64_any(profile, {{"announce", "pow_difficulty"}, {"node", "announce_pow_difficulty"}})) {
             if (*pow < 0 || *pow > 24) {
                 throw config::ConfigError("E_CONFIG_VALUE", "announce.pow_difficulty must be between 0 and 24");
             }
             options.announce_pow_difficulty = static_cast<std::uint64_t>(*pow);
         }
     }
-        }
-    }
 
     if (!options.upload_parallel) {
-        if (auto upload_parallel = config::get_int64_any(profile, { {"node", "upload_max_parallel"}, {"node", "upload", "max_parallel"}, {"upload", "max_parallel"} })) {
+        if (auto upload_parallel = config::get_int64_any(profile, {{"node", "upload_max_parallel"}, {"node", "upload", "max_parallel"}, {"upload", "max_parallel"}})) {
             if (*upload_parallel < 0 || *upload_parallel > std::numeric_limits<std::uint16_t>::max()) {
                 throw config::ConfigError("E_CONFIG_VALUE", "upload.max_parallel must be between 0 and 65535");
             }
@@ -1338,26 +1382,26 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
     }
 
     if (!options.peer_id_hex) {
-        if (auto peer_id = config::get_string_any(profile, { {"node", "peer_id"}, {"node", "peer-id"} })) {
+        if (auto peer_id = config::get_string_any(profile, {{"node", "peer_id"}, {"node", "peer-id"}})) {
             options.peer_id_hex = *peer_id;
         }
     }
 
     if (!options.assume_yes_set) {
-        if (auto assume = config::get_bool_any(profile, { {"cli", "assume_yes"}, {"cli", "assume-yes"}, {"assume_yes"} })) {
+        if (auto assume = config::get_bool_any(profile, {{"cli", "assume_yes"}, {"cli", "assume-yes"}, {"assume_yes"}})) {
             options.assume_yes = *assume;
             options.assume_yes_set = true;
         }
     }
 
     if (!options.fetch_default_directory) {
-        if (auto fetch_dir = config::get_string_any(profile, { {"cli", "fetch", "default_directory"}, {"cli", "fetch", "default-directory"}, {"fetch", "default_directory"}, {"fetch", "default-directory"} })) {
+        if (auto fetch_dir = config::get_string_any(profile, {{"cli", "fetch", "default_directory"}, {"cli", "fetch", "default-directory"}, {"fetch", "default_directory"}, {"fetch", "default-directory"}})) {
             options.fetch_default_directory = *fetch_dir;
         }
     }
 
     if (!options.fetch_use_manifest_name_set) {
-        if (auto use_name = config::get_bool_any(profile, { {"cli", "fetch", "use_manifest_name"}, {"cli", "fetch", "use-manifest-name"} })) {
+        if (auto use_name = config::get_bool_any(profile, {{"cli", "fetch", "use_manifest_name"}, {"cli", "fetch", "use-manifest-name"}})) {
             options.fetch_use_manifest_name = *use_name;
             options.fetch_use_manifest_name_set = true;
         }
@@ -1515,6 +1559,8 @@ void print_usage() {
               << "  --announce-window <sec>   Rolling window for ANNOUNCE burst tracking\n"
               << "  --announce-pow <bits>     Proof-of-work difficulty for ANNOUNCE (0-24)\n"
               << "  --control-host <host>     Control socket host (default 127.0.0.1)\n"
+              << "  --control-expose          Bind control socket on 0.0.0.0 for remote access\n"
+              << "  --control-loopback        Force control socket to stay on 127.0.0.1\n"
               << "  --control-port <port>     Control socket port (default 47777)\n"
               << "  --control-token <secret>  Pre-shared token for control-plane authentication\n"
               << "  --max-store-bytes <n>     Control-plane upload cap in bytes (0 = unlimited)\n"
@@ -1576,8 +1622,15 @@ void print_store_usage() {
 }
 
 void print_fetch_usage() {
-    std::cout << "Usage: eph fetch <eph://...> [--out] <file-or-directory>\n"
-              << "Download a manifest's payload to a specific file or directory (defaults to the current directory when omitted)." << std::endl;
+    std::cout << "Usage: eph fetch <eph://...> [--out <path>] [options]\n"
+              << "Download a manifest's payload to a specific file or directory (defaults to the current directory when omitted).\n"
+              << "Options:\n"
+              << "  --out <path>                  Destination file or directory (default: current dir).\n"
+              << "  --bootstrap                  Allow remote discovery using manifest hints when the local daemon is unreachable.\n"
+              << "  --bootstrap-only             Skip contacting the local daemon and use manifest discovery exclusively.\n"
+              << "  --bootstrap-token <value>    Provide a precomputed PoW token for remote bootstrap nodes.\n"
+              << "  --bootstrap-max-attempts <n> Limit PoW search iterations when solving tokens automatically.\n"
+              << "  --no-bootstrap-auto-token    Disable automatic PoW solving (requires --bootstrap-token)." << std::endl;
 }
 
 void print_serve_usage() {
@@ -1622,6 +1675,8 @@ void print_manual() {
               << "                          Rolling window length for burst enforcement.\n"
               << "    --announce-pow <bits> Proof-of-work difficulty for ANNOUNCE (0-24).\n"
               << "    --control-host <host>  Control socket host.\n"
+              << "    --control-expose       Bind control socket on 0.0.0.0 (prompts for confirmation).\n"
+              << "    --control-loopback     Force control socket onto 127.0.0.1 even if profile overrides it.\n"
               << "    --control-port <port>  Control socket port.\n"
               << "    --control-token <tok>  Control-plane authentication token.\n"
               << "    --max-store-bytes <n>  Control-plane upload cap in bytes (0 = unlimited).\n"
@@ -2567,6 +2622,17 @@ int main(int argc, char** argv) {
             }
             if (opt == "--control-host") {
                 options.control_host = require_value(opt);
+                options.control_expose_requested = false;
+                continue;
+            }
+            if (opt == "--control-expose") {
+                options.control_host = "0.0.0.0";
+                options.control_expose_requested = true;
+                continue;
+            }
+            if (opt == "--control-loopback") {
+                options.control_host = "127.0.0.1";
+                options.control_expose_requested = false;
                 continue;
             }
             if (opt == "--control-port") {
@@ -2683,6 +2749,9 @@ int main(int argc, char** argv) {
                                 "Unknown option for serve: " + std::string(args[index]),
                                 "Run 'eph serve --help' to view usage");
             }
+            if (!acknowledge_control_exposure(options, config)) {
+                return 1;
+            }
             const auto peer_id = make_peer_id(options);
             ephemeralnet::Node node(peer_id, config);
 
@@ -2752,6 +2821,10 @@ int main(int argc, char** argv) {
             if (auto ping = client.send("PING"); ping && ping->success) {
                 std::cout << "Daemon is already running." << std::endl;
                 return 0;
+            }
+
+            if (!acknowledge_control_exposure(options, config)) {
+                return 1;
             }
 
             const auto exe = executable_path(argc > 0 ? argv[0] : nullptr);
@@ -3401,60 +3474,99 @@ int main(int argc, char** argv) {
                                     "Store the payload with a daemon that advertises remote discovery metadata");
                 }
 
-                std::vector<protocol::DiscoveryHint> hints = manifest.discovery_hints;
-                std::stable_sort(hints.begin(), hints.end(), [](const auto& lhs, const auto& rhs) {
-                    return lhs.priority < rhs.priority;
-                });
-
                 std::vector<BootstrapAttemptLog> attempt_log;
-                for (const auto& hint : hints) {
+                auto attempt_control_hint = [&](const protocol::DiscoveryHint& hint,
+                                                const std::string& label,
+                                                bool from_fallback) -> bool {
+                    const std::string friendly_label = label.empty() ? hint.endpoint : label;
                     if (hint.transport != "control") {
-                        attempt_log.push_back({hint.endpoint, "Unsupported transport for this build"});
-                        continue;
+                        attempt_log.push_back({friendly_label, "Unsupported transport for this build"});
+                        return false;
                     }
+
                     const auto parsed = parse_control_endpoint(hint.endpoint);
                     if (!parsed.has_value()) {
-                        attempt_log.push_back({hint.endpoint, "Invalid control endpoint"});
-                        continue;
+                        attempt_log.push_back({friendly_label, "Invalid control endpoint"});
+                        return false;
                     }
                     const auto& [host, port] = *parsed;
                     const auto endpoint_desc = describe_endpoint(host, port);
 
                     const auto token_value = compute_bootstrap_token(manifest, hint, bootstrap_options);
                     if (manifest.security.token_challenge_bits > 0 && !token_value.has_value()) {
-                        attempt_log.push_back({endpoint_desc,
+                        attempt_log.push_back({friendly_label,
                                                "Token challenge not satisfied. Provide --bootstrap-token or enable auto solving."});
-                        continue;
+                        return false;
                     }
 
                     ephemeralnet::daemon::ControlClient remote_client(host, port, token_value);
                     auto request_fields = base_fields;
                     request_fields["BOOTSTRAP"] = "1";
-                    request_fields["DISCOVERY-ENDPOINT"] = hint.endpoint;
+                    request_fields["DISCOVERY-ENDPOINT"] = friendly_label;
                     request_fields["DISCOVERY-TRANSPORT"] = hint.transport;
                     request_fields["DISCOVERY-PRIORITY"] = std::to_string(hint.priority);
+                    if (from_fallback) {
+                        request_fields["FALLBACK"] = "1";
+                        request_fields["DISCOVERY-RESOLVED"] = hint.endpoint;
+                    }
 
                     std::string error_text;
                     const auto response = perform_fetch_request(remote_client,
                                                                 request_fields,
-                                                                "Bootstrap download",
+                                                                from_fallback ? "Fallback download" : "Bootstrap download",
                                                                 &error_text);
                     if (!response) {
-                        attempt_log.push_back({endpoint_desc, error_text});
-                        continue;
+                        attempt_log.push_back({friendly_label, error_text});
+                        return false;
                     }
                     if (!response->success) {
                         const auto message_it = response->fields.find("MESSAGE");
                         const std::string reason = message_it != response->fields.end() ? message_it->second
                                                                                          : "Remote daemon rejected request";
-                        attempt_log.push_back({endpoint_desc, reason});
-                        continue;
+                        attempt_log.push_back({friendly_label, reason});
+                        return false;
                     }
 
                     finalize_fetch(*response);
-                    std::cout << "Bootstrap fetch succeeded via " << endpoint_desc << std::endl;
+                    if (from_fallback) {
+                        std::cout << "Fallback fetch succeeded via " << endpoint_desc << std::endl;
+                    } else {
+                        std::cout << "Bootstrap fetch succeeded via " << endpoint_desc << std::endl;
+                    }
                     print_daemon_hint(*response);
                     return true;
+                };
+
+                auto ordered_hints = manifest.discovery_hints;
+                std::stable_sort(ordered_hints.begin(), ordered_hints.end(), [](const auto& lhs, const auto& rhs) {
+                    return lhs.priority < rhs.priority;
+                });
+                for (const auto& hint : ordered_hints) {
+                    if (attempt_control_hint(hint, hint.endpoint, false)) {
+                        return true;
+                    }
+                }
+
+                if (!manifest.fallback_hints.empty()) {
+                    auto fallback_hints = manifest.fallback_hints;
+                    std::stable_sort(fallback_hints.begin(), fallback_hints.end(), [](const auto& lhs, const auto& rhs) {
+                        return lhs.priority < rhs.priority;
+                    });
+                    for (const auto& fallback : fallback_hints) {
+                        const auto parsed = parse_control_uri(fallback.uri);
+                        if (!parsed.has_value()) {
+                            attempt_log.push_back({fallback.uri,
+                                                   "Unsupported fallback scheme (only control:// is implemented)"});
+                            continue;
+                        }
+                        protocol::DiscoveryHint synthetic{};
+                        synthetic.transport = "control";
+                        synthetic.endpoint = describe_endpoint(parsed->first, parsed->second);
+                        synthetic.priority = fallback.priority;
+                        if (attempt_control_hint(synthetic, fallback.uri, true)) {
+                            return true;
+                        }
+                    }
                 }
 
                 std::ostringstream oss;

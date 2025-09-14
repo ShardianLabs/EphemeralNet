@@ -27,6 +27,8 @@ Runtime options are specified via CLI flags or the control daemon configuration 
 - `--persistent/--no-persistent`: Toggle on-disk retention.
 - `--no-wipe` / `--wipe-passes <n>`: Secure wipe control (default one pass).
 - `--control-host` / `--control-port`: Customize the control socket endpoint.
+- `--control-expose`: Bind the control socket on `0.0.0.0` (the CLI warns and requires confirmation unless `--yes`).
+- `--control-loopback`: Force the control socket back to `127.0.0.1` even if a profile overrides it.
 - `--identity-seed <n>`: Deterministic peer identity for reproducible deployments.
 - `--fetch-parallel <n>` / `--upload-parallel <n>`: Tune control-plane fetch/upload concurrency (0 = unlimited).
 - `--fetch-default-dir <path>`: Set the default download location when `--out` is omitted.
@@ -71,6 +73,7 @@ The CLI spawns a detached process and waits until the daemon responds to `PING`.
 
 - Run the daemon under a dedicated user account with restricted filesystem permissions.
 - Place the control socket on `127.0.0.1` or a private interface; never expose it unprotected.
+- Use `--control-loopback` to override profiles that accidentally expose the control plane, or `--control-expose --control-token <secret>` when you intentionally need remote management on a VPS.
 - Enable secure wiping (`--wipe-passes`) when storing sensitive material on persistent volumes.
 - Keep the key rotation interval short for volatile clusters. Use `--key-rotation 300` (5 minutes) together with tight TTL bounds (e.g., `--min-ttl 30`, `--max-ttl 900`) when handling highly sensitive data.
 - Limit announce pressure against the DHT by tuning rate limits: `--announce-interval 30 --announce-burst 3 --announce-window 120 --announce-pow 8` is a hardened baseline for untrusted peers.

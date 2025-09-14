@@ -721,6 +721,21 @@ if(EPHEMERALNET_BUILD_TESTS)
         ENVIRONMENT "EPH_CLI_EXECUTABLE=$<TARGET_FILE:ephemeralnet>"
     )
 
+    add_executable(ephemeralnet_cli_bootstrap_tests
+        tests/cli_bootstrap_flow.cpp
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_cli_bootstrap_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_cli_bootstrap_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.CLIBootstrap COMMAND ephemeralnet_cli_bootstrap_tests)
+    set_tests_properties(EphemeralNet.CLIBootstrap PROPERTIES
+        ENVIRONMENT "EPH_CLI_EXECUTABLE=$<TARGET_FILE:ephemeralnet>"
+    )
+
     set_tests_properties(EphemeralNet.CLIConfig PROPERTIES
         ENVIRONMENT "EPH_CLI_EXECUTABLE=$<TARGET_FILE:ephemeralnet>"
     )

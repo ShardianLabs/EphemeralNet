@@ -59,6 +59,7 @@
 - Automated end-to-end store/fetch scenarios with induced failures and plan rotation inside the multi-node harness.
 - Reviewed crypto hardening levers (key rotation cadence, TTL bounds, announce throttles) using soak metrics and tuned defaults/documentation accordingly.
 - Anti-Sybil defences enforce PoW across handshake/store/announce paths with CLI/daemon helpers, abuse heuristics, metrics, and bundled Prometheus/Grafana alerting assets.
+- Manifest-only fetch bootstrapper shipped (schema extensions, CLI bootstrap flow, and cross-platform docs/tests) together with `--control-expose`/`--control-loopback` safeguards for daemon binding on VPS deployments.
 
 ## Next milestones
 - **OPS & OBSERVABILITY**
@@ -71,9 +72,6 @@
 	- Finalise `ephemeralnet-cli` with diagnostics commands and scripting support.
 	- Prototype an initial `ephemeralnet-GUI` or lightweight admin panel.
 	- Implement a version-check endpoint (JSON hosted on GitHub Pages) and wire an `eph update-check` command.
-	- Research manifest-only fetch flow (extend manifest schema with discovery metadata, security analysis, fallbacks).
-	- Implement manifest-driven fetch bootstrapper (CLI parsing, remote discovery, token challenge UX, error surfaces).
-	- Backfill integration tests and docs for manifest-only fetch workflow across Windows/Linux clients.
 - **DOCS**
 	- Publish a versioned API reference for developers embedding `libephemeralnet`.
 	- Expand operator runbooks with performance tuning and capacity planning guidance.

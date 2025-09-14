@@ -26,6 +26,8 @@ Run the client as `eph [global options] <command> [command options]`. Global opt
 | `--announce-window <seconds>` | Rolling window for ANNOUNCE burst. | Positive integer. |
 | `--announce-pow <0-24>` | Proof-of-work difficulty for ANNOUNCE. | Validates upper bound of 24 bits. |
 | `--control-host <host>` | TCP host for the control plane. | Defaults to `127.0.0.1`. |
+| `--control-expose` | Bind the control plane on `0.0.0.0` for remote management. | Prompts for confirmation unless `--yes`; prints a warning when no `--control-token` is present. |
+| `--control-loopback` | Force the control plane to stay on `127.0.0.1`. | Overrides any profile/default that points at a non-loopback host. |
 | `--control-port <port>` | TCP port for the control plane. | 1–65535; default `47777`. |
 | `--control-token <secret>` | Shared secret for control auth. | Whitespace not allowed. |
 | `--max-store-bytes <bytes>` | Control-plane upload cap. | `0` disables the cap; default `33554432`. |
@@ -42,19 +44,54 @@ Run the client as `eph [global options] <command> [command options]`. Global opt
 
 ## Commands
 
-### `serve`
-Run the daemon in the foreground until interrupted.
+### `fetch`
+Retrieve a manifest payload to a local file or directory. When the local daemon cannot reach the swarm directly, the command can fall back to the manifest's discovery metadata.
 
-- Command options: none (any extra token raises `E_SERVE_UNKNOWN_OPTION`).
-- Typical usage (foreground daemon using config file):
+- Required argument: `eph://…` manifest URI.
+- Command options:
+  - `--out <path>`: Destination file or directory. Defaults to `--fetch-default-dir` or the current directory.
+  - `--bootstrap`: Enable manifest discovery hints whenever the local daemon is unreachable (still tries the local daemon first).
+  - `--bootstrap-only`: Skip the local daemon entirely and use manifest discovery/fallback hints.
+  - `--bootstrap-token <value>`: Provide a precomputed PoW token when bootstrap endpoints demand one. Useful for air-gapped token solvers.
+  - `--bootstrap-max-attempts <n>`: Cap the number of nonce attempts when auto-solving PoW tokens (default `250000`).
+  - `--no-bootstrap-auto-token`: Disable automatic PoW solving. Use with `--bootstrap-token` when you want to supply your own nonce.
+
+Behavioural notes:
+
+- Without `--out`, the CLI picks a filename from manifest metadata (`filename` key) or falls back to `chunk_<timestamp>`.
+- With `--bootstrap` enabled, the CLI iterates the manifest's discovery hints (sorted by priority) and contacts remote control endpoints using the built-in PoW solver when necessary.
+- Fallback hints that reference `control://host:port` are attempted after discovery hints fail; other URI schemes currently log an informative error.
+- Progress is displayed per attempt ("Downloading", "Bootstrap download", or "Fallback download").
+- Remote responses surface daemon-provided hints/codes to aid troubleshooting.
+
+Example fetching via bootstrap-only mode into a downloads directory (auto PoW solving is enabled by default):
+
+```powershell
+eph fetch eph://AAAA... --bootstrap-only --out "$env:USERPROFILE\Downloads"
+```
+
+## Derived usage patterns
+
+- Combine global options with any command. For example, to run automated smoke tests against a remote daemon:
   ```bash
-  eph --config /etc/ephemeralnet.yaml serve
+  eph --control-host 198.51.100.10 \
+      --control-port 47777 \
+      --control-token $(cat token.txt) \
+      status
   ```
-- Output includes control endpoint coordinates and the transport port. Stop with `Ctrl+C` or `eph stop` from another terminal.
-
-### `start`
-Launch the daemon in the background, regardless of platform.
-
+- Apply configuration layering:
+  ```bash
+  eph --config ./profiles.yaml --profile staging --env eu-west serve
+  ```
+- Launch a daemon that is reachable from an external VPS while still enforcing authentication:
+  ```bash
+  eph --control-expose --control-token $(cat ~/.config/eph/token) start
+  ```
+  The CLI prints a warning and requires confirmation unless `--yes` is supplied.
+- Toggle fetch naming policy per command:
+  ```bash
+  eph --fetch-ignore-manifest-name fetch eph://... --out ./tmp
+  ```
 - Command options: none.
 - Re-executes the current `eph` binary with the accumulated global options and `serve`.
 - Standard streams are detached to `/dev/null` (POSIX) or a detached console (Windows).
