@@ -42,6 +42,8 @@ struct Config {
     std::optional<std::string> control_token{};
     std::size_t control_stream_max_bytes{32ull * 1024ull * 1024ull};
     std::optional<std::uint32_t> identity_seed{};
+    std::optional<std::string> advertise_control_host{};
+    std::optional<std::uint16_t> advertise_control_port{};
     std::uint8_t shard_threshold{3};
     std::uint8_t shard_total{5};
     std::chrono::seconds bootstrap_contact_ttl{std::chrono::minutes(15)};

@@ -136,6 +136,36 @@ environments:
 
         std::filesystem::remove(yaml_path);
 
+        const auto advertise_missing_host = run_cli(executable,
+                              "--advertise-control :4000 status");
+        if (advertise_missing_host.exit_code == 0 ||
+          !expect_contains(advertise_missing_host.output, "E_INVALID_ADVERTISE_CONTROL")) {
+          std::cerr << "Failure on advertise-control host validation. exit="
+                << advertise_missing_host.exit_code << "\n"
+                << advertise_missing_host.output << std::endl;
+          return 1;
+        }
+
+        const auto advertise_ipv6 = run_cli(executable,
+                          "--advertise-control 2001:db8::1:4000 status");
+        if (advertise_ipv6.exit_code == 0 ||
+          !expect_contains(advertise_ipv6.output, "IPv6 advertise endpoints must be wrapped")) {
+          std::cerr << "Failure on advertise-control IPv6 validation. exit="
+                << advertise_ipv6.exit_code << "\n"
+                << advertise_ipv6.output << std::endl;
+          return 1;
+        }
+
+        const auto bootstrap_conflict = run_cli(executable,
+            "fetch eph://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --bootstrap-only --no-bootstrap --out ./cli_fetch_conflict.bin");
+        if (bootstrap_conflict.exit_code == 0 ||
+            !expect_contains(bootstrap_conflict.output, "--no-bootstrap cannot be combined")) {
+            std::cerr << "Failure on bootstrap/no-bootstrap conflict detection. exit="
+                      << bootstrap_conflict.exit_code << "\n"
+                      << bootstrap_conflict.output << std::endl;
+            return 1;
+        }
+
     } catch (const std::exception& ex) {
         std::cerr << "Exception during CLI config tests: " << ex.what() << std::endl;
         return 1;

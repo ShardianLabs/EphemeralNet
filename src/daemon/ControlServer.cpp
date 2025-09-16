@@ -831,6 +831,13 @@ private:
                              {"FETCH_MAX_PARALLEL", std::to_string(config_copy.fetch_max_parallel_requests)},
                              {"UPLOAD_MAX_PARALLEL", std::to_string(config_copy.upload_max_parallel_transfers)}};
 
+        if (config_copy.advertise_control_host) {
+            fields["ADVERTISE_HOST"] = *config_copy.advertise_control_host;
+        }
+        if (config_copy.advertise_control_port) {
+            fields["ADVERTISE_PORT"] = std::to_string(*config_copy.advertise_control_port);
+        }
+
         send_response(client, fields, true);
         log_event(StructuredLogger::Level::Info,
                   "control.command.defaults",

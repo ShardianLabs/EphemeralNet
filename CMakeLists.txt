@@ -375,6 +375,23 @@ if(EPHEMERALNET_BUILD_TESTS)
 
     add_test(NAME EphemeralNet.Manifest COMMAND ephemeralnet_manifest_tests)
 
+    add_executable(ephemeralnet_manifest_discovery_tests
+        tests/manifest_discovery.cpp
+    )
+
+    target_link_libraries(ephemeralnet_manifest_discovery_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_manifest_discovery_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_manifest_discovery_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.ManifestDiscovery COMMAND ephemeralnet_manifest_discovery_tests)
+
     add_executable(ephemeralnet_manifest_fuzz_tests
         tests/manifest_fuzz.cpp
     )

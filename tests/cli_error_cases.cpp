@@ -53,6 +53,11 @@ bool expect_contains(const std::string& haystack, const std::string& needle) {
     return haystack.find(needle) != std::string::npos;
 }
 
+bool expect_fetch_requires_daemon(const std::string& output) {
+    return expect_contains(output, "Could not contact the daemon.") ||
+           expect_contains(output, "Manifest decoding failed; automatic bootstrap could not start");
+}
+
 }  // namespace
 
 int main() {
@@ -89,7 +94,7 @@ int main() {
         }
 
         const auto fetch = run_cli(executable, "fetch eph://deadbeef");
-        if (fetch.exit_code == 0 || !expect_contains(fetch.output, "Could not contact the daemon.")) {
+        if (fetch.exit_code == 0 || !expect_fetch_requires_daemon(fetch.output)) {
             std::cerr << "Failure on fetch without --out. exit=" << fetch.exit_code << "\n" << fetch.output << std::endl;
             return 1;
         }
@@ -109,7 +114,7 @@ int main() {
         }
 
         const auto fetch_dir_out = run_cli(executable, "fetch eph://deadbeef --out .");
-        if (fetch_dir_out.exit_code == 0 || !expect_contains(fetch_dir_out.output, "Could not contact the daemon.")) {
+        if (fetch_dir_out.exit_code == 0 || !expect_fetch_requires_daemon(fetch_dir_out.output)) {
             std::cerr << "Failure on fetch with directory output. exit=" << fetch_dir_out.exit_code << "\n" << fetch_dir_out.output << std::endl;
             return 1;
         }

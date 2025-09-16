@@ -101,6 +101,9 @@ struct GlobalOptions {
     std::optional<std::string> config_path{};
     std::optional<std::string> profile_name{};
     std::optional<std::string> environment{};
+    bool advertise_control_set{false};
+    std::optional<std::string> advertise_control_host{};
+    std::optional<std::uint16_t> advertise_control_port{};
 };
 
 class CliException : public std::exception {
@@ -271,7 +274,7 @@ std::string format_bytes(std::size_t bytes) {
 }
 
 struct FetchBootstrapOptions {
-    bool enabled{false};
+    bool enabled{true};
     bool bootstrap_only{false};
     bool auto_token{true};
     std::uint64_t max_attempts{250'000};
@@ -319,6 +322,12 @@ std::optional<std::pair<std::string, std::uint16_t>> parse_control_uri(const std
     const auto address = uri.substr(kScheme.size());
     return parse_control_endpoint(address);
 }
+
+std::optional<std::string> split_advertise_control_endpoint(const std::string& raw,
+                                                            std::string& host_out,
+                                                            std::optional<std::uint16_t>& port_out);
+std::string format_advertise_control_argument(const std::string& host,
+                                              const std::optional<std::uint16_t>& port);
 
 std::optional<std::string> compute_bootstrap_token(const protocol::Manifest& manifest,
                                                    const protocol::DiscoveryHint& hint,
@@ -1273,6 +1282,57 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
         }
     }
 
+    if (!options.advertise_control_set) {
+        auto apply_advertise = [&](const std::string& host,
+                                   std::optional<std::uint16_t> port) {
+            options.advertise_control_host = host;
+            options.advertise_control_port = port;
+            options.advertise_control_set = true;
+        };
+
+        if (auto endpoint = config::get_string_any(profile,
+                                                   {{"control", "advertise"},
+                                                    {"control", "advertise_endpoint"}})) {
+            std::string host;
+            std::optional<std::uint16_t> port;
+            if (auto error = split_advertise_control_endpoint(*endpoint, host, port)) {
+                throw config::ConfigError("E_CONFIG_VALUE",
+                                          "control.advertise_endpoint: " + *error);
+            }
+            apply_advertise(host, port);
+        } else {
+            if (auto host = config::get_string_any(profile,
+                                                   {{"control", "advertise_host"},
+                                                    {"control", "advertise-host"}})) {
+                auto trimmed = trim(*host);
+                if (trimmed.empty()) {
+                    throw config::ConfigError("E_CONFIG_VALUE",
+                                              "control.advertise_host must not be empty");
+                }
+                if (has_whitespace(trimmed)) {
+                    throw config::ConfigError("E_CONFIG_VALUE",
+                                              "control.advertise_host must not contain whitespace");
+                }
+                std::optional<std::uint16_t> port{};
+                if (auto port_value = config::get_int64_any(profile,
+                                                            {{"control", "advertise_port"},
+                                                             {"control", "advertise-port"}})) {
+                    if (*port_value <= 0 || *port_value > std::numeric_limits<std::uint16_t>::max()) {
+                        throw config::ConfigError("E_CONFIG_VALUE",
+                                                  "control.advertise_port must be between 1 and 65535");
+                    }
+                    port = static_cast<std::uint16_t>(*port_value);
+                }
+                apply_advertise(trimmed, port);
+            } else if (config::get_int64_any(profile,
+                                             {{"control", "advertise_port"},
+                                              {"control", "advertise-port"}})) {
+                throw config::ConfigError("E_CONFIG_VALUE",
+                                          "control.advertise_port requires control.advertise_host");
+            }
+        }
+    }
+
     if (!options.control_stream_max_bytes) {
         if (auto limit = config::get_int64_any(profile, {{"control", "stream_max_bytes"}, {"control", "max_stream_bytes"}, {"control", "max_store_bytes"}})) {
             if (*limit < 0) {
@@ -1563,6 +1623,7 @@ void print_usage() {
               << "  --control-loopback        Force control socket to stay on 127.0.0.1\n"
               << "  --control-port <port>     Control socket port (default 47777)\n"
               << "  --control-token <secret>  Pre-shared token for control-plane authentication\n"
+              << "  --advertise-control <ep>  Host[:port] advertised inside manifests for remote fetches\n"
               << "  --max-store-bytes <n>     Control-plane upload cap in bytes (0 = unlimited)\n"
               << "  --fetch-parallel <n>      Fetch concurrency limit (0 = unlimited)\n"
               << "  --upload-parallel <n>     Upload concurrency limit (0 = unlimited)\n"
@@ -1626,8 +1687,9 @@ void print_fetch_usage() {
               << "Download a manifest's payload to a specific file or directory (defaults to the current directory when omitted).\n"
               << "Options:\n"
               << "  --out <path>                  Destination file or directory (default: current dir).\n"
-              << "  --bootstrap                  Allow remote discovery using manifest hints when the local daemon is unreachable.\n"
+              << "  --bootstrap                  Legacy alias; manifest discovery now happens automatically on failures.\n"
               << "  --bootstrap-only             Skip contacting the local daemon and use manifest discovery exclusively.\n"
+              << "  --no-bootstrap               Disable manifest discovery and rely solely on the local daemon.\n"
               << "  --bootstrap-token <value>    Provide a precomputed PoW token for remote bootstrap nodes.\n"
               << "  --bootstrap-max-attempts <n> Limit PoW search iterations when solving tokens automatically.\n"
               << "  --no-bootstrap-auto-token    Disable automatic PoW solving (requires --bootstrap-token)." << std::endl;
@@ -1679,6 +1741,8 @@ void print_manual() {
               << "    --control-loopback     Force control socket onto 127.0.0.1 even if profile overrides it.\n"
               << "    --control-port <port>  Control socket port.\n"
               << "    --control-token <tok>  Control-plane authentication token.\n"
+              << "    --advertise-control <ep>\n"
+              << "                          Host[:port] embedded into manifests for bootstrap fetches.\n"
               << "    --max-store-bytes <n>  Control-plane upload cap in bytes (0 = unlimited).\n"
               << "    --fetch-parallel <n>   Fetch concurrency (0 = unlimited).\n"
               << "    --upload-parallel <n>  Upload concurrency (0 = unlimited).\n"
@@ -1741,6 +1805,92 @@ bool parse_uint16(std::string_view text, std::uint16_t& value) {
     }
     value = static_cast<std::uint16_t>(temp);
     return true;
+}
+
+std::optional<std::string> split_advertise_control_endpoint(const std::string& raw,
+                                                            std::string& host_out,
+                                                            std::optional<std::uint16_t>& port_out) {
+    std::string value = trim(raw);
+    if (value.empty()) {
+        return std::string{"Advertise control endpoint requires a host"};
+    }
+    if (has_whitespace(value)) {
+        return std::string{"Advertise control endpoint must not contain whitespace"};
+    }
+
+    auto parse_port = [&](std::string_view text) -> std::optional<std::string> {
+        if (text.empty()) {
+            return std::string{"Advertise control endpoint is missing a port after ':'"};
+        }
+        std::uint16_t parsed{};
+        if (!parse_uint16(text, parsed)) {
+            return std::string{"Advertise control port must be between 1 and 65535"};
+        }
+        port_out = parsed;
+        return std::nullopt;
+    };
+
+    std::string host;
+    port_out.reset();
+
+    if (!value.empty() && value.front() == '[') {
+        const auto closing = value.find(']');
+        if (closing == std::string::npos) {
+            return std::string{"Advertise control endpoint has an unterminated IPv6 host"};
+        }
+        host = value.substr(1, closing - 1);
+        if (host.empty()) {
+            return std::string{"Advertise control endpoint requires a host"};
+        }
+        const auto remainder = value.substr(closing + 1);
+        if (!remainder.empty()) {
+            if (remainder.front() != ':') {
+                return std::string{"Advertise control endpoint must place ':' immediately after ']'."};
+            }
+            if (auto err = parse_port(std::string_view(remainder).substr(1))) {
+                return err;
+            }
+        }
+    } else {
+        const auto first_colon = value.find(':');
+        const auto last_colon = value.find_last_of(':');
+        if (first_colon != std::string::npos && first_colon != last_colon) {
+            return std::string{"IPv6 advertise endpoints must be wrapped like [2001:db8::1]:47777"};
+        }
+        if (last_colon != std::string::npos) {
+            host = value.substr(0, last_colon);
+            if (auto err = parse_port(std::string_view(value).substr(last_colon + 1))) {
+                return err;
+            }
+        } else {
+            host = value;
+        }
+    }
+
+    if (host.empty()) {
+        return std::string{"Advertise control endpoint requires a host"};
+    }
+
+    host_out = host;
+    return std::nullopt;
+}
+
+std::string format_advertise_control_argument(const std::string& host,
+                                              const std::optional<std::uint16_t>& port) {
+    std::string formatted;
+    const bool needs_brackets = host.find(':') != std::string::npos;
+    if (needs_brackets) {
+        formatted.push_back('[');
+    }
+    formatted += host;
+    if (needs_brackets) {
+        formatted.push_back(']');
+    }
+    if (port.has_value()) {
+        formatted.push_back(':');
+        formatted += std::to_string(*port);
+    }
+    return formatted;
 }
 
 std::optional<std::uint8_t> parse_hex_byte(char high, char low) {
@@ -1859,6 +2009,26 @@ void validate_global_options(GlobalOptions& options) {
                             "Use a token without spaces or encode it (e.g. base64)");
         }
         options.control_token = token;
+    }
+
+    if (options.advertise_control_host) {
+        auto host = trim(*options.advertise_control_host);
+        if (host.empty()) {
+            throw_cli_error("E_INVALID_ADVERTISE_CONTROL",
+                            "Advertise control endpoint requires a host",
+                            "Provide host[:port], e.g. example.com:47777 or [2001:db8::1]:47777");
+        }
+        if (has_whitespace(host)) {
+            throw_cli_error("E_INVALID_ADVERTISE_CONTROL",
+                            "Advertise control endpoint must not contain whitespace",
+                            "Wrap IPv6 hosts in brackets, e.g. --advertise-control [2001:db8::1]:47777");
+        }
+        options.advertise_control_host = host;
+    }
+    if (options.advertise_control_port && !options.advertise_control_host) {
+        throw_cli_error("E_INVALID_ADVERTISE_CONTROL",
+                        "--advertise-control port provided without a host",
+                        "Specify a host along with the port, e.g. --advertise-control example.com:47777");
     }
 
     if (options.control_stream_max_bytes) {
@@ -2051,6 +2221,10 @@ ephemeralnet::Config build_config(const GlobalOptions& options) {
     if (options.control_stream_max_bytes) {
         config.control_stream_max_bytes = static_cast<std::size_t>(*options.control_stream_max_bytes);
     }
+    if (options.advertise_control_host) {
+        config.advertise_control_host = options.advertise_control_host;
+        config.advertise_control_port = options.advertise_control_port;
+    }
     if (options.fetch_parallel) {
         config.fetch_max_parallel_requests = *options.fetch_parallel;
     }
@@ -2127,6 +2301,11 @@ std::vector<std::string> build_daemon_arguments(const GlobalOptions& options) {
     if (options.control_token) {
         args.emplace_back("--control-token");
         args.emplace_back(strip_quotes(*options.control_token));
+    }
+    if (options.advertise_control_host) {
+        args.emplace_back("--advertise-control");
+        args.emplace_back(format_advertise_control_argument(*options.advertise_control_host,
+                                                            options.advertise_control_port));
     }
     if (options.control_stream_max_bytes) {
         args.emplace_back("--max-store-bytes");
@@ -2648,6 +2827,20 @@ int main(int argc, char** argv) {
             }
             if (opt == "--control-token") {
                 options.control_token = require_value(opt);
+                continue;
+            }
+            if (opt == "--advertise-control") {
+                const auto raw = strip_quotes(require_value(opt));
+                std::string advertise_host;
+                std::optional<std::uint16_t> advertise_port;
+                if (auto error = split_advertise_control_endpoint(raw, advertise_host, advertise_port)) {
+                    throw_cli_error("E_INVALID_ADVERTISE_CONTROL",
+                                    *error,
+                                    "Use host[:port], e.g. example.com:47777 or [2001:db8::1]:47777");
+                }
+                options.advertise_control_host = advertise_host;
+                options.advertise_control_port = advertise_port;
+                options.advertise_control_set = true;
                 continue;
             }
             if (opt == "--max-store-bytes") {
@@ -3222,6 +3415,8 @@ int main(int argc, char** argv) {
 
             std::optional<std::filesystem::path> output_spec;
             FetchBootstrapOptions bootstrap_options{};
+            bool bootstrap_only_requested = false;
+            bool bootstrap_disable_requested = false;
             while (index < args.size()) {
                 const auto& opt = args[index];
                 if (opt == "--out") {
@@ -3245,8 +3440,26 @@ int main(int argc, char** argv) {
                     continue;
                 }
                 if (opt == "--bootstrap-only") {
+                    if (bootstrap_disable_requested) {
+                        throw_cli_error("E_FETCH_BOOTSTRAP_CONFLICT",
+                                        "--bootstrap-only cannot be combined with --no-bootstrap",
+                                        "Remove --no-bootstrap to allow manifest discovery");
+                    }
                     bootstrap_options.enabled = true;
                     bootstrap_options.bootstrap_only = true;
+                    bootstrap_only_requested = true;
+                    ++index;
+                    continue;
+                }
+                if (opt == "--no-bootstrap") {
+                    if (bootstrap_only_requested) {
+                        throw_cli_error("E_FETCH_BOOTSTRAP_CONFLICT",
+                                        "--no-bootstrap cannot be combined with --bootstrap-only",
+                                        "Choose either automatic discovery or local-only fetches");
+                    }
+                    bootstrap_options.enabled = false;
+                    bootstrap_options.bootstrap_only = false;
+                    bootstrap_disable_requested = true;
                     ++index;
                     continue;
                 }
@@ -3363,12 +3576,6 @@ int main(int argc, char** argv) {
                 throw_cli_error("E_FETCH_OUT_IS_DIRECTORY",
                                 "Destination resolves to a directory",
                                 "Provide a writable file path or an existing directory");
-            }
-
-            if (bootstrap_options.enabled && !decoded_manifest.has_value()) {
-                throw_cli_error("E_FETCH_BOOTSTRAP_UNAVAILABLE",
-                                "Manifest decoding failed; bootstrap flow cannot continue",
-                                "Retry with the exact eph:// URI returned by 'store'");
             }
 
             const auto parent = resolved_output.parent_path();
@@ -3581,18 +3788,30 @@ int main(int argc, char** argv) {
                 return false; // Unreachable, but keeps compilers satisfied.
             };
 
+            bool require_bootstrap = bootstrap_options.bootstrap_only;
+            std::string local_error;
+
             if (!bootstrap_options.bootstrap_only) {
-                std::string local_error;
                 const auto response = perform_fetch_request(client, base_fields, "Downloading", &local_error);
                 if (!response) {
                     if (!bootstrap_options.enabled) {
                         throw_daemon_unreachable();
                     }
+                    if (local_error.empty()) {
+                        local_error = "Local daemon unreachable";
+                    }
+                    require_bootstrap = true;
                 } else if (!response->success) {
                     if (!bootstrap_options.enabled) {
                         print_daemon_failure(*response);
                         return 1;
                     }
+                    const auto message_it = response->fields.find("MESSAGE");
+                    if (message_it != response->fields.end() && !message_it->second.empty()) {
+                        local_error = message_it->second;
+                    }
+                    print_daemon_failure(*response);
+                    require_bootstrap = true;
                 } else {
                     finalize_fetch(*response);
                     print_daemon_hint(*response);
@@ -3600,7 +3819,17 @@ int main(int argc, char** argv) {
                 }
             }
 
-            if (bootstrap_options.enabled && decoded_manifest.has_value()) {
+            if (require_bootstrap) {
+                if (!bootstrap_options.enabled) {
+                    throw_cli_error("E_FETCH_FAILED",
+                                    "Fetch request failed",
+                                    "Automatic bootstrap was disabled (--no-bootstrap); ensure the local daemon is reachable");
+                }
+                if (!decoded_manifest.has_value()) {
+                    throw_cli_error("E_FETCH_BOOTSTRAP_UNAVAILABLE",
+                                    "Manifest decoding failed; automatic bootstrap could not start",
+                                    "Retry with the original eph:// URI or disable bootstrap via --no-bootstrap");
+                }
                 if (attempt_bootstrap_fetch(*decoded_manifest)) {
                     return 0;
                 }
@@ -3608,9 +3837,9 @@ int main(int argc, char** argv) {
 
             throw_cli_error("E_FETCH_FAILED",
                             "Fetch request failed",
-                            bootstrap_options.enabled
+                            local_error.empty()
                                 ? "Bootstrap discovery did not yield any reachable peers"
-                                : "Retry with --bootstrap to use manifest discovery hints");
+                                : local_error);
         }
 
         throw_cli_error("E_UNKNOWN_COMMAND",

@@ -1408,7 +1408,10 @@ protocol::Manifest Node::store_chunk(const ChunkId& chunk_id,
         }
     };
 
-    if (!config_.control_host.empty() && config_.control_host != "0.0.0.0") {
+    if (config_.advertise_control_host.has_value()) {
+        const auto advertise_port = config_.advertise_control_port.value_or(config_.control_port);
+        try_add_endpoint(*config_.advertise_control_host, advertise_port, 0);
+    } else if (!config_.control_host.empty() && config_.control_host != "0.0.0.0") {
         try_add_endpoint(config_.control_host, config_.control_port, 0);
     }
 

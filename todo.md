@@ -78,3 +78,20 @@
 	- Author a contributor guide and code of conduct for the project.
 - **TESTING & VALIDATION**
 	- Schedule manual hostile-network P2P validation (e.g., 4G mobile vs. corporate Wi-Fi segments).
+
+## Auto-advertise detection
+1. **Endpoint discovery primitives**
+	- Integrate UPnP/NAT-PMP probes plus a STUN/HTTPS echo fallback to learn the external IP/port for the control socket when the daemon starts.
+	- Record every successful probe as a candidate endpoint (host + port + transport metadata) without yet mutating manifests.
+2. **Heuristics and safety rails**
+	- Filter out unroutable/private addresses unless the operator explicitly sets `--control-expose` or `--advertise-allow-private`.
+	- Detect conflicting results (multiple gateways/interfaces) and retain them all, but flag the situation in logs/CLI warnings for operator visibility.
+3. **Config surface & overrides**
+	- Extend `Config` to store a list of advertised endpoints (auto-detected + manual) and expose a `--advertise-auto=on|off|warn` toggle so operators can disable or require manual confirmation.
+	- Maintain `--advertise-control` as an override that pins the list to user-supplied values, skipping auto-detection entirely.
+4. **Manifest + bootstrap wiring**
+	- Embed the endpoint list into manifests (preserving order: manual overrides, then auto detections) and update discovery hints/tests accordingly.
+	- Optionally publish the same list into bootstrap gossip so new peers can learn routable contacts without a fresh fetch.
+5. **Operator experience**
+	- Emit structured warnings when no public endpoint can be derived, along with suggested CLI flags.
+	- Update CLI/docs/runbooks to describe the auto-advertise life cycle, privacy trade-offs, and troubleshooting steps (port forwarding, relay setups, disabling the feature).
