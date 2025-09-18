@@ -79,6 +79,13 @@ The CLI spawns a detached process and waits until the daemon responds to `PING`.
 - Limit announce pressure against the DHT by tuning rate limits: `--announce-interval 30 --announce-burst 3 --announce-window 120 --announce-pow 8` is a hardened baseline for untrusted peers.
 - Monitor the storage directory disk usage and configure OS-level quotas if required.
 
+## Network exposure & privacy
+
+- **Port forwarding**: If peers must reach your control plane directly, forward TCP 47777 (and any custom control port) from the router or cloud firewall to the daemon host. Verify externally via `nc -vz <ip> 47777` or `Test-NetConnection -ComputerName <ip> -Port 47777`. When forwarding fails due to carrier-grade NAT, relocate the daemon to a VPS or push traffic through a TURN/STUN relay as described in `ops/bootstrap/README.md`.
+- **Advertised endpoints**: Set `advertise_control_host`/`advertise_control_port` in the daemon config whenever the public hostname differs from the bind address. Run `eph defaults` after changes to confirm the advertised list (manual entries first, auto-detected endpoints second) reflects the routable contacts you intend to share.
+- **Privacy trade-offs**: Home/office deployments that should stay obscured can keep `--advertise-auto warn` (logs candidates without publishing) or `off`, relying on a relay entry in `advertised_endpoints`. VPS-based bootstrap nodes can safely leave auto-advertise on but should still enforce `--control-token` and monitor for abuse.
+- **Relays**: Deploy coturn or a TCP reverse proxy when you cannot open inbound ports. Point `advertised_endpoints` at the relay hostname so new peers only see the hardened edge, not the origin IP. Document the relay credentials and retention policy so operators can reason about the metadata exposure.
+
 ## Upgrade Workflow
 
 1. Pull the latest sources and rebuild with CMake.

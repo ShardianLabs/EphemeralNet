@@ -98,6 +98,18 @@ constexpr std::size_t kStorePowFailureLimit = 3;
 constexpr std::chrono::seconds kFetchStreamRateWindow{std::chrono::seconds(30)};
 constexpr std::size_t kFetchStreamBurstLimit = 12;
 
+const char* advertise_auto_mode_to_string(Config::AdvertiseAutoMode mode) {
+    switch (mode) {
+        case Config::AdvertiseAutoMode::On:
+            return "on";
+        case Config::AdvertiseAutoMode::Warn:
+            return "warn";
+        case Config::AdvertiseAutoMode::Off:
+            return "off";
+    }
+    return "on";
+}
+
 bool send_all(NativeSocket socket, const char* data, std::size_t length) {
     std::size_t total_sent = 0;
     while (total_sent < length) {
@@ -745,24 +757,44 @@ private:
         std::size_t peers = 0;
         std::size_t chunks = 0;
         std::uint16_t port = 0;
+        Config config_copy{};
         {
             std::scoped_lock lock(node_mutex_);
             peers = node_.connected_peer_count();
             chunks = node_.stored_chunks().size();
             port = node_.transport_port();
+            config_copy = node_.config();
         }
 
         ControlFields fields{{"CODE", "OK_STATUS"},
                              {"PEERS", std::to_string(peers)},
                              {"CHUNKS", std::to_string(chunks)},
                              {"TRANSPORT_PORT", std::to_string(port)}};
+
+        if (!config_copy.auto_advertise_warnings.empty()) {
+            std::ostringstream warnings_stream;
+            for (const auto& warning : config_copy.auto_advertise_warnings) {
+                warnings_stream << warning << '\n';
+            }
+            fields["AUTO_ADVERTISE_WARNINGS"] = warnings_stream.str();
+            fields["AUTO_ADVERTISE_CONFLICT"] = config_copy.auto_advertise_conflict ? "1" : "0";
+        }
+
         send_response(client, fields, true);
+
+        StructuredLogger::FieldList log_fields{{"remote", remote_identity},
+                                               {"peers", std::to_string(peers)},
+                                               {"chunks", std::to_string(chunks)},
+                                               {"transport_port", std::to_string(port)}};
+        if (!config_copy.auto_advertise_warnings.empty()) {
+            log_fields.emplace_back("auto_advertise_warning_count",
+                                    std::to_string(config_copy.auto_advertise_warnings.size()));
+            log_fields.emplace_back("auto_advertise_conflict",
+                                    config_copy.auto_advertise_conflict ? "1" : "0");
+        }
         log_event(StructuredLogger::Level::Info,
                   "control.command.status",
-                  {{"remote", remote_identity},
-                   {"peers", std::to_string(peers)},
-                   {"chunks", std::to_string(chunks)},
-                   {"transport_port", std::to_string(port)}});
+                  std::move(log_fields));
     }
 
     void handle_stop(NativeSocket client, const std::string& remote_identity) {
@@ -829,13 +861,33 @@ private:
                              {"STORAGE_PERSISTENT", config_copy.storage_persistent_enabled ? "1" : "0"},
                              {"STORAGE_DIR", config_copy.storage_directory},
                              {"FETCH_MAX_PARALLEL", std::to_string(config_copy.fetch_max_parallel_requests)},
-                             {"UPLOAD_MAX_PARALLEL", std::to_string(config_copy.upload_max_parallel_transfers)}};
+                             {"UPLOAD_MAX_PARALLEL", std::to_string(config_copy.upload_max_parallel_transfers)},
+                             {"ADVERTISE_AUTO_MODE", advertise_auto_mode_to_string(config_copy.advertise_auto_mode)}};
 
         if (config_copy.advertise_control_host) {
             fields["ADVERTISE_HOST"] = *config_copy.advertise_control_host;
         }
         if (config_copy.advertise_control_port) {
             fields["ADVERTISE_PORT"] = std::to_string(*config_copy.advertise_control_port);
+        }
+        if (!config_copy.advertised_endpoints.empty()) {
+            std::ostringstream serialized;
+            bool first = true;
+            for (const auto& endpoint : config_copy.advertised_endpoints) {
+                if (endpoint.host.empty()) {
+                    continue;
+                }
+                const auto port = endpoint.port != 0 ? endpoint.port : config_copy.control_port;
+                if (!first) {
+                    serialized << '\n';
+                }
+                first = false;
+                serialized << endpoint.host << ':' << port;
+                if (!endpoint.source.empty()) {
+                    serialized << " (" << endpoint.source << ')';
+                }
+            }
+            fields["ADVERTISE_ENDPOINTS"] = serialized.str();
         }
 
         send_response(client, fields, true);

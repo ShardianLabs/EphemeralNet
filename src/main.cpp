@@ -3,9 +3,11 @@
 #include "ephemeralnet/core/Node.hpp"
 #include "ephemeralnet/crypto/Sha256.hpp"
 #include "ephemeralnet/daemon/ControlPlane.hpp"
+#include "ephemeralnet/daemon/StructuredLogger.hpp"
 #include "ephemeralnet/security/StoreProof.hpp"
 #include "ephemeralnet/protocol/Manifest.hpp"
 #include "ephemeralnet/bootstrap/TokenChallenge.hpp"
+#include "ephemeralnet/network/AdvertiseDiscovery.hpp"
 
 #include <algorithm>
 #include <array>
@@ -104,7 +106,42 @@ struct GlobalOptions {
     bool advertise_control_set{false};
     std::optional<std::string> advertise_control_host{};
     std::optional<std::uint16_t> advertise_control_port{};
+    bool advertise_allow_private{false};
+    std::optional<ephemeralnet::Config::AdvertiseAutoMode> advertise_auto_mode{};
 };
+
+std::string trim(std::string value);
+std::string to_lower(std::string value);
+
+bool try_parse_advertise_auto_mode(std::string value,
+                                   ephemeralnet::Config::AdvertiseAutoMode& mode) {
+    value = to_lower(trim(value));
+    if (value == "on" || value.empty()) {
+        mode = ephemeralnet::Config::AdvertiseAutoMode::On;
+        return true;
+    }
+    if (value == "warn") {
+        mode = ephemeralnet::Config::AdvertiseAutoMode::Warn;
+        return true;
+    }
+    if (value == "off") {
+        mode = ephemeralnet::Config::AdvertiseAutoMode::Off;
+        return true;
+    }
+    return false;
+}
+
+std::string_view advertise_auto_mode_to_string(ephemeralnet::Config::AdvertiseAutoMode mode) {
+    switch (mode) {
+        case ephemeralnet::Config::AdvertiseAutoMode::On:
+            return "on";
+        case ephemeralnet::Config::AdvertiseAutoMode::Warn:
+            return "warn";
+        case ephemeralnet::Config::AdvertiseAutoMode::Off:
+            return "off";
+    }
+    return "on";
+}
 
 class CliException : public std::exception {
 public:
@@ -152,8 +189,6 @@ std::string trim(std::string value) {
     value.erase(std::find_if(value.rbegin(), value.rend(), [&](unsigned char ch) { return !is_space(ch); }).base(), value.end());
     return value;
 }
-
-std::string to_lower(std::string value);
 
 bool has_whitespace(std::string_view text) {
     return text.find_first_of(" \t\r\n") != std::string_view::npos;
@@ -1333,6 +1368,27 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
         }
     }
 
+    if (!options.advertise_allow_private) {
+        if (auto allow_private = config::get_bool_any(profile,
+                                                      {{"control", "advertise_allow_private"},
+                                                       {"control", "advertise-allow-private"}})) {
+            options.advertise_allow_private = *allow_private;
+        }
+    }
+
+    if (!options.advertise_auto_mode) {
+        if (auto mode_text = config::get_string_any(profile,
+                                                    {{"control", "advertise_auto"},
+                                                     {"control", "advertise-auto"}})) {
+            ephemeralnet::Config::AdvertiseAutoMode parsed_mode;
+            if (!try_parse_advertise_auto_mode(*mode_text, parsed_mode)) {
+                throw config::ConfigError("E_CONFIG_VALUE",
+                                          "control.advertise_auto must be one of on|off|warn");
+            }
+            options.advertise_auto_mode = parsed_mode;
+        }
+    }
+
     if (!options.control_stream_max_bytes) {
         if (auto limit = config::get_int64_any(profile, {{"control", "stream_max_bytes"}, {"control", "max_stream_bytes"}, {"control", "max_store_bytes"}})) {
             if (*limit < 0) {
@@ -1624,6 +1680,9 @@ void print_usage() {
               << "  --control-port <port>     Control socket port (default 47777)\n"
               << "  --control-token <secret>  Pre-shared token for control-plane authentication\n"
               << "  --advertise-control <ep>  Host[:port] advertised inside manifests for remote fetches\n"
+              << "  --advertise-allow-private Allow auto-advertise of private/control addresses\n"
+              << "  --advertise-auto on|off|warn\n"
+              << "                           Control whether auto-detected endpoints are used (default: on)\n"
               << "  --max-store-bytes <n>     Control-plane upload cap in bytes (0 = unlimited)\n"
               << "  --fetch-parallel <n>      Fetch concurrency limit (0 = unlimited)\n"
               << "  --upload-parallel <n>     Upload concurrency limit (0 = unlimited)\n"
@@ -2225,6 +2284,19 @@ ephemeralnet::Config build_config(const GlobalOptions& options) {
         config.advertise_control_host = options.advertise_control_host;
         config.advertise_control_port = options.advertise_control_port;
     }
+    if (options.advertise_auto_mode) {
+        config.advertise_auto_mode = *options.advertise_auto_mode;
+    }
+    config.advertise_allow_private = options.advertise_allow_private || options.control_expose_requested
+        || config.control_host == "0.0.0.0";
+    if (config.advertise_control_host) {
+        ephemeralnet::Config::AdvertisedEndpoint endpoint{};
+        endpoint.host = *config.advertise_control_host;
+        endpoint.port = config.advertise_control_port.value_or(config.control_port);
+        endpoint.manual = true;
+        endpoint.source = "manual";
+        config.advertised_endpoints.push_back(std::move(endpoint));
+    }
     if (options.fetch_parallel) {
         config.fetch_max_parallel_requests = *options.fetch_parallel;
     }
@@ -2306,6 +2378,13 @@ std::vector<std::string> build_daemon_arguments(const GlobalOptions& options) {
         args.emplace_back("--advertise-control");
         args.emplace_back(format_advertise_control_argument(*options.advertise_control_host,
                                                             options.advertise_control_port));
+    }
+    if (options.advertise_allow_private) {
+        args.emplace_back("--advertise-allow-private");
+    }
+    if (options.advertise_auto_mode) {
+        args.emplace_back("--advertise-auto");
+        args.emplace_back(std::string(advertise_auto_mode_to_string(*options.advertise_auto_mode)));
     }
     if (options.control_stream_max_bytes) {
         args.emplace_back("--max-store-bytes");
@@ -2843,6 +2922,37 @@ int main(int argc, char** argv) {
                 options.advertise_control_set = true;
                 continue;
             }
+            if (opt == "--advertise-allow-private") {
+                options.advertise_allow_private = true;
+                continue;
+            }
+            if (opt == "--advertise-auto") {
+                if (index >= args.size()) {
+                    throw_cli_error("E_MISSING_ADVERTISE_AUTO",
+                                    "--advertise-auto requires a value (on|off|warn)",
+                                    "Example: --advertise-auto warn");
+                }
+                const auto mode_value = args[index++];
+                ephemeralnet::Config::AdvertiseAutoMode mode;
+                if (!try_parse_advertise_auto_mode(std::string(mode_value), mode)) {
+                    throw_cli_error("E_INVALID_ADVERTISE_AUTO",
+                                    "--advertise-auto accepts only on|off|warn",
+                                    "Example: --advertise-auto warn");
+                }
+                options.advertise_auto_mode = mode;
+                continue;
+            }
+            if (opt.rfind("--advertise-auto=", 0) == 0) {
+                const auto value = opt.substr(std::string("--advertise-auto=").size());
+                ephemeralnet::Config::AdvertiseAutoMode mode;
+                if (!try_parse_advertise_auto_mode(std::string(value), mode)) {
+                    throw_cli_error("E_INVALID_ADVERTISE_AUTO",
+                                    "--advertise-auto accepts only on|off|warn",
+                                    "Example: --advertise-auto warn");
+                }
+                options.advertise_auto_mode = mode;
+                continue;
+            }
             if (opt == "--max-store-bytes") {
                 const auto value = require_value(opt);
                 std::uint64_t limit{};
@@ -2929,7 +3039,7 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        const auto config = build_config(options);
+        auto config = build_config(options);
         ephemeralnet::daemon::set_max_control_stream_bytes(config.control_stream_max_bytes);
 
         if (command == "serve") {
@@ -2945,8 +3055,58 @@ int main(int argc, char** argv) {
             if (!acknowledge_control_exposure(options, config)) {
                 return 1;
             }
+
+            if (config.advertise_auto_mode == ephemeralnet::Config::AdvertiseAutoMode::Off) {
+                config.auto_advertise_candidates.clear();
+                config.auto_advertise_warnings.clear();
+                config.auto_advertise_conflict = false;
+            } else {
+                const auto advertise_discovery =
+                    ephemeralnet::network::discover_control_advertise_candidates(config);
+                config.auto_advertise_candidates = advertise_discovery.candidates;
+                config.auto_advertise_warnings = advertise_discovery.warnings;
+                config.auto_advertise_conflict = advertise_discovery.conflict;
+
+                const bool allow_conflicted_publish =
+                    config.advertise_auto_mode == ephemeralnet::Config::AdvertiseAutoMode::On;
+                const bool promote_candidates =
+                    allow_conflicted_publish || !config.auto_advertise_conflict;
+
+                if (promote_candidates) {
+                    for (const auto& candidate : advertise_discovery.candidates) {
+                        ephemeralnet::Config::AdvertisedEndpoint endpoint{};
+                        endpoint.host = candidate.host;
+                        endpoint.port = candidate.port;
+                        endpoint.manual = false;
+                        endpoint.source = candidate.via;
+                        config.advertised_endpoints.push_back(std::move(endpoint));
+                    }
+                } else if (config.advertise_auto_mode == ephemeralnet::Config::AdvertiseAutoMode::Warn &&
+                           config.auto_advertise_conflict) {
+                    config.auto_advertise_warnings.push_back(
+                        "Auto-advertise endpoints were suppressed because --advertise-auto is set to 'warn' and"
+                        " conflicting candidates were detected.");
+                }
+            }
+
             const auto peer_id = make_peer_id(options);
             ephemeralnet::Node node(peer_id, config);
+
+            if (!config.auto_advertise_warnings.empty()) {
+                for (const auto& warning : config.auto_advertise_warnings) {
+                    std::cout << "[auto-advertise] " << warning << std::endl;
+                }
+                for (const auto& warning : config.auto_advertise_warnings) {
+                    ephemeralnet::daemon::StructuredLogger::FieldList fields{{"warning", warning}};
+                    fields.emplace_back("conflict", config.auto_advertise_conflict ? "1" : "0");
+                    ephemeralnet::daemon::StructuredLogger::instance().log(
+                        ephemeralnet::daemon::StructuredLogger::Level::Warning,
+                        "auto_advertise.warning",
+                        std::move(fields));
+                }
+            }
+
+
 
             std::mutex node_mutex;
             g_shutdown_reason.store(ShutdownReason::None, std::memory_order_release);
@@ -3095,6 +3255,33 @@ int main(int argc, char** argv) {
             std::cout << "  Connected peers:  " << peers << std::endl;
             std::cout << "  Local chunks:     " << chunks << std::endl;
             std::cout << "  Transport port:   " << port << std::endl;
+            bool printed_auto_advertise_header = false;
+            if (const auto warnings_it = response->fields.find("AUTO_ADVERTISE_WARNINGS");
+                warnings_it != response->fields.end() && !warnings_it->second.empty()) {
+                std::cout << "Auto-advertise warnings:" << std::endl;
+                printed_auto_advertise_header = true;
+                std::istringstream warning_stream(warnings_it->second);
+                std::string warning_line;
+                while (std::getline(warning_stream, warning_line)) {
+                    if (warning_line.empty()) {
+                        continue;
+                    }
+                    std::cout << "  - " << warning_line << std::endl;
+                }
+            }
+            bool auto_advertise_conflict = false;
+            if (const auto conflict_it = response->fields.find("AUTO_ADVERTISE_CONFLICT");
+                conflict_it != response->fields.end()) {
+                auto_advertise_conflict = conflict_it->second == "1";
+            }
+            if (auto_advertise_conflict) {
+                if (!printed_auto_advertise_header) {
+                    std::cout << "Auto-advertise warnings:" << std::endl;
+                    printed_auto_advertise_header = true;
+                }
+                std::cout << "  - Conflicting endpoints detected across gateways/interfaces. "
+                          << "Set --advertise-control-host/--advertise-control-port to pin one." << std::endl;
+            }
             print_daemon_hint(*response);
             return 0;
         }
@@ -3159,6 +3346,12 @@ int main(int argc, char** argv) {
             const auto storage_dir = response->fields.contains("STORAGE_DIR") ? response->fields.at("STORAGE_DIR") : std::string("storage");
             const auto fetch_parallel = response->fields.contains("FETCH_MAX_PARALLEL") ? response->fields.at("FETCH_MAX_PARALLEL") : std::string("0");
             const auto upload_parallel = response->fields.contains("UPLOAD_MAX_PARALLEL") ? response->fields.at("UPLOAD_MAX_PARALLEL") : std::string("0");
+            const auto advertise_auto = response->fields.contains("ADVERTISE_AUTO_MODE")
+                                            ? response->fields.at("ADVERTISE_AUTO_MODE")
+                                            : std::string("on");
+            const auto advertise_endpoints = response->fields.contains("ADVERTISE_ENDPOINTS")
+                                                 ? response->fields.at("ADVERTISE_ENDPOINTS")
+                                                 : std::string();
 
             std::cout << "  Default TTL:        " << default_ttl << " seconds" << std::endl;
             std::cout << "  TTL window:         " << min_ttl << "s - " << max_ttl << "s" << std::endl;
@@ -3169,6 +3362,17 @@ int main(int argc, char** argv) {
             std::cout << "  Handshake PoW:      " << handshake_pow << " leading zero bits" << std::endl;
             std::cout << "  Store PoW:          " << store_pow << " leading zero bits" << std::endl;
             std::cout << "  Control endpoint:   " << control_host << ':' << control_port << std::endl;
+            std::cout << "  Advertise auto:     " << advertise_auto << std::endl;
+            if (!advertise_endpoints.empty()) {
+                std::cout << "  Advertised endpoints:" << std::endl;
+                std::istringstream endpoints_stream(advertise_endpoints);
+                std::string line;
+                while (std::getline(endpoints_stream, line)) {
+                    if (!line.empty()) {
+                        std::cout << "    - " << line << std::endl;
+                    }
+                }
+            }
             std::cout << "  Control cap:        " << control_stream_max << " bytes (0 = unlimited)" << std::endl;
             std::cout << "  Persistent storage: "
                       << (storage_persistent == "1" ? "enabled" : "disabled")

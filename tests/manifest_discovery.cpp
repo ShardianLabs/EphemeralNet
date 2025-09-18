@@ -65,5 +65,35 @@ int main() {
     assert(!fallback_manifest.discovery_hints.empty());
     assert(fallback_manifest.discovery_hints.front().endpoint == "198.51.100.5:48080");
 
+    // Explicit advertised endpoint list should preserve insertion order.
+    ephemeralnet::Config multi_endpoint_config{};
+    multi_endpoint_config.control_host = "0.0.0.0";
+    multi_endpoint_config.control_port = 50500;
+    {
+        ephemeralnet::Config::AdvertisedEndpoint manual_endpoint;
+        manual_endpoint.host = "manual.example";
+        manual_endpoint.port = 60500;
+        manual_endpoint.manual = true;
+        manual_endpoint.source = "manual";
+        multi_endpoint_config.advertised_endpoints.push_back(manual_endpoint);
+    }
+    {
+        ephemeralnet::Config::AdvertisedEndpoint auto_endpoint;
+        auto_endpoint.host = "auto.example";
+        auto_endpoint.port = 61500;
+        auto_endpoint.manual = false;
+        auto_endpoint.source = "stun";
+        multi_endpoint_config.advertised_endpoints.push_back(auto_endpoint);
+    }
+
+    ephemeralnet::Node multi_endpoint_node(make_peer_id(0x90), multi_endpoint_config);
+    auto multi_manifest = multi_endpoint_node.store_chunk(make_peer_id(0xA0), make_payload(0xB0), 45s);
+
+    assert(multi_manifest.discovery_hints.size() >= 2);
+    assert(multi_manifest.discovery_hints[0].endpoint == "manual.example:60500");
+    assert(multi_manifest.discovery_hints[0].priority == 0);
+    assert(multi_manifest.discovery_hints[1].endpoint == "auto.example:61500");
+    assert(multi_manifest.discovery_hints[1].priority == 1);
+
     return 0;
 }

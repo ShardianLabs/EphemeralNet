@@ -12,6 +12,19 @@
 namespace ephemeralnet {
 
 struct Config {
+    enum class AdvertiseAutoMode {
+        On,
+        Warn,
+        Off
+    };
+
+    struct AdvertisedEndpoint {
+        std::string host;
+        std::uint16_t port{0};
+        bool manual{false};
+        std::string source;
+    };
+
     std::chrono::seconds default_chunk_ttl{std::chrono::hours(6)};
     std::chrono::seconds announce_interval{std::chrono::minutes(15)};
     std::chrono::seconds cleanup_interval{std::chrono::minutes(5)};
@@ -44,6 +57,18 @@ struct Config {
     std::optional<std::uint32_t> identity_seed{};
     std::optional<std::string> advertise_control_host{};
     std::optional<std::uint16_t> advertise_control_port{};
+    bool advertise_allow_private{false};
+    AdvertiseAutoMode advertise_auto_mode{AdvertiseAutoMode::On};
+    std::vector<AdvertisedEndpoint> advertised_endpoints;
+    struct AdvertiseCandidate {
+        std::string host;
+        std::uint16_t port{0};
+        std::string via;
+        std::vector<std::string> diagnostics;
+    };
+    std::vector<AdvertiseCandidate> auto_advertise_candidates;
+    std::vector<std::string> auto_advertise_warnings;
+    bool auto_advertise_conflict{false};
     std::uint8_t shard_threshold{3};
     std::uint8_t shard_total{5};
     std::chrono::seconds bootstrap_contact_ttl{std::chrono::minutes(15)};

@@ -27,6 +27,7 @@ struct SwarmDistributionPlan {
     std::chrono::steady_clock::time_point last_broadcast{};
     std::vector<std::string> diagnostics;
     std::unordered_set<std::string> delivered_peers;
+    std::unordered_map<std::string, std::vector<std::string>> delivered_endpoints;
 };
 
 struct SwarmPeerLoad {

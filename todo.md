@@ -22,6 +22,9 @@
 - Encrypted chunk request/delivery flow across peers with secure transport and signed acknowledgements.
 - DHT bootstrapping with seed nodes and initial key negotiation.
 - Simulated NAT traversal (UPnP/STUN/hole punching) with telemetry integrated into `Node`.
+- Daemon auto-detects control-plane advertise candidates via UPnP/STUN/HTTPS echo probes at startup.
+- Auto-advertise detection filters private/unroutable endpoints unless operators opt-in via `--control-expose` or `--advertise-allow-private`.
+- Auto-advertise detection preserves all conflicting gateway/interface results and surfaces structured warnings in daemon logs and CLI output.
 - SwarmCoordinator distributes manifests/shards with replication and rebalance plans.
 - Optional persistent on-disk storage with secure TTL-driven wipe.
 - Node CLI exposes `serve`, `store`, `fetch`, and `list` over the `Node` API.
@@ -52,6 +55,11 @@
 - CLI exposes `--version` and an integrated `man` command for quick reference.
 - CLI surfaces configurable key rotation via `--key-rotation`, reports the active interval in `defaults`, and documents TTL/key rotation guardrails for operators.
 - CLI exposes configurable announce rate limiting (interval, burst, window, PoW) with validation, defaults reporting, and documentation updates for operator hardening.
+- CLI/daemon now surface `--advertise-auto=on|warn|off`, persist the merged advertised endpoint list (manual + auto), and print the active mode plus endpoints through `eph defaults` for easier audits.
+- Stored manifests reuse the aggregated advertised endpoint ordering (manual overrides first, auto discoveries next) so downstream bootstrap flows pick consistent priorities; regression tests assert the ordering.
+- Bootstrap gossip now reuses the aggregated advertised endpoint list so bootstrap-only peers immediately learn all routable control-plane contacts, and per-peer deliveries are tracked for diagnostics/tests.
+- Operator runbooks now include concrete port-forwarding and relay troubleshooting checklists plus privacy trade-off guidance so teams can justify how they expose advertised endpoints.
+- CLI reference and status/start flows document the auto-advertise lifecycle, including warning operators when no public endpoint is available and how to troubleshoot.
 - Authored `docs/performance-tuning.md` with sizing recommendations, announce throttle baselines, observability checkpoints, and capacity planning guidance (referenced from README and ops playbooks).
 - Established governance and acceptable-use policy for public bootstrap/STUN infrastructure (`docs/governance-and-aaup.md`) and linked it from operator runbooks.
 - Control-plane daemon emits structured JSON logs and exposes Prometheus-style counters via the `METRICS` command for observability.
@@ -72,26 +80,10 @@
 	- Finalise `ephemeralnet-cli` with diagnostics commands and scripting support.
 	- Prototype an initial `ephemeralnet-GUI` or lightweight admin panel.
 	- Implement a version-check endpoint (JSON hosted on GitHub Pages) and wire an `eph update-check` command.
+	- Auto-infer publicly reachable control endpoints (host/port) the way IPFS publishes its swarm multiaddress: when the daemon binds to `0.0.0.0` and detects a routable address via UPnP/STUN, advertise it automatically (with safety overrides) so zero-config nodes become reachable without manual `--advertise-control-*` flags.
 - **DOCS**
 	- Publish a versioned API reference for developers embedding `libephemeralnet`.
 	- Expand operator runbooks with performance tuning and capacity planning guidance.
 	- Author a contributor guide and code of conduct for the project.
 - **TESTING & VALIDATION**
 	- Schedule manual hostile-network P2P validation (e.g., 4G mobile vs. corporate Wi-Fi segments).
-
-## Auto-advertise detection
-1. **Endpoint discovery primitives**
-	- Integrate UPnP/NAT-PMP probes plus a STUN/HTTPS echo fallback to learn the external IP/port for the control socket when the daemon starts.
-	- Record every successful probe as a candidate endpoint (host + port + transport metadata) without yet mutating manifests.
-2. **Heuristics and safety rails**
-	- Filter out unroutable/private addresses unless the operator explicitly sets `--control-expose` or `--advertise-allow-private`.
-	- Detect conflicting results (multiple gateways/interfaces) and retain them all, but flag the situation in logs/CLI warnings for operator visibility.
-3. **Config surface & overrides**
-	- Extend `Config` to store a list of advertised endpoints (auto-detected + manual) and expose a `--advertise-auto=on|off|warn` toggle so operators can disable or require manual confirmation.
-	- Maintain `--advertise-control` as an override that pins the list to user-supplied values, skipping auto-detection entirely.
-4. **Manifest + bootstrap wiring**
-	- Embed the endpoint list into manifests (preserving order: manual overrides, then auto detections) and update discovery hints/tests accordingly.
-	- Optionally publish the same list into bootstrap gossip so new peers can learn routable contacts without a fresh fetch.
-5. **Operator experience**
-	- Emit structured warnings when no public endpoint can be derived, along with suggested CLI flags.
-	- Update CLI/docs/runbooks to describe the auto-advertise life cycle, privacy trade-offs, and troubleshooting steps (port forwarding, relay setups, disabling the feature).

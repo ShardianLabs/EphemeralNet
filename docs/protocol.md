@@ -70,6 +70,12 @@ Manifests encode chunk metadata and rendezvous instructions:
 
 Manifests are serialized and base64-encoded in the `eph://` URI returned to clients. Version 3 manifests carry the discovery, security, and fallback sections described above. Older readers understand versions 1 and 2 (which omitted these appendices); attempting to load a truncated or tampered version 3 manifest now raises an error because the bootstrap metadata is required for modern clients.
 
+### Bootstrap Gossip
+
+- When a node broadcasts a manifest to bootstrap peers, it now reuses the same prioritized advertised endpoint list (manual overrides first, then vetted auto-detections). The Announce payload delivered to each peer carries every routable control-plane host/port so newcomers can try multiple contacts without re-fetching the manifest.
+- If no custom endpoints are available the daemon falls back to its own externally reachable address, preserving the previous behaviour.
+- The swarm coordinator tracks which peers were notified and which endpoints were delivered, enabling diagnostic tooling and regression tests to assert that gossip remained aligned with the advertised list.
+
 ### Storage Lifecycle
 
 1. **Ingestion**: `STORE` reads the file, computes a `chunk_id`, and writes chunk data to the storage directory (persistent or temp) according to configuration.

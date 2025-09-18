@@ -400,6 +400,38 @@ std::optional<std::pair<std::string, std::uint16_t>> parse_endpoint(const std::s
 
 }  // namespace
 
+std::vector<Node::ControlEndpoint> Node::preferred_control_endpoints() const {
+    std::vector<ControlEndpoint> endpoints;
+    endpoints.reserve(config_.advertised_endpoints.size() + 1);
+    std::unordered_set<std::string> seen;
+
+    auto append = [&](const std::string& host, std::uint16_t port) {
+        if (host.empty() || port == 0) {
+            return;
+        }
+        if (host == "0.0.0.0") {
+            return;
+        }
+        const auto key = host + ":" + std::to_string(port);
+        if (seen.insert(key).second) {
+            endpoints.push_back(ControlEndpoint{host, port});
+        }
+    };
+
+    if (!config_.advertised_endpoints.empty()) {
+        for (const auto& endpoint : config_.advertised_endpoints) {
+            const auto port = endpoint.port != 0 ? endpoint.port : config_.control_port;
+            append(endpoint.host, port);
+        }
+    } else if (config_.advertise_control_host.has_value()) {
+        append(*config_.advertise_control_host, config_.advertise_control_port.value_or(config_.control_port));
+    } else if (!config_.control_host.empty()) {
+        append(config_.control_host, config_.control_port);
+    }
+
+    return endpoints;
+}
+
 void Node::schedule_assigned_fetch(const protocol::AnnouncePayload& payload) {
     if (payload.assigned_shards.empty()) {
         return;
@@ -1408,14 +1440,28 @@ protocol::Manifest Node::store_chunk(const ChunkId& chunk_id,
         }
     };
 
-    if (config_.advertise_control_host.has_value()) {
-        const auto advertise_port = config_.advertise_control_port.value_or(config_.control_port);
-        try_add_endpoint(*config_.advertise_control_host, advertise_port, 0);
-    } else if (!config_.control_host.empty() && config_.control_host != "0.0.0.0") {
-        try_add_endpoint(config_.control_host, config_.control_port, 0);
+    auto next_priority = std::uint8_t{0};
+    auto take_priority = [&]() {
+        const auto current = next_priority;
+        if (next_priority < std::numeric_limits<std::uint8_t>::max()) {
+            ++next_priority;
+        }
+        return current;
+    };
+
+    const auto append_advertised_endpoint = [&](const std::string& host, std::uint16_t port) {
+        if (host.empty() || port == 0) {
+            return;
+        }
+        try_add_endpoint(host, port, take_priority());
+    };
+
+    const auto control_endpoints = preferred_control_endpoints();
+    for (const auto& endpoint : control_endpoints) {
+        append_advertised_endpoint(endpoint.host, endpoint.port);
     }
 
-    std::uint8_t hint_priority = 1;
+    std::uint8_t hint_priority = next_priority == 0 ? 1 : next_priority;
     for (const auto& bootstrap : config_.bootstrap_nodes) {
         try_add_endpoint(bootstrap.host, bootstrap.port, hint_priority);
         if (hint_priority < std::numeric_limits<std::uint8_t>::max()) {
@@ -2145,6 +2191,10 @@ void Node::update_swarm_plan(const protocol::Manifest& manifest) {
             const auto peer_key = peer_id_to_string(assignment.peer.id);
             if (existing->second.delivered_peers.contains(peer_key)) {
                 plan.delivered_peers.insert(peer_key);
+                if (const auto delivered_it = existing->second.delivered_endpoints.find(peer_key);
+                    delivered_it != existing->second.delivered_endpoints.end()) {
+                    plan.delivered_endpoints[peer_key] = delivered_it->second;
+                }
             }
         }
         plan.last_broadcast = existing->second.last_broadcast;
@@ -2210,8 +2260,19 @@ void Node::broadcast_manifest(const protocol::Manifest& manifest) {
 
     auto& plan = plan_it->second;
 
-    const auto endpoint = self_endpoint();
-    if (endpoint.empty()) {
+    std::vector<std::string> gossip_endpoints;
+    const auto control_endpoints = preferred_control_endpoints();
+    gossip_endpoints.reserve(control_endpoints.size());
+    for (const auto& endpoint : control_endpoints) {
+        gossip_endpoints.push_back(endpoint.host + ":" + std::to_string(endpoint.port));
+    }
+    if (gossip_endpoints.empty()) {
+        const auto fallback = self_endpoint();
+        if (!fallback.empty()) {
+            gossip_endpoints.push_back(fallback);
+        }
+    }
+    if (gossip_endpoints.empty()) {
         return;
     }
 
@@ -2229,7 +2290,17 @@ void Node::broadcast_manifest(const protocol::Manifest& manifest) {
         if (plan.delivered_peers.contains(peer_key)) {
             continue;
         }
-        if (deliver_manifest(manifest, assignment, manifest_uri, *ttl_opt, endpoint)) {
+        bool delivered = false;
+        for (const auto& endpoint : gossip_endpoints) {
+            if (deliver_manifest(manifest, assignment, manifest_uri, *ttl_opt, endpoint)) {
+                delivered = true;
+                auto& recorded = plan.delivered_endpoints[peer_key];
+                if (std::find(recorded.begin(), recorded.end(), endpoint) == recorded.end()) {
+                    recorded.push_back(endpoint);
+                }
+            }
+        }
+        if (delivered) {
             plan.delivered_peers.insert(peer_key);
             any_delivered = true;
         }

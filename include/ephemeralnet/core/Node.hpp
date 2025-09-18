@@ -111,6 +111,11 @@ public:
 private:
     friend class test::NodeTestAccess;
 
+    struct ControlEndpoint {
+        std::string host;
+        std::uint16_t port{0};
+    };
+
     PeerId id_{};
     Config config_{};
     ChunkStore chunk_store_;
@@ -258,6 +263,7 @@ private:
     bool announce_sender_locked(const PeerId& peer_id, std::chrono::steady_clock::time_point now);
     void record_announce_failure(const PeerId& peer_id, std::chrono::steady_clock::time_point now);
     void clear_announce_failures(const PeerId& peer_id);
+    std::vector<ControlEndpoint> preferred_control_endpoints() const;
 };
 
 }  

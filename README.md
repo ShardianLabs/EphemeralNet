@@ -14,6 +14,7 @@ EphemeralNet is an ephemeral P2P filesystem written in C++ that focuses on shari
 - **Session key rotation**: a session manager refreshes derived keys via HMAC-SHA256.
 - **Handshake and reputation**: simplified Diffie-Hellman handshake with per-peer reputation tracking.
 - **Control-plane proof-of-work**: handshake and store operations enforce configurable PoW to discourage spam and Sybil abuse.
+- **Bootstrap gossip hints**: manifest broadcasts share the ordered set of advertised control endpoints so bootstrap-only peers immediately learn multiple routable contacts.
 - **TTL auditing**: consistent reports that surface expirations pending in local storage and the DHT.
 - **Cleanup coordination**: synchronises local expirations with automatic announcement withdrawal and emits notifications.
 - **Secure transport**: ChaCha20-encrypted TCP sessions replace the simulated manager and unlock peer-to-peer messaging.

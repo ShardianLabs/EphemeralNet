@@ -30,6 +30,7 @@ Run the client as `eph [global options] <command> [command options]`. Global opt
 | `--control-loopback` | Force the control plane to stay on `127.0.0.1`. | Overrides any profile/default that points at a non-loopback host. |
 | `--control-port <port>` | TCP port for the control plane. | 1–65535; default `47777`. |
 | `--control-token <secret>` | Shared secret for control auth. | Whitespace not allowed. |
+| `--advertise-auto <on|off|warn>` | Controls how auto-discovered control endpoints are published. | `on` publishes every candidate, `warn` suppresses conflicted candidates but still logs them, `off` disables auto-advertise entirely. |
 | `--max-store-bytes <bytes>` | Control-plane upload cap. | `0` disables the cap; default `33554432`. |
 | `--fetch-parallel <0-65535>` | Concurrent fetch operations. | `0` = unlimited. |
 | `--upload-parallel <0-65535>` | Concurrent upload operations. | `0` = unlimited. |
@@ -114,6 +115,9 @@ Query runtime state (peer count, chunk count, transport port).
 - Example:
   ```bash
   eph --control-host 10.0.0.5 --control-port 47777 status
+- Behavioural notes:
+  - When auto-advertise reports filtered or conflicting endpoints the CLI prints them under the summary so operators can pin an explicit `--advertise-control-host/--advertise-control-port` pair.
+  - `eph defaults` surfaces the current `--advertise-auto` mode and the manifest endpoint list so you can verify what will be published downstream.
 - Required argument: path to a regular file.
 - Command options:
   - `--ttl <seconds>`: Override the daemon default TTL for this upload.

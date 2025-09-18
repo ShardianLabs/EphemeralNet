@@ -29,6 +29,7 @@ add_library(ephemeralnet_core
     src/crypto/Shamir.cpp
     src/security/StoreProof.cpp
     src/network/NatTraversal.cpp
+    src/network/AdvertiseDiscovery.cpp
     src/core/SwarmCoordinator.cpp
     src/protocol/Manifest.cpp
     src/protocol/Message.cpp
@@ -579,6 +580,23 @@ if(EPHEMERALNET_BUILD_TESTS)
 
     add_test(NAME EphemeralNet.Bootstrap COMMAND ephemeralnet_bootstrap_tests)
 
+    add_executable(ephemeralnet_bootstrap_gossip_tests
+        tests/bootstrap_gossip.cpp
+    )
+
+    target_link_libraries(ephemeralnet_bootstrap_gossip_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_bootstrap_gossip_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_bootstrap_gossip_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.BootstrapGossip COMMAND ephemeralnet_bootstrap_gossip_tests)
+
     add_executable(ephemeralnet_nat_traversal_tests
         tests/nat_traversal.cpp
     )
@@ -595,6 +613,23 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.NatTraversal COMMAND ephemeralnet_nat_traversal_tests)
+
+    add_executable(ephemeralnet_advertise_discovery_tests
+        tests/advertise_discovery.cpp
+    )
+
+    target_link_libraries(ephemeralnet_advertise_discovery_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_advertise_discovery_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_advertise_discovery_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.AdvertiseDiscovery COMMAND ephemeralnet_advertise_discovery_tests)
 
     add_executable(ephemeralnet_nat_node_tests
         tests/nat_node.cpp

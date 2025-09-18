@@ -6,6 +6,7 @@
 #include <chrono>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ephemeralnet::test {
@@ -17,6 +18,7 @@ public:
         bool self_leecher{false};
         std::vector<std::string> seeds;
         std::vector<std::string> leechers;
+        std::unordered_map<std::string, std::vector<std::string>> delivered_endpoints;
     };
 
     static void handle_announce(Node& node,
@@ -134,6 +136,9 @@ public:
             snapshot.leechers.assign(ledger->leechers.begin(), ledger->leechers.end());
             std::sort(snapshot.seeds.begin(), snapshot.seeds.end());
             std::sort(snapshot.leechers.begin(), snapshot.leechers.end());
+        }
+        if (const auto plan = swarm_plan(node, chunk_id)) {
+            snapshot.delivered_endpoints = plan->delivered_endpoints;
         }
         return snapshot;
     }
