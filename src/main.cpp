@@ -112,6 +112,7 @@ struct GlobalOptions {
 
 std::string trim(std::string value);
 std::string to_lower(std::string value);
+std::string strip_quotes(std::string value);
 
 bool try_parse_advertise_auto_mode(std::string value,
                                    ephemeralnet::Config::AdvertiseAutoMode& mode) {
@@ -3071,15 +3072,33 @@ int main(int argc, char** argv) {
                     config.advertise_auto_mode == ephemeralnet::Config::AdvertiseAutoMode::On;
                 const bool promote_candidates =
                     allow_conflicted_publish || !config.auto_advertise_conflict;
+                const bool binding_wildcard = config.control_host == "0.0.0.0";
+                const bool has_manual_advertised_endpoints = !config.advertised_endpoints.empty();
+                const bool should_infer_public_endpoint = binding_wildcard && !has_manual_advertised_endpoints;
+
+                auto append_advertised_endpoint = [&](const ephemeralnet::Config::AdvertiseCandidate& candidate) {
+                    ephemeralnet::Config::AdvertisedEndpoint endpoint{};
+                    endpoint.host = candidate.host;
+                    endpoint.port = candidate.port;
+                    endpoint.manual = false;
+                    endpoint.source = candidate.via;
+                    config.advertised_endpoints.push_back(std::move(endpoint));
+                };
 
                 if (promote_candidates) {
-                    for (const auto& candidate : advertise_discovery.candidates) {
-                        ephemeralnet::Config::AdvertisedEndpoint endpoint{};
-                        endpoint.host = candidate.host;
-                        endpoint.port = candidate.port;
-                        endpoint.manual = false;
-                        endpoint.source = candidate.via;
-                        config.advertised_endpoints.push_back(std::move(endpoint));
+                    if (should_infer_public_endpoint) {
+                        if (const auto inferred =
+                                ephemeralnet::network::select_public_advertise_candidate(advertise_discovery)) {
+                            append_advertised_endpoint(*inferred);
+                        } else {
+                            config.auto_advertise_warnings.push_back(
+                                "Auto-advertise: bound to 0.0.0.0 but no public control endpoint was discovered via UPnP/STUN."
+                                " Configure port forwarding or set --advertise-control explicitly.");
+                        }
+                    } else {
+                        for (const auto& candidate : advertise_discovery.candidates) {
+                            append_advertised_endpoint(candidate);
+                        }
                     }
                 } else if (config.advertise_auto_mode == ephemeralnet::Config::AdvertiseAutoMode::Warn &&
                            config.auto_advertise_conflict) {

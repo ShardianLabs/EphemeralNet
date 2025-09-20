@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <random>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -222,6 +223,19 @@ AdvertiseDiscoveryResult discover_control_advertise_candidates(const Config& con
     }
 
     return result;
+}
+
+std::optional<Config::AdvertiseCandidate> select_public_advertise_candidate(const AdvertiseDiscoveryResult& result) {
+    constexpr std::array<std::string_view, 2> kPreferredMethods{"upnp", "stun"};
+    for (const auto& method : kPreferredMethods) {
+        const auto it = std::find_if(result.candidates.begin(), result.candidates.end(), [&](const Config::AdvertiseCandidate& candidate) {
+            return candidate.via == method;
+        });
+        if (it != result.candidates.end()) {
+            return *it;
+        }
+    }
+    return std::nullopt;
 }
 
 }  // namespace ephemeralnet::network

@@ -19,6 +19,7 @@ using ephemeralnet::network::NatTraversalManager;
 using ephemeralnet::network::NatTraversalResult;
 using ephemeralnet::network::AdvertiseDiscoveryResult;
 using ephemeralnet::network::discover_control_advertise_candidates;
+using ephemeralnet::network::select_public_advertise_candidate;
 
 std::optional<std::uint32_t> find_seed_matching(const Config& base,
                                                 const std::function<bool(const NatTraversalResult&)>& predicate,
@@ -98,6 +99,56 @@ int main() {
         assert(has_https_echo);
         assert(result.conflict);
         assert(!result.warnings.empty());
+    }
+
+    {
+        AdvertiseDiscoveryResult synthetic;
+        Config::AdvertiseCandidate https{};
+        https.host = "198.51.100.4";
+        https.port = 41000;
+        https.via = "https-echo";
+        synthetic.candidates.push_back(https);
+
+        Config::AdvertiseCandidate stun{};
+        stun.host = "203.0.113.9";
+        stun.port = 41000;
+        stun.via = "stun";
+        synthetic.candidates.push_back(stun);
+
+        Config::AdvertiseCandidate upnp{};
+        upnp.host = "203.0.113.9";
+        upnp.port = 41000;
+        upnp.via = "upnp";
+        synthetic.candidates.push_back(upnp);
+
+        const auto candidate = select_public_advertise_candidate(synthetic);
+        assert(candidate.has_value());
+        assert(candidate->via == "upnp");
+    }
+
+    {
+        AdvertiseDiscoveryResult synthetic;
+        Config::AdvertiseCandidate stun{};
+        stun.host = "203.0.113.20";
+        stun.port = 42000;
+        stun.via = "stun";
+        synthetic.candidates.push_back(stun);
+
+        const auto candidate = select_public_advertise_candidate(synthetic);
+        assert(candidate.has_value());
+        assert(candidate->via == "stun");
+    }
+
+    {
+        AdvertiseDiscoveryResult synthetic;
+        Config::AdvertiseCandidate https{};
+        https.host = "198.51.100.10";
+        https.port = 41000;
+        https.via = "https-echo";
+        synthetic.candidates.push_back(https);
+
+        const auto candidate = select_public_advertise_candidate(synthetic);
+        assert(!candidate.has_value());
     }
 
     return 0;

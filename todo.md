@@ -25,6 +25,7 @@
 - Daemon auto-detects control-plane advertise candidates via UPnP/STUN/HTTPS echo probes at startup.
 - Auto-advertise detection filters private/unroutable endpoints unless operators opt-in via `--control-expose` or `--advertise-allow-private`.
 - Auto-advertise detection preserves all conflicting gateway/interface results and surfaces structured warnings in daemon logs and CLI output.
+- Control-plane auto-inference promotes the first UPnP/STUN candidate whenever the daemon binds to `0.0.0.0`, so zero-config nodes become reachable without manual `--advertise-control` flags (still honouring `--advertise-auto`).
 - SwarmCoordinator distributes manifests/shards with replication and rebalance plans.
 - Optional persistent on-disk storage with secure TTL-driven wipe.
 - Node CLI exposes `serve`, `store`, `fetch`, and `list` over the `Node` API.
@@ -80,7 +81,6 @@
 	- Finalise `ephemeralnet-cli` with diagnostics commands and scripting support.
 	- Prototype an initial `ephemeralnet-GUI` or lightweight admin panel.
 	- Implement a version-check endpoint (JSON hosted on GitHub Pages) and wire an `eph update-check` command.
-	- Auto-infer publicly reachable control endpoints (host/port) the way IPFS publishes its swarm multiaddress: when the daemon binds to `0.0.0.0` and detects a routable address via UPnP/STUN, advertise it automatically (with safety overrides) so zero-config nodes become reachable without manual `--advertise-control-*` flags.
 - **DOCS**
 	- Publish a versioned API reference for developers embedding `libephemeralnet`.
 	- Expand operator runbooks with performance tuning and capacity planning guidance.
