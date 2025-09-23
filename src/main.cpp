@@ -309,9 +309,8 @@ std::string format_bytes(std::size_t bytes) {
     return oss.str();
 }
 
-struct FetchBootstrapOptions {
-    bool enabled{true};
-    bool bootstrap_only{false};
+struct FetchDiscoveryOptions {
+    bool direct_only{false};
     bool auto_token{true};
     std::uint64_t max_attempts{250'000};
     std::optional<std::string> token_override{};
@@ -367,7 +366,7 @@ std::string format_advertise_control_argument(const std::string& host,
 
 std::optional<std::string> compute_bootstrap_token(const protocol::Manifest& manifest,
                                                    const protocol::DiscoveryHint& hint,
-                                                   const FetchBootstrapOptions& options) {
+                                                   const FetchDiscoveryOptions& options) {
     if (options.token_override.has_value()) {
         return options.token_override;
     }
@@ -1747,10 +1746,8 @@ void print_fetch_usage() {
               << "Download a manifest's payload to a specific file or directory (defaults to the current directory when omitted).\n"
               << "Options:\n"
               << "  --out <path>                  Destination file or directory (default: current dir).\n"
-              << "  --bootstrap                  Legacy alias; manifest discovery now happens automatically on failures.\n"
-              << "  --bootstrap-only             Skip contacting the local daemon and use manifest discovery exclusively.\n"
-              << "  --no-bootstrap               Disable manifest discovery and rely solely on the local daemon.\n"
-              << "  --bootstrap-token <value>    Provide a precomputed PoW token for remote bootstrap nodes.\n"
+              << "  --direct-only                Only use discovery hints/fallbacks; skip DHT/swarm fallback.\n"
+              << "  --bootstrap-token <value>    Provide a precomputed PoW token for direct discovery endpoints.\n"
               << "  --bootstrap-max-attempts <n> Limit PoW search iterations when solving tokens automatically.\n"
               << "  --no-bootstrap-auto-token    Disable automatic PoW solving (requires --bootstrap-token)." << std::endl;
 }
@@ -1802,7 +1799,7 @@ void print_manual() {
               << "    --control-port <port>  Control socket port.\n"
               << "    --control-token <tok>  Control-plane authentication token.\n"
               << "    --advertise-control <ep>\n"
-              << "                          Host[:port] embedded into manifests for bootstrap fetches.\n"
+              << "                          Host[:port] embedded into manifests for direct fetches.\n"
               << "    --max-store-bytes <n>  Control-plane upload cap in bytes (0 = unlimited).\n"
               << "    --fetch-parallel <n>   Fetch concurrency (0 = unlimited).\n"
               << "    --upload-parallel <n>  Upload concurrency (0 = unlimited).\n"
@@ -3637,9 +3634,7 @@ int main(int argc, char** argv) {
             }
 
             std::optional<std::filesystem::path> output_spec;
-            FetchBootstrapOptions bootstrap_options{};
-            bool bootstrap_only_requested = false;
-            bool bootstrap_disable_requested = false;
+            FetchDiscoveryOptions discovery_options{};
             while (index < args.size()) {
                 const auto& opt = args[index];
                 if (opt == "--out") {
@@ -3657,32 +3652,8 @@ int main(int argc, char** argv) {
                     output_spec = std::filesystem::absolute(std::filesystem::path(args[index++]));
                     continue;
                 }
-                if (opt == "--bootstrap") {
-                    bootstrap_options.enabled = true;
-                    ++index;
-                    continue;
-                }
-                if (opt == "--bootstrap-only") {
-                    if (bootstrap_disable_requested) {
-                        throw_cli_error("E_FETCH_BOOTSTRAP_CONFLICT",
-                                        "--bootstrap-only cannot be combined with --no-bootstrap",
-                                        "Remove --no-bootstrap to allow manifest discovery");
-                    }
-                    bootstrap_options.enabled = true;
-                    bootstrap_options.bootstrap_only = true;
-                    bootstrap_only_requested = true;
-                    ++index;
-                    continue;
-                }
-                if (opt == "--no-bootstrap") {
-                    if (bootstrap_only_requested) {
-                        throw_cli_error("E_FETCH_BOOTSTRAP_CONFLICT",
-                                        "--no-bootstrap cannot be combined with --bootstrap-only",
-                                        "Choose either automatic discovery or local-only fetches");
-                    }
-                    bootstrap_options.enabled = false;
-                    bootstrap_options.bootstrap_only = false;
-                    bootstrap_disable_requested = true;
+                if (opt == "--direct-only") {
+                    discovery_options.direct_only = true;
                     ++index;
                     continue;
                 }
@@ -3693,8 +3664,7 @@ int main(int argc, char** argv) {
                                         "--bootstrap-token expects a value",
                                         "Example: --bootstrap-token 123456");
                     }
-                    bootstrap_options.enabled = true;
-                    bootstrap_options.token_override = args[index++];
+                    discovery_options.token_override = args[index++];
                     continue;
                 }
                 if (opt == "--bootstrap-max-attempts") {
@@ -3710,14 +3680,12 @@ int main(int argc, char** argv) {
                                         "--bootstrap-max-attempts must be a positive integer",
                                         "Set a value greater than zero (default 250000)");
                     }
-                    bootstrap_options.enabled = true;
-                    bootstrap_options.max_attempts = attempts;
+                    discovery_options.max_attempts = attempts;
                     ++index;
                     continue;
                 }
                 if (opt == "--no-bootstrap-auto-token") {
-                    bootstrap_options.enabled = true;
-                    bootstrap_options.auto_token = false;
+                    discovery_options.auto_token = false;
                     ++index;
                     continue;
                 }
@@ -3894,20 +3862,38 @@ int main(int argc, char** argv) {
                 return response;
             };
 
-            auto attempt_bootstrap_fetch = [&](const protocol::Manifest& manifest) -> bool {
-                if (!bootstrap_options.enabled) {
-                    return false;
+            auto format_direct_attempt_log = [](const std::vector<BootstrapAttemptLog>& entries) -> std::string {
+                if (entries.empty()) {
+                    return {};
                 }
-                if (manifest.discovery_hints.empty()) {
-                    throw_cli_error("E_FETCH_BOOTSTRAP_NO_HINTS",
-                                    "Manifest does not carry discovery hints",
-                                    "Store the payload with a daemon that advertises remote discovery metadata");
+                std::ostringstream oss;
+                oss << "Direct discovery exhausted:";
+                for (const auto& entry : entries) {
+                    oss << "\n  - " << (entry.endpoint.empty() ? std::string{"<unknown>"} : entry.endpoint)
+                        << ": " << entry.message;
+                }
+                return oss.str();
+            };
+
+            struct DirectFetchOutcome {
+                bool attempted{false};
+                bool success{false};
+                bool had_hints{false};
+                std::vector<BootstrapAttemptLog> logs;
+            };
+
+            auto attempt_direct_fetch = [&](const protocol::Manifest& manifest) -> DirectFetchOutcome {
+                DirectFetchOutcome outcome{};
+                outcome.had_hints = !manifest.discovery_hints.empty() || !manifest.fallback_hints.empty();
+                if (!outcome.had_hints) {
+                    return outcome;
                 }
 
                 std::vector<BootstrapAttemptLog> attempt_log;
                 auto attempt_control_hint = [&](const protocol::DiscoveryHint& hint,
                                                 const std::string& label,
                                                 bool from_fallback) -> bool {
+                    outcome.attempted = true;
                     const std::string friendly_label = label.empty() ? hint.endpoint : label;
                     if (hint.transport != "control") {
                         attempt_log.push_back({friendly_label, "Unsupported transport for this build"});
@@ -3922,7 +3908,7 @@ int main(int argc, char** argv) {
                     const auto& [host, port] = *parsed;
                     const auto endpoint_desc = describe_endpoint(host, port);
 
-                    const auto token_value = compute_bootstrap_token(manifest, hint, bootstrap_options);
+                    const auto token_value = compute_bootstrap_token(manifest, hint, discovery_options);
                     if (manifest.security.token_challenge_bits > 0 && !token_value.has_value()) {
                         attempt_log.push_back({friendly_label,
                                                "Token challenge not satisfied. Provide --bootstrap-token or enable auto solving."});
@@ -3943,10 +3929,12 @@ int main(int argc, char** argv) {
                     std::string error_text;
                     const auto response = perform_fetch_request(remote_client,
                                                                 request_fields,
-                                                                from_fallback ? "Fallback download" : "Bootstrap download",
+                                                                from_fallback ? "Fallback download" : "Direct download",
                                                                 &error_text);
                     if (!response) {
-                        attempt_log.push_back({friendly_label, error_text});
+                        attempt_log.push_back({friendly_label,
+                                               error_text.empty() ? std::string{"Remote control endpoint unreachable"}
+                                                                  : error_text});
                         return false;
                     }
                     if (!response->success) {
@@ -3961,9 +3949,11 @@ int main(int argc, char** argv) {
                     if (from_fallback) {
                         std::cout << "Fallback fetch succeeded via " << endpoint_desc << std::endl;
                     } else {
-                        std::cout << "Bootstrap fetch succeeded via " << endpoint_desc << std::endl;
+                        std::cout << "Direct fetch succeeded via " << endpoint_desc << std::endl;
                     }
                     print_daemon_hint(*response);
+                    outcome.success = true;
+                    outcome.logs = attempt_log;
                     return true;
                 };
 
@@ -3973,7 +3963,7 @@ int main(int argc, char** argv) {
                 });
                 for (const auto& hint : ordered_hints) {
                     if (attempt_control_hint(hint, hint.endpoint, false)) {
-                        return true;
+                        return outcome;
                     }
                 }
 
@@ -3994,75 +3984,92 @@ int main(int argc, char** argv) {
                         synthetic.endpoint = describe_endpoint(parsed->first, parsed->second);
                         synthetic.priority = fallback.priority;
                         if (attempt_control_hint(synthetic, fallback.uri, true)) {
-                            return true;
+                            return outcome;
                         }
                     }
                 }
 
-                std::ostringstream oss;
-                oss << "Bootstrap discovery exhausted:";
-                for (const auto& entry : attempt_log) {
-                    oss << "\n  - " << (entry.endpoint.empty() ? std::string{"<unknown>"} : entry.endpoint)
-                        << ": " << entry.message;
-                }
-                throw_cli_error("E_FETCH_BOOTSTRAP_FAILED",
-                                oss.str(),
-                                "Provide --bootstrap-token or configure reachable discovery hints");
-                return false; // Unreachable, but keeps compilers satisfied.
+                outcome.logs = std::move(attempt_log);
+                return outcome;
             };
 
-            bool require_bootstrap = bootstrap_options.bootstrap_only;
-            std::string local_error;
+            if (discovery_options.direct_only && !decoded_manifest.has_value()) {
+                throw_cli_error("E_FETCH_DIRECT_ONLY_MANIFEST",
+                                "Manifest decoding failed; direct-only fetch cannot proceed",
+                                "Retry with the original eph:// URI or omit --direct-only.");
+            }
 
-            if (!bootstrap_options.bootstrap_only) {
-                const auto response = perform_fetch_request(client, base_fields, "Downloading", &local_error);
-                if (!response) {
-                    if (!bootstrap_options.enabled) {
-                        throw_daemon_unreachable();
-                    }
-                    if (local_error.empty()) {
-                        local_error = "Local daemon unreachable";
-                    }
-                    require_bootstrap = true;
-                } else if (!response->success) {
-                    if (!bootstrap_options.enabled) {
-                        print_daemon_failure(*response);
-                        return 1;
-                    }
-                    const auto message_it = response->fields.find("MESSAGE");
-                    if (message_it != response->fields.end() && !message_it->second.empty()) {
-                        local_error = message_it->second;
-                    }
-                    print_daemon_failure(*response);
-                    require_bootstrap = true;
-                } else {
-                    finalize_fetch(*response);
-                    print_daemon_hint(*response);
+            std::optional<DirectFetchOutcome> direct_outcome;
+            if (decoded_manifest.has_value()) {
+                direct_outcome = attempt_direct_fetch(*decoded_manifest);
+                if (direct_outcome->success) {
                     return 0;
+                }
+                if (direct_outcome->had_hints && direct_outcome->attempted && !direct_outcome->logs.empty()) {
+                    const auto summary = format_direct_attempt_log(direct_outcome->logs);
+                    if (!summary.empty()) {
+                        std::cout << summary << std::endl;
+                        std::cout << "Falling back to swarm discovery via the local daemon..." << std::endl;
+                    }
+                } else if (direct_outcome->had_hints && !direct_outcome->attempted) {
+                    std::cout << "Discovery hints were present but could not be attempted; falling back to swarm discovery." << std::endl;
+                } else if (!direct_outcome->had_hints) {
+                    std::cout << "Manifest lacks discovery hints; falling back to swarm discovery." << std::endl;
                 }
             }
 
-            if (require_bootstrap) {
-                if (!bootstrap_options.enabled) {
-                    throw_cli_error("E_FETCH_FAILED",
-                                    "Fetch request failed",
-                                    "Automatic bootstrap was disabled (--no-bootstrap); ensure the local daemon is reachable");
+            if (discovery_options.direct_only) {
+                if (!direct_outcome.has_value() || !direct_outcome->had_hints) {
+                    throw_cli_error("E_FETCH_DIRECT_ONLY_NO_HINTS",
+                                    "Manifest does not contain discovery hints or fallbacks",
+                                    "Store the payload from a node that advertises discovery metadata or remove --direct-only.");
                 }
-                if (!decoded_manifest.has_value()) {
-                    throw_cli_error("E_FETCH_BOOTSTRAP_UNAVAILABLE",
-                                    "Manifest decoding failed; automatic bootstrap could not start",
-                                    "Retry with the original eph:// URI or disable bootstrap via --no-bootstrap");
+                const auto summary = format_direct_attempt_log(direct_outcome->logs);
+                throw_cli_error("E_FETCH_DIRECT_FAILED",
+                                "Direct discovery did not reach the publishing peer",
+                                summary.empty() ? std::string{"Verify port forwarding or relay availability before retrying."}
+                                                : summary);
+            }
+
+            std::string local_error;
+            const auto local_response = perform_fetch_request(client, base_fields, "Downloading", &local_error);
+            if (local_response && local_response->success) {
+                finalize_fetch(*local_response);
+                print_daemon_hint(*local_response);
+                return 0;
+            }
+
+            if (local_response && !local_response->success) {
+                const auto message_it = local_response->fields.find("MESSAGE");
+                if (message_it != local_response->fields.end() && !message_it->second.empty()) {
+                    local_error = message_it->second;
                 }
-                if (attempt_bootstrap_fetch(*decoded_manifest)) {
-                    return 0;
+                print_daemon_failure(*local_response);
+            } else if (!local_response && local_error.empty()) {
+                local_error = "Local daemon unreachable";
+            }
+
+            std::string hint = local_error;
+            if (direct_outcome.has_value()) {
+                if (!direct_outcome->had_hints) {
+                    if (!hint.empty()) {
+                        hint += "\n";
+                    }
+                    hint += "Manifest does not contain discovery hints.";
+                } else if (!direct_outcome->logs.empty()) {
+                    const auto summary = format_direct_attempt_log(direct_outcome->logs);
+                    if (!summary.empty()) {
+                        if (!hint.empty()) {
+                            hint += "\n";
+                        }
+                        hint += summary;
+                    }
                 }
             }
 
             throw_cli_error("E_FETCH_FAILED",
                             "Fetch request failed",
-                            local_error.empty()
-                                ? "Bootstrap discovery did not yield any reachable peers"
-                                : local_error);
+                            hint.empty() ? std::string{"Check the daemon logs for additional details."} : hint);
         }
 
         throw_cli_error("E_UNKNOWN_COMMAND",

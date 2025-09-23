@@ -51,24 +51,24 @@ Retrieve a manifest payload to a local file or directory. When the local daemon 
 - Required argument: `eph://…` manifest URI.
 - Command options:
   - `--out <path>`: Destination file or directory. Defaults to `--fetch-default-dir` or the current directory.
-  - `--bootstrap`: Enable manifest discovery hints whenever the local daemon is unreachable (still tries the local daemon first).
-  - `--bootstrap-only`: Skip the local daemon entirely and use manifest discovery/fallback hints.
-  - `--bootstrap-token <value>`: Provide a precomputed PoW token when bootstrap endpoints demand one. Useful for air-gapped token solvers.
+  - `--direct-only`: Use discovery hints/fallbacks exclusively. Skips the local daemon/DHT fallback.
+  - `--bootstrap-token <value>`: Provide a precomputed PoW token when discovery endpoints demand one. Useful for air-gapped token solvers.
   - `--bootstrap-max-attempts <n>`: Cap the number of nonce attempts when auto-solving PoW tokens (default `250000`).
   - `--no-bootstrap-auto-token`: Disable automatic PoW solving. Use with `--bootstrap-token` when you want to supply your own nonce.
 
 Behavioural notes:
 
 - Without `--out`, the CLI picks a filename from manifest metadata (`filename` key) or falls back to `chunk_<timestamp>`.
-- With `--bootstrap` enabled, the CLI iterates the manifest's discovery hints (sorted by priority) and contacts remote control endpoints using the built-in PoW solver when necessary.
+- Fetch now always attempts discovery hints/fallbacks first (sorted by priority). If none succeed, the CLI falls back to the local daemon, which in turn leverages the swarm/DHT.
 - Fallback hints that reference `control://host:port` are attempted after discovery hints fail; other URI schemes currently log an informative error.
-- Progress is displayed per attempt ("Downloading", "Bootstrap download", or "Fallback download").
+- `--direct-only` skips the swarm fallback entirely—handy for air-gapped restores or when you intentionally avoid the public DHT.
+- Progress is displayed per attempt ("Direct download", "Fallback download", or "Downloading" when the daemon streams the result).
 - Remote responses surface daemon-provided hints/codes to aid troubleshooting.
 
-Example fetching via bootstrap-only mode into a downloads directory (auto PoW solving is enabled by default):
+Example forcing direct-only mode into a downloads directory (auto PoW solving is enabled by default):
 
 ```powershell
-eph fetch eph://AAAA... --bootstrap-only --out "$env:USERPROFILE\Downloads"
+eph fetch eph://AAAA... --direct-only --out "$env:USERPROFILE\Downloads"
 ```
 
 ## Derived usage patterns

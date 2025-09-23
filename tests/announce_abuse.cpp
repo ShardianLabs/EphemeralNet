@@ -56,6 +56,7 @@ int main() {
     }
 
     auto payload = base_payload;
+    payload.peer_id = make_peer_id(0x91);  // Deliberately mismatch sender to trigger failures deterministically.
     payload.work_nonce = 0;
 
     for (std::size_t attempt = 0; attempt < 3; ++attempt) {

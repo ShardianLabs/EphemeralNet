@@ -58,7 +58,7 @@
 - CLI exposes configurable announce rate limiting (interval, burst, window, PoW) with validation, defaults reporting, and documentation updates for operator hardening.
 - CLI/daemon now surface `--advertise-auto=on|warn|off`, persist the merged advertised endpoint list (manual + auto), and print the active mode plus endpoints through `eph defaults` for easier audits.
 - Stored manifests reuse the aggregated advertised endpoint ordering (manual overrides first, auto discoveries next) so downstream bootstrap flows pick consistent priorities; regression tests assert the ordering.
-- Bootstrap gossip now reuses the aggregated advertised endpoint list so bootstrap-only peers immediately learn all routable control-plane contacts, and per-peer deliveries are tracked for diagnostics/tests.
+- Bootstrap gossip now reuses the aggregated advertised endpoint list so direct-only peers immediately learn all routable control-plane contacts, and per-peer deliveries are tracked for diagnostics/tests.
 - Operator runbooks now include concrete port-forwarding and relay troubleshooting checklists plus privacy trade-off guidance so teams can justify how they expose advertised endpoints.
 - CLI reference and status/start flows document the auto-advertise lifecycle, including warning operators when no public endpoint is available and how to troubleshoot.
 - Authored `docs/performance-tuning.md` with sizing recommendations, announce throttle baselines, observability checkpoints, and capacity planning guidance (referenced from README and ops playbooks).

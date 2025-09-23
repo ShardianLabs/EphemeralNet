@@ -55,7 +55,8 @@ bool expect_contains(const std::string& haystack, const std::string& needle) {
 
 bool expect_fetch_requires_daemon(const std::string& output) {
     return expect_contains(output, "Could not contact the daemon.") ||
-           expect_contains(output, "Manifest decoding failed; automatic bootstrap could not start");
+           expect_contains(output, "Manifest decoding failed; automatic bootstrap could not start") ||
+           expect_contains(output, "Remote control endpoint unreachable");
 }
 
 }  // namespace

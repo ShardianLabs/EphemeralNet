@@ -14,7 +14,7 @@ EphemeralNet is an ephemeral P2P filesystem written in C++ that focuses on shari
 - **Session key rotation**: a session manager refreshes derived keys via HMAC-SHA256.
 - **Handshake and reputation**: simplified Diffie-Hellman handshake with per-peer reputation tracking.
 - **Control-plane proof-of-work**: handshake and store operations enforce configurable PoW to discourage spam and Sybil abuse.
-- **Bootstrap gossip hints**: manifest broadcasts share the ordered set of advertised control endpoints so bootstrap-only peers immediately learn multiple routable contacts.
+- **Bootstrap gossip hints**: manifest broadcasts share the ordered set of advertised control endpoints so hint-only (`--direct-only`) peers immediately learn multiple routable contacts.
 - **Auto-inferred public endpoints**: binding the control plane to `0.0.0.0` automatically promotes UPnP/STUN discoveries so peers learn a routable control endpoint without extra flags.
 - **TTL auditing**: consistent reports that surface expirations pending in local storage and the DHT.
 - **Cleanup coordination**: synchronises local expirations with automatic announcement withdrawal and emits notifications.
@@ -71,6 +71,9 @@ eph store secrets.bin --ttl 3600
 # Retrieve a file using an eph:// manifest (auto-names when targeting a directory)
 eph fetch eph://<manifest> ./downloads/
 
+# Force manifest-only mode (skip daemon/DHT fallback) when you have routable discovery hints
+eph fetch eph://<manifest> --direct-only --out ./downloads/
+
 # List locally stored chunks and remaining TTL
 eph list
 
@@ -85,6 +88,7 @@ eph stop
 ```
 
 Global switches control persistence (`--no-persistent`), storage path (`--storage-dir`), secure wipe passes (`--wipe-passes`), deterministic identity (`--identity-seed`), control-plane endpoints (`--control-host`, `--control-port`), TTL bounds (`--min-ttl`, `--max-ttl`), session key rotation cadence (`--key-rotation`), announce throttling (`--announce-interval`, `--announce-burst`, `--announce-window`, `--announce-pow`), concurrency (`--fetch-parallel`, `--upload-parallel`), fetch defaults (`--fetch-default-dir`, `--fetch-ignore-manifest-name`), and version/manual discovery (`--version`, `eph man`).
+Fetch now attempts manifest discovery hints first and automatically falls back to the local daemon/DHT—use `--direct-only` when you want to skip that fallback or when operating entirely over routable advertised endpoints.
 
 > The `start` command reuses the same options as `serve` to configure the daemon before backgrounding it.
 

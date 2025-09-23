@@ -156,14 +156,14 @@ environments:
           return 1;
         }
 
-        const auto bootstrap_conflict = run_cli(executable,
-            "fetch eph://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --bootstrap-only --no-bootstrap --out ./cli_fetch_conflict.bin");
-        if (bootstrap_conflict.exit_code == 0 ||
-            !expect_contains(bootstrap_conflict.output, "--no-bootstrap cannot be combined")) {
-            std::cerr << "Failure on bootstrap/no-bootstrap conflict detection. exit="
-                      << bootstrap_conflict.exit_code << "\n"
-                      << bootstrap_conflict.output << std::endl;
-            return 1;
+        const auto direct_only_manifest = run_cli(executable,
+          "fetch eph://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --direct-only --out ./cli_fetch_direct_only.bin");
+        if (direct_only_manifest.exit_code == 0 ||
+          !expect_contains(direct_only_manifest.output, "direct-only fetch cannot proceed")) {
+          std::cerr << "Failure on direct-only manifest validation. exit="
+                << direct_only_manifest.exit_code << "\n"
+                << direct_only_manifest.output << std::endl;
+          return 1;
         }
 
     } catch (const std::exception& ex) {

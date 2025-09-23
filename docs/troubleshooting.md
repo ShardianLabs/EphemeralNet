@@ -7,6 +7,7 @@ Common operational issues and their recommended fixes.
 | `Failed to contact the daemon.` | Daemon is not running or control port mismatch. | Start the daemon (`eph serve` or `eph start`) and ensure the CLI uses the same `--control-host` and `--control-port`. |
 | CLI stalls on `fetch`. | Chunk not yet replicated locally. | Wait for swarm propagation or verify peers via `eph status`; check network reachability. |
 | `ERR_FETCH_MANIFEST_REGISTRATION` hint about TTL expiry. | Manifest expired before ingestion. | Re-store the payload with a larger TTL or ensure peers remain online during replication. |
+| `direct-only fetch cannot proceed`. | The manifest lacks discovery hints or decoding failed before the daemon fallback kicked in. | Retry without `--direct-only` so the CLI can hand the request to the local daemon/DHT, or re-store the payload so it advertises at least one routable control endpoint. |
 | Secure wipe takes a long time. | High `--wipe-passes` value or large data sets. | Lower the pass count or disable wiping (`--no-wipe`) for non-sensitive data. |
 | `ERR_STORE_UNAUTHENTICATED`. | Missing or invalid control token. | Pass `--control-token` matching the daemon's `control_token` setting or update the configuration. |
 | `ERR_STORE_PAYLOAD_REQUIRED`. | CLI sending legacy path-only requests. | Upgrade the CLI to the streaming release or run the command on the daemon host. |

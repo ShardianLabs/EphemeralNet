@@ -69,6 +69,8 @@ The CLI spawns a detached process and waits until the daemon responds to `PING`.
 - `eph man`: displays the integrated manual with command and option reference.
 - `eph fetch` / `store`: round-trip validations for storage and replication.
 
+When you invoke `eph fetch`, the CLI now attempts any discovery hints embedded in the manifest first (ordered by their priority). Successful hints short-circuit the flow, while failures automatically fall back to the local daemon which then leverages the swarm/DHT. Supply `--direct-only` when you explicitly want to skip the daemon/DHT path—useful for air-gapped restores or when you already have routable advertised endpoints for the provider. Discovery hints that require proof-of-work can be satisfied automatically unless you disable it via `--no-bootstrap-auto-token`; alternatively, pre-compute a token with `--bootstrap-token` for long-lived manifests.
+
 ## Environment Hardening Tips
 
 - Run the daemon under a dedicated user account with restricted filesystem permissions.
