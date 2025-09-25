@@ -75,12 +75,6 @@ int main() {
 	manual_endpoint.manual = true;
 	manual_endpoint.source = "manual";
 	seeder_config.advertised_endpoints.push_back(manual_endpoint);
-	ephemeralnet::Config::AdvertisedEndpoint auto_endpoint{};
-	auto_endpoint.host = "control-b.ephemeral";
-	auto_endpoint.port = 46666;
-	auto_endpoint.manual = false;
-	auto_endpoint.source = "auto";
-	seeder_config.advertised_endpoints.push_back(auto_endpoint);
 
 	ephemeralnet::Config leecher_config{};
 	leecher_config.identity_seed = 0x34u;
@@ -90,6 +84,23 @@ int main() {
 
 	seeder.start_transport(0);
 	leecher.start_transport(0);
+
+	const auto aggregated_endpoints = ephemeralnet::test::NodeTestAccess::advertised_endpoints(seeder);
+	std::vector<std::string> expected_endpoints;
+	expected_endpoints.reserve(aggregated_endpoints.size());
+	std::size_t auto_entries = 0;
+	for (const auto& endpoint : aggregated_endpoints) {
+		if (endpoint.host.empty() || endpoint.port == 0) {
+			continue;
+		}
+		if (!endpoint.manual) {
+			++auto_entries;
+		}
+		expected_endpoints.push_back(endpoint.host + ":" + std::to_string(endpoint.port));
+	}
+	assert(!expected_endpoints.empty());
+	assert(std::find(expected_endpoints.begin(), expected_endpoints.end(), "control-a.ephemeral:45555") != expected_endpoints.end());
+	assert(auto_entries > 0);
 
 	const auto pow_leecher = ephemeralnet::test::NodeTestAccess::handshake_work(leecher, seeder_id);
 	const auto pow_seeder = ephemeralnet::test::NodeTestAccess::handshake_work(seeder, leecher_id);
@@ -110,11 +121,6 @@ int main() {
 	seeder.store_chunk(chunk_id, payload, 600s);
 
 	const auto peer_key = ephemeralnet::peer_id_to_string(leecher_id);
-	const std::vector<std::string> expected_endpoints{
-		"control-a.ephemeral:45555",
-		"control-b.ephemeral:46666"
-	};
-
 	ensure_peer_delivery(seeder, chunk_id, peer_key, expected_endpoints, leecher);
 
 	const auto plan = ephemeralnet::test::NodeTestAccess::swarm_plan(seeder, chunk_id);

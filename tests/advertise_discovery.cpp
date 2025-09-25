@@ -19,6 +19,7 @@ using ephemeralnet::network::NatTraversalManager;
 using ephemeralnet::network::NatTraversalResult;
 using ephemeralnet::network::AdvertiseDiscoveryResult;
 using ephemeralnet::network::discover_control_advertise_candidates;
+using ephemeralnet::network::build_transport_advertise_candidates;
 using ephemeralnet::network::select_public_advertise_candidate;
 
 std::optional<std::uint32_t> find_seed_matching(const Config& base,
@@ -82,7 +83,11 @@ int main() {
         Config config = base;
         config.identity_seed = *stun_seed;
         const auto result = discover_control_advertise_candidates(config);
-        assert(result.candidates.empty());
+        assert(result.candidates.size() >= 2);
+        const auto has_public = std::any_of(result.candidates.begin(), result.candidates.end(), [](const Config::AdvertiseCandidate& candidate) {
+            return candidate.via == "stun" || candidate.via == "upnp";
+        });
+        assert(has_public);
         assert(!result.conflict);
         assert(result.warnings.empty());
     }
@@ -149,6 +154,39 @@ int main() {
 
         const auto candidate = select_public_advertise_candidate(synthetic);
         assert(!candidate.has_value());
+    }
+
+    {
+        Config config = base;
+        config.advertise_allow_private = false;
+        NatTraversalResult traversal{};
+        traversal.external_address = "45.64.61.85";
+        traversal.external_port = 45050;
+        traversal.upnp_available = true;
+        traversal.stun_succeeded = true;
+        traversal.diagnostics.push_back("upnp-ok");
+        const auto result = build_transport_advertise_candidates(config, 47000, traversal);
+        assert(result.candidates.size() == 2);
+        const auto has_upnp = std::any_of(result.candidates.begin(), result.candidates.end(), [](const Config::AdvertiseCandidate& candidate) {
+            return candidate.via == "upnp";
+        });
+        assert(has_upnp);
+        assert(!result.conflict);
+    }
+
+    {
+        Config config = base;
+        config.advertise_allow_private = true;
+        NatTraversalResult traversal{};
+        traversal.external_address.clear();
+        traversal.external_port = 0;
+        traversal.diagnostics.push_back("stun-missing");
+        const auto result = build_transport_advertise_candidates(config, 48000, traversal);
+        assert(!result.candidates.empty());
+        const auto local = std::any_of(result.candidates.begin(), result.candidates.end(), [](const Config::AdvertiseCandidate& candidate) {
+            return candidate.via == "local-fallback";
+        });
+        assert(local);
     }
 
     return 0;

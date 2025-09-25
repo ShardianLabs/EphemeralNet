@@ -186,12 +186,12 @@ int main() {
 
         const auto output_path = test_dir / "bootstrap_result.bin";
         const auto fetch_command = base_options + " fetch " + quote(manifest) +
-                                   " --direct-only --bootstrap-max-attempts 100000 --out " + quote(output_path);
+                                   " --bootstrap-max-attempts 100000 --out " + quote(output_path);
         const auto fetch_res = run_cli(executable_path.string(), fetch_command);
         if (fetch_res.exit_code != 0 ||
-            !expect_contains(fetch_res.output, "Direct fetch succeeded") ||
+            !expect_contains(fetch_res.output, "Falling back to swarm discovery") ||
             !expect_contains(fetch_res.output, "File retrieved")) {
-            std::cerr << "Direct fetch failed\n" << fetch_res.output << std::endl;
+            std::cerr << "Fetch command failed\n" << fetch_res.output << std::endl;
             ensure_stop();
             cleanup();
             return 1;

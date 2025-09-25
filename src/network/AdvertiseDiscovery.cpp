@@ -225,6 +225,95 @@ AdvertiseDiscoveryResult discover_control_advertise_candidates(const Config& con
     return result;
 }
 
+AdvertiseDiscoveryResult build_transport_advertise_candidates(const Config& config,
+                                                             std::uint16_t transport_port,
+                                                             const NatTraversalResult& traversal) {
+    AdvertiseDiscoveryResult result;
+    const bool allow_private = config.advertise_allow_private;
+
+    std::unordered_set<std::string> seen;
+    auto append_candidate = [&](const std::string& host, std::uint16_t port, const std::string& method) {
+        if (!is_valid_host(host) || port == 0) {
+            return;
+        }
+        if (!allow_private && is_private_or_reserved_host(host)) {
+            return;
+        }
+        const std::string key = method + "|" + host + ':' + std::to_string(port);
+        if (!seen.insert(key).second) {
+            return;
+        }
+        Config::AdvertiseCandidate candidate{};
+        candidate.host = host;
+        candidate.port = port;
+        candidate.via = method;
+        candidate.diagnostics = traversal.diagnostics;
+        candidate.diagnostics.push_back("Transport auto-advertise candidate discovered via " + method);
+        result.candidates.push_back(std::move(candidate));
+    };
+
+    const auto resolved_port = traversal.external_port != 0 ? traversal.external_port : transport_port;
+    if (is_valid_host(traversal.external_address) && resolved_port != 0) {
+        if (traversal.upnp_available) {
+            append_candidate(traversal.external_address, resolved_port, "upnp");
+        }
+        if (traversal.stun_succeeded) {
+            append_candidate(traversal.external_address, resolved_port, "stun");
+        }
+        if (!traversal.upnp_available && !traversal.stun_succeeded) {
+            append_candidate(traversal.external_address, resolved_port, "nat");
+        }
+    } else {
+        auto echo_address = traversal.external_address;
+        if (!is_valid_host(echo_address)) {
+            echo_address = fallback_echo_address(config);
+        }
+        append_candidate(echo_address,
+                         resolved_port != 0 ? resolved_port : transport_port,
+                         "https-echo");
+    }
+
+    const std::string local_address = config.control_host.empty() ? std::string{"0.0.0.0"} : config.control_host;
+    if (allow_private && is_valid_host(local_address)) {
+        append_candidate(local_address, transport_port, "local-fallback");
+    } else if (result.candidates.empty() && is_valid_host(local_address)) {
+        append_candidate(local_address, transport_port, "local-fallback");
+    }
+
+    std::unordered_map<std::string, std::vector<std::string>> endpoint_methods;
+    for (const auto& candidate : result.candidates) {
+        const std::string endpoint = candidate.host + ':' + std::to_string(candidate.port);
+        endpoint_methods[endpoint].push_back(candidate.via);
+    }
+    if (endpoint_methods.size() > 1) {
+        result.conflict = true;
+        std::vector<std::string> formatted;
+        formatted.reserve(endpoint_methods.size());
+        for (const auto& [endpoint, methods] : endpoint_methods) {
+            std::string entry = endpoint + " [";
+            for (std::size_t i = 0; i < methods.size(); ++i) {
+                entry += methods[i];
+                if (i + 1 < methods.size()) {
+                    entry += ',';
+                }
+            }
+            entry += ']';
+            formatted.push_back(entry);
+        }
+        std::string warning = "Auto-advertise detected multiple transport endpoints: ";
+        for (std::size_t i = 0; i < formatted.size(); ++i) {
+            warning += formatted[i];
+            if (i + 1 < formatted.size()) {
+                warning += ", ";
+            }
+        }
+        warning += ". Pin a host with --advertise-control to avoid inconsistent manifests.";
+        result.warnings.push_back(std::move(warning));
+    }
+
+    return result;
+}
+
 std::optional<Config::AdvertiseCandidate> select_public_advertise_candidate(const AdvertiseDiscoveryResult& result) {
     constexpr std::array<std::string_view, 2> kPreferredMethods{"upnp", "stun"};
     for (const auto& method : kPreferredMethods) {

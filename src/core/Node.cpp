@@ -1,6 +1,7 @@
 #include "ephemeralnet/core/Node.hpp"
 
 #include "ephemeralnet/Types.hpp"
+#include "ephemeralnet/network/AdvertiseDiscovery.hpp"
 #include "ephemeralnet/network/KeyExchange.hpp"
 #include "ephemeralnet/crypto/Sha256.hpp"
 #include "ephemeralnet/crypto/Shamir.hpp"
@@ -405,6 +406,9 @@ std::vector<Node::ControlEndpoint> Node::preferred_control_endpoints() const {
     endpoints.reserve(config_.advertised_endpoints.size() + 1);
     std::unordered_set<std::string> seen;
 
+    const auto transport_port = sessions_.listening_port();
+    const auto fallback_port = transport_port != 0 ? transport_port : config_.control_port;
+
     auto append = [&](const std::string& host, std::uint16_t port) {
         if (host.empty() || port == 0) {
             return;
@@ -420,13 +424,18 @@ std::vector<Node::ControlEndpoint> Node::preferred_control_endpoints() const {
 
     if (!config_.advertised_endpoints.empty()) {
         for (const auto& endpoint : config_.advertised_endpoints) {
-            const auto port = endpoint.port != 0 ? endpoint.port : config_.control_port;
+            const auto port = endpoint.port != 0 ? endpoint.port : fallback_port;
             append(endpoint.host, port);
         }
     } else if (config_.advertise_control_host.has_value()) {
-        append(*config_.advertise_control_host, config_.advertise_control_port.value_or(config_.control_port));
+        const auto manual_port = config_.advertise_control_port.value_or(fallback_port);
+        append(*config_.advertise_control_host, manual_port);
     } else if (!config_.control_host.empty()) {
-        append(config_.control_host, config_.control_port);
+        append(config_.control_host, fallback_port);
+    } else if (const auto self = self_endpoint(); !self.empty()) {
+        if (const auto parsed = parse_endpoint(self)) {
+            append(parsed->first, parsed->second);
+        }
     }
 
     return endpoints;
@@ -1894,6 +1903,7 @@ void Node::tick() {
 void Node::start_transport(std::uint16_t port) {
     sessions_.start(port);
     nat_status_ = nat_manager_.coordinate("0.0.0.0", sessions_.listening_port());
+    refresh_advertised_endpoints();
 }
 
 void Node::stop_transport() {
@@ -2371,6 +2381,105 @@ std::string Node::self_endpoint() const {
 
     const auto& host = !config_.control_host.empty() ? config_.control_host : std::string{"127.0.0.1"};
     return host + ":" + std::to_string(port);
+}
+
+void Node::refresh_advertised_endpoints() {
+    config_.auto_advertise_candidates.clear();
+    config_.auto_advertise_warnings.clear();
+    config_.auto_advertise_conflict = false;
+
+    const auto transport_port = sessions_.listening_port();
+
+    auto strip_auto_entries = std::remove_if(config_.advertised_endpoints.begin(),
+                                             config_.advertised_endpoints.end(),
+                                             [](const Config::AdvertisedEndpoint& endpoint) {
+                                                 return !endpoint.manual;
+                                             });
+    config_.advertised_endpoints.erase(strip_auto_entries, config_.advertised_endpoints.end());
+
+    if (config_.advertise_auto_mode == Config::AdvertiseAutoMode::Off) {
+        return;
+    }
+    if (transport_port == 0) {
+        config_.auto_advertise_warnings.push_back(
+            "Auto-advertise: transport port not bound; no transport endpoints published.");
+        return;
+    }
+    if (!nat_status_.has_value()) {
+        config_.auto_advertise_warnings.push_back(
+            "Auto-advertise: NAT discovery is unavailable; publish endpoints manually with --advertise-control.");
+        return;
+    }
+
+    const auto discovery = network::build_transport_advertise_candidates(config_, transport_port, *nat_status_);
+    config_.auto_advertise_candidates = discovery.candidates;
+    config_.auto_advertise_warnings = discovery.warnings;
+    config_.auto_advertise_conflict = discovery.conflict;
+
+    std::unordered_set<std::string> seen;
+    for (const auto& endpoint : config_.advertised_endpoints) {
+        if (!endpoint.manual) {
+            continue;
+        }
+        const auto resolved_port = endpoint.port != 0 ? endpoint.port : transport_port;
+        if (!endpoint.host.empty() && resolved_port != 0) {
+            seen.insert(endpoint.host + ":" + std::to_string(resolved_port));
+        }
+    }
+
+    if (discovery.candidates.empty()) {
+        if (config_.advertised_endpoints.empty()) {
+            config_.auto_advertise_warnings.push_back(
+                "Auto-advertise: no transport endpoints were discovered; configure --advertise-control host[:port].");
+        }
+        return;
+    }
+
+    auto append_endpoint = [&](const Config::AdvertiseCandidate& candidate) {
+        const auto port = candidate.port != 0 ? candidate.port : transport_port;
+        if (candidate.host.empty() || port == 0) {
+            return;
+        }
+        const auto key = candidate.host + ":" + std::to_string(port);
+        if (!seen.insert(key).second) {
+            return;
+        }
+        Config::AdvertisedEndpoint endpoint{};
+        endpoint.host = candidate.host;
+        endpoint.port = port;
+        endpoint.manual = false;
+        endpoint.source = candidate.via;
+        config_.advertised_endpoints.push_back(std::move(endpoint));
+    };
+
+    const bool allow_conflicted_publish = config_.advertise_auto_mode == Config::AdvertiseAutoMode::On;
+    const bool promote_candidates = allow_conflicted_publish || !config_.auto_advertise_conflict;
+
+    const bool has_manual_endpoints = std::any_of(config_.advertised_endpoints.begin(),
+                                                  config_.advertised_endpoints.end(),
+                                                  [](const Config::AdvertisedEndpoint& endpoint) {
+                                                      return endpoint.manual;
+                                                  });
+    const bool should_infer_public_endpoint = !has_manual_endpoints;
+
+    if (promote_candidates) {
+        if (should_infer_public_endpoint) {
+            if (const auto inferred = network::select_public_advertise_candidate(discovery)) {
+                append_endpoint(*inferred);
+            } else {
+                append_endpoint(discovery.candidates.front());
+                config_.auto_advertise_warnings.push_back(
+                    "Auto-advertise: no UPnP/STUN candidate detected; published first discovered endpoint.");
+            }
+        } else {
+            for (const auto& candidate : discovery.candidates) {
+                append_endpoint(candidate);
+            }
+        }
+    } else if (config_.advertise_auto_mode == Config::AdvertiseAutoMode::Warn && config_.auto_advertise_conflict) {
+        config_.auto_advertise_warnings.push_back(
+            "Auto-advertise endpoints were suppressed because --advertise-auto is set to 'warn' and conflicting candidates were detected.");
+    }
 }
 
 void Node::seed_bootstrap_contacts() {

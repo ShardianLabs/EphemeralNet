@@ -3054,74 +3054,8 @@ int main(int argc, char** argv) {
                 return 1;
             }
 
-            if (config.advertise_auto_mode == ephemeralnet::Config::AdvertiseAutoMode::Off) {
-                config.auto_advertise_candidates.clear();
-                config.auto_advertise_warnings.clear();
-                config.auto_advertise_conflict = false;
-            } else {
-                const auto advertise_discovery =
-                    ephemeralnet::network::discover_control_advertise_candidates(config);
-                config.auto_advertise_candidates = advertise_discovery.candidates;
-                config.auto_advertise_warnings = advertise_discovery.warnings;
-                config.auto_advertise_conflict = advertise_discovery.conflict;
-
-                const bool allow_conflicted_publish =
-                    config.advertise_auto_mode == ephemeralnet::Config::AdvertiseAutoMode::On;
-                const bool promote_candidates =
-                    allow_conflicted_publish || !config.auto_advertise_conflict;
-                const bool binding_wildcard = config.control_host == "0.0.0.0";
-                const bool has_manual_advertised_endpoints = !config.advertised_endpoints.empty();
-                const bool should_infer_public_endpoint = binding_wildcard && !has_manual_advertised_endpoints;
-
-                auto append_advertised_endpoint = [&](const ephemeralnet::Config::AdvertiseCandidate& candidate) {
-                    ephemeralnet::Config::AdvertisedEndpoint endpoint{};
-                    endpoint.host = candidate.host;
-                    endpoint.port = candidate.port;
-                    endpoint.manual = false;
-                    endpoint.source = candidate.via;
-                    config.advertised_endpoints.push_back(std::move(endpoint));
-                };
-
-                if (promote_candidates) {
-                    if (should_infer_public_endpoint) {
-                        if (const auto inferred =
-                                ephemeralnet::network::select_public_advertise_candidate(advertise_discovery)) {
-                            append_advertised_endpoint(*inferred);
-                        } else {
-                            config.auto_advertise_warnings.push_back(
-                                "Auto-advertise: bound to 0.0.0.0 but no public control endpoint was discovered via UPnP/STUN."
-                                " Configure port forwarding or set --advertise-control explicitly.");
-                        }
-                    } else {
-                        for (const auto& candidate : advertise_discovery.candidates) {
-                            append_advertised_endpoint(candidate);
-                        }
-                    }
-                } else if (config.advertise_auto_mode == ephemeralnet::Config::AdvertiseAutoMode::Warn &&
-                           config.auto_advertise_conflict) {
-                    config.auto_advertise_warnings.push_back(
-                        "Auto-advertise endpoints were suppressed because --advertise-auto is set to 'warn' and"
-                        " conflicting candidates were detected.");
-                }
-            }
-
             const auto peer_id = make_peer_id(options);
             ephemeralnet::Node node(peer_id, config);
-
-            if (!config.auto_advertise_warnings.empty()) {
-                for (const auto& warning : config.auto_advertise_warnings) {
-                    std::cout << "[auto-advertise] " << warning << std::endl;
-                }
-                for (const auto& warning : config.auto_advertise_warnings) {
-                    ephemeralnet::daemon::StructuredLogger::FieldList fields{{"warning", warning}};
-                    fields.emplace_back("conflict", config.auto_advertise_conflict ? "1" : "0");
-                    ephemeralnet::daemon::StructuredLogger::instance().log(
-                        ephemeralnet::daemon::StructuredLogger::Level::Warning,
-                        "auto_advertise.warning",
-                        std::move(fields));
-                }
-            }
-
 
 
             std::mutex node_mutex;
@@ -3135,9 +3069,27 @@ int main(int argc, char** argv) {
 
             install_termination_handlers();
 
+            std::vector<std::string> runtime_auto_advertise_warnings;
+            bool runtime_auto_advertise_conflict = false;
             {
                 std::scoped_lock lock(node_mutex);
                 node.start_transport(0);
+                runtime_auto_advertise_warnings = node.config().auto_advertise_warnings;
+                runtime_auto_advertise_conflict = node.config().auto_advertise_conflict;
+            }
+
+            if (!runtime_auto_advertise_warnings.empty()) {
+                for (const auto& warning : runtime_auto_advertise_warnings) {
+                    std::cout << "[auto-advertise] " << warning << std::endl;
+                }
+                for (const auto& warning : runtime_auto_advertise_warnings) {
+                    ephemeralnet::daemon::StructuredLogger::FieldList fields{{"warning", warning}};
+                    fields.emplace_back("conflict", runtime_auto_advertise_conflict ? "1" : "0");
+                    ephemeralnet::daemon::StructuredLogger::instance().log(
+                        ephemeralnet::daemon::StructuredLogger::Level::Warning,
+                        "auto_advertise.warning",
+                        std::move(fields));
+                }
             }
 
             std::cout << "Daemon running. Control at " << config.control_host << ':' << config.control_port << std::endl;

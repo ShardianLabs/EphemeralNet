@@ -264,6 +264,7 @@ private:
     void record_announce_failure(const PeerId& peer_id, std::chrono::steady_clock::time_point now);
     void clear_announce_failures(const PeerId& peer_id);
     std::vector<ControlEndpoint> preferred_control_endpoints() const;
+    void refresh_advertised_endpoints();
 };
 
 }  

@@ -1,8 +1,10 @@
 #pragma once
 
 #include "ephemeralnet/Config.hpp"
+#include "ephemeralnet/network/NatTraversal.hpp"
 
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace ephemeralnet::network {
@@ -17,6 +19,12 @@ struct AdvertiseDiscoveryResult {
 // with STUN measurements and HTTPS echo fallbacks. Results are ordered by
 // discovery priority but do not mutate manifests yet.
 AdvertiseDiscoveryResult discover_control_advertise_candidates(const Config& config);
+
+// Builds transport advertisement candidates from an existing NAT traversal
+// snapshot, avoiding a second round of probes and reusing diagnostics.
+AdvertiseDiscoveryResult build_transport_advertise_candidates(const Config& config,
+                                                             std::uint16_t transport_port,
+                                                             const NatTraversalResult& traversal);
 
 // Returns the first candidate discovered via a routable method (UPnP/STUN)
 // so callers can decide whether to auto-expose the control plane.

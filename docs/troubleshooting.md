@@ -17,7 +17,7 @@ Common operational issues and their recommended fixes.
 | Mismatched peer IDs between restarts. | Random identity due to missing seed. | Supply `--identity-seed` or `--peer-id` for deterministic identity during automation. |
 | `Failed to register manifest` errors in daemon logs. | TTL expired or manifest invalid. | Regenerate the `eph://` manifest and ensure system clocks are synchronized. |
 | Remote peers time out immediately. | Port forwarding/firewall missing for TCP 47777. | Validate from outside the LAN (`nc -vz <ip> 47777`), open the port in the router or security group, or migrate to a relay/VPS. |
-| `defaults` shows `127.0.0.1:47777` as the first advertised endpoint even on a VPS. | The daemon is still bound to loopback or UPnP/STUN failed, so auto-infer could not promote a public endpoint. | Launch with `--control-expose` (or set `control.host: 0.0.0.0`), ensure TCP 47777 is forwarded, and re-run `eph defaults`. If discovery still fails, pin `advertise_control_host`/`port` explicitly. |
+| `defaults` shows `127.0.0.1:<port>` as the first advertised endpoint even on a VPS. | NAT/STUN failed to discover a routable transport endpoint, so auto-advertise fell back to the loopback bind. | Check port-forwarding for the transport port printed at startup, re-run `eph status` for warnings, or pin `--advertise-control host[:port]` to the public hostname. Control can stay on loopback; only the transport endpoint must be reachable. |
 | Operators want to hide the origin IP. | Auto-advertise exposes the host's WAN address. | Disable auto-advertise (`off`/`warn`) and publish a TURN/STUN relay hostname instead; update runbooks with the privacy rationale. |
 
 ## Diagnostic Tips

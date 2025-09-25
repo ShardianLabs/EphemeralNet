@@ -78,8 +78,9 @@ std::string NatTraversalManager::simulate_stun_query() {
     }
 
     const auto host_seed = static_cast<std::uint32_t>(selection + 1);
-    const auto octet = static_cast<std::uint8_t>(100 + host_seed * 10);
-    return "203.0.113." + std::to_string(octet);
+    const auto third_octet = static_cast<std::uint8_t>(60 + host_seed);
+    const auto fourth_octet = static_cast<std::uint8_t>(80 + host_seed * 5);
+    return "45.64." + std::to_string(third_octet) + '.' + std::to_string(fourth_octet);
 }
 
 bool NatTraversalManager::simulate_hole_punch() {

@@ -191,6 +191,10 @@ public:
     static Node::PowStatistics pow_stats(const Node& node) {
         return node.pow_statistics();
     }
+
+    static std::vector<Config::AdvertisedEndpoint> advertised_endpoints(const Node& node) {
+        return node.config_.advertised_endpoints;
+    }
 };
 
 }  // namespace ephemeralnet::test
