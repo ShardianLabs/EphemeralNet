@@ -16,7 +16,7 @@
 namespace ephemeralnet::protocol {
 
 inline constexpr std::uint8_t kMinimumMessageVersion = 1;
-inline constexpr std::uint8_t kCurrentMessageVersion = 3;
+inline constexpr std::uint8_t kCurrentMessageVersion = 4;
 
 bool is_supported_message_version(std::uint8_t version) noexcept;
 
@@ -25,6 +25,8 @@ enum class MessageType : std::uint8_t {
     Request = 0x02,
     Chunk = 0x03,
     Acknowledge = 0x04,
+    TransportHandshake = 0x05,
+    HandshakeAck = 0x06,
 };
 
 struct AnnouncePayload {
@@ -54,7 +56,24 @@ struct AcknowledgePayload {
     bool accepted{false};
 };
 
-using Payload = std::variant<AnnouncePayload, RequestPayload, ChunkPayload, AcknowledgePayload>;
+struct TransportHandshakePayload {
+    std::uint32_t public_identity{0};
+    std::uint64_t work_nonce{0};
+    std::uint8_t requested_version{kCurrentMessageVersion};
+};
+
+struct HandshakeAckPayload {
+    bool accepted{false};
+    std::uint8_t negotiated_version{kMinimumMessageVersion};
+    std::uint32_t responder_public{0};
+};
+
+using Payload = std::variant<AnnouncePayload,
+                             RequestPayload,
+                             ChunkPayload,
+                             AcknowledgePayload,
+                             TransportHandshakePayload,
+                             HandshakeAckPayload>;
 
 struct Message {
     std::uint8_t version{kCurrentMessageVersion};

@@ -1,13 +1,16 @@
 #include "ephemeralnet/Config.hpp"
 #include "ephemeralnet/Types.hpp"
 #include "ephemeralnet/core/Node.hpp"
+#include "ephemeralnet/crypto/CryptoManager.hpp"
 #include "ephemeralnet/crypto/Sha256.hpp"
+#include "ephemeralnet/crypto/Shamir.hpp"
 #include "ephemeralnet/daemon/ControlPlane.hpp"
 #include "ephemeralnet/daemon/StructuredLogger.hpp"
 #include "ephemeralnet/security/StoreProof.hpp"
 #include "ephemeralnet/protocol/Manifest.hpp"
 #include "ephemeralnet/bootstrap/TokenChallenge.hpp"
 #include "ephemeralnet/network/AdvertiseDiscovery.hpp"
+#include "ephemeralnet/network/KeyExchange.hpp"
 
 #include <algorithm>
 #include <array>
@@ -15,6 +18,7 @@
 #include <charconv>
 #include <chrono>
 #include <csignal>
+#include <cerrno>
 #ifndef _WIN32
 #include <signal.h>
 #endif
@@ -44,6 +48,11 @@
 #include <vector>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <io.h>
 #include <windows.h>
 #else
@@ -52,6 +61,11 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
 #endif
@@ -312,6 +326,8 @@ std::string format_bytes(std::size_t bytes) {
 struct FetchDiscoveryOptions {
     bool direct_only{false};
     bool auto_token{true};
+    bool transport_only{false};
+    bool control_fallback_only{false};
     std::uint64_t max_attempts{250'000};
     std::optional<std::string> token_override{};
 };
@@ -384,6 +400,567 @@ std::optional<std::string> compute_bootstrap_token(const protocol::Manifest& man
         return std::nullopt;
     }
     return std::to_string(*solved);
+}
+
+constexpr std::size_t kTransportMaxPayloadSize = 1 * 1024 * 1024;
+constexpr std::size_t kTransportNonceSize = ephemeralnet::crypto::Nonce{}.bytes.size();
+constexpr std::size_t kTransportLengthFieldSize = sizeof(std::uint32_t);
+constexpr std::uint64_t kTransportPowMaxAttempts = 500'000;
+constexpr std::chrono::milliseconds kTransportHandshakeTimeout{2000};
+constexpr std::chrono::milliseconds kTransportResponseTimeout{15000};
+
+bool parse_uint32(std::string_view text, std::uint32_t& value);
+
+std::size_t count_leading_zero_bits(std::span<const std::uint8_t> digest) {
+    std::size_t total = 0;
+    for (const auto byte : digest) {
+        if (byte == 0) {
+            total += 8;
+            continue;
+        }
+        for (int bit = 7; bit >= 0; --bit) {
+            if ((byte >> bit) & 0x01u) {
+                return total;
+            }
+            ++total;
+        }
+        return total;
+    }
+    return total;
+}
+
+std::array<std::uint8_t, 8> to_big_endian_bytes(std::uint64_t value) {
+    std::array<std::uint8_t, 8> bytes{};
+    for (int index = 0; index < 8; ++index) {
+        const auto shift = 56 - index * 8;
+        bytes[index] = static_cast<std::uint8_t>((value >> shift) & 0xFFu);
+    }
+    return bytes;
+}
+
+void update_length_prefixed(ephemeralnet::crypto::Sha256& hasher, std::span<const std::uint8_t> data) {
+    const auto length_bytes = to_big_endian_bytes(static_cast<std::uint64_t>(data.size()));
+    hasher.update(length_bytes);
+    if (!data.empty()) {
+        hasher.update(data);
+    }
+}
+
+std::array<std::uint8_t, 32> transport_handshake_digest(const ephemeralnet::PeerId& initiator,
+                                                         const ephemeralnet::PeerId& responder,
+                                                         std::uint32_t initiator_public,
+                                                         std::uint64_t nonce) {
+    ephemeralnet::crypto::Sha256 hasher;
+    update_length_prefixed(hasher, std::span<const std::uint8_t>(initiator.data(), initiator.size()));
+    update_length_prefixed(hasher, std::span<const std::uint8_t>(responder.data(), responder.size()));
+    const auto public_bytes = to_big_endian_bytes(static_cast<std::uint64_t>(initiator_public));
+    hasher.update(public_bytes);
+    const auto nonce_bytes = to_big_endian_bytes(nonce);
+    hasher.update(nonce_bytes);
+    return hasher.finalize();
+}
+
+bool transport_pow_valid(const ephemeralnet::PeerId& initiator,
+                         const ephemeralnet::PeerId& responder,
+                         std::uint32_t initiator_public,
+                         std::uint64_t nonce,
+                         std::uint8_t difficulty) {
+    if (difficulty == 0) {
+        return true;
+    }
+    const auto digest = transport_handshake_digest(initiator, responder, initiator_public, nonce);
+    return count_leading_zero_bits(std::span<const std::uint8_t>(digest.data(), digest.size())) >= difficulty;
+}
+
+std::optional<std::uint64_t> compute_transport_pow(const ephemeralnet::PeerId& initiator,
+                                                   const ephemeralnet::PeerId& responder,
+                                                   std::uint32_t initiator_public,
+                                                   std::uint8_t difficulty) {
+    if (difficulty == 0) {
+        return std::uint64_t{0};
+    }
+    const auto digest = transport_handshake_digest(initiator, responder, initiator_public, 0);
+    std::uint64_t seed = 0;
+    for (int index = 0; index < 8; ++index) {
+        seed = (seed << 8) | static_cast<std::uint64_t>(digest[index]);
+    }
+    std::mt19937_64 generator(seed);
+    std::uniform_int_distribution<std::uint64_t> distribution(0, std::numeric_limits<std::uint64_t>::max());
+    const auto start = distribution(generator);
+    for (std::uint64_t attempt = 0; attempt < kTransportPowMaxAttempts; ++attempt) {
+        const auto candidate = start + attempt;
+        if (transport_pow_valid(initiator, responder, initiator_public, candidate, difficulty)) {
+            return candidate;
+        }
+    }
+    return std::nullopt;
+}
+
+#ifdef _WIN32
+using NativeSocket = SOCKET;
+constexpr NativeSocket kInvalidNativeSocket = INVALID_SOCKET;
+
+class WinsockRuntime {
+public:
+    WinsockRuntime() {
+        WSADATA data{};
+        if (WSAStartup(MAKEWORD(2, 2), &data) != 0) {
+            throw std::runtime_error("WSAStartup failed");
+        }
+    }
+
+    ~WinsockRuntime() {
+        WSACleanup();
+    }
+};
+
+WinsockRuntime& ensure_winsock_runtime() {
+    static WinsockRuntime runtime;
+    return runtime;
+}
+
+int last_socket_error() {
+    return WSAGetLastError();
+}
+#else
+using NativeSocket = int;
+constexpr NativeSocket kInvalidNativeSocket = -1;
+
+void ensure_winsock_runtime() {}
+
+int last_socket_error() {
+    return errno;
+}
+#endif
+
+class ScopedSocket {
+public:
+    ScopedSocket() = default;
+    explicit ScopedSocket(NativeSocket handle) : handle_(handle) {}
+    ScopedSocket(const ScopedSocket&) = delete;
+    ScopedSocket& operator=(const ScopedSocket&) = delete;
+    ScopedSocket(ScopedSocket&& other) noexcept : handle_(other.handle_) {
+        other.handle_ = kInvalidNativeSocket;
+    }
+    ScopedSocket& operator=(ScopedSocket&& other) noexcept {
+        if (this != &other) {
+            reset();
+            handle_ = other.handle_;
+            other.handle_ = kInvalidNativeSocket;
+        }
+        return *this;
+    }
+    ~ScopedSocket() { reset(); }
+
+    NativeSocket get() const { return handle_; }
+    bool valid() const { return handle_ != kInvalidNativeSocket; }
+    explicit operator bool() const { return valid(); }
+
+    void reset(NativeSocket handle = kInvalidNativeSocket) {
+        if (handle_ != kInvalidNativeSocket) {
+#ifdef _WIN32
+            ::shutdown(handle_, SD_BOTH);
+            ::closesocket(handle_);
+#else
+            ::shutdown(handle_, SHUT_RDWR);
+            ::close(handle_);
+#endif
+        }
+        handle_ = handle;
+    }
+
+private:
+    NativeSocket handle_{kInvalidNativeSocket};
+};
+
+bool socket_send_all(NativeSocket socket, const std::uint8_t* data, std::size_t length) {
+    std::size_t sent_total = 0;
+    while (sent_total < length) {
+#ifdef _WIN32
+        const auto sent = ::send(socket, reinterpret_cast<const char*>(data + sent_total),
+                                 static_cast<int>(length - sent_total), 0);
+#else
+        const auto sent = ::send(socket, reinterpret_cast<const char*>(data + sent_total),
+                                 length - sent_total, 0);
+#endif
+        if (sent <= 0) {
+            return false;
+        }
+        sent_total += static_cast<std::size_t>(sent);
+    }
+    return true;
+}
+
+bool socket_recv_all(NativeSocket socket, std::uint8_t* buffer, std::size_t length) {
+    std::size_t received_total = 0;
+    while (received_total < length) {
+#ifdef _WIN32
+        const auto received = ::recv(socket, reinterpret_cast<char*>(buffer + received_total),
+                                     static_cast<int>(length - received_total), 0);
+#else
+        const auto received = ::recv(socket, reinterpret_cast<char*>(buffer + received_total),
+                                     length - received_total, 0);
+#endif
+        if (received <= 0) {
+            return false;
+        }
+        received_total += static_cast<std::size_t>(received);
+    }
+    return true;
+}
+
+bool socket_set_timeout(NativeSocket socket, std::chrono::milliseconds timeout) {
+#ifdef _WIN32
+    const DWORD value = static_cast<DWORD>(timeout.count());
+    return ::setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO,
+                        reinterpret_cast<const char*>(&value), sizeof(value)) == 0;
+#else
+    timeval tv{};
+    tv.tv_sec = static_cast<time_t>(timeout.count() / 1000);
+    tv.tv_usec = static_cast<suseconds_t>((timeout.count() % 1000) * 1000);
+    return ::setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO,
+                        reinterpret_cast<const char*>(&tv), sizeof(tv)) == 0;
+#endif
+}
+
+std::string socket_endpoint(NativeSocket socket) {
+    sockaddr_in addr{};
+    socklen_t len = sizeof(addr);
+    if (::getpeername(socket, reinterpret_cast<sockaddr*>(&addr), &len) == 0) {
+        char buffer[INET_ADDRSTRLEN]{};
+        if (::inet_ntop(AF_INET, &addr.sin_addr, buffer, sizeof(buffer))) {
+            return std::string(buffer) + ":" + std::to_string(ntohs(addr.sin_port));
+        }
+    }
+    return std::string{"unknown"};
+}
+
+std::string format_socket_error(const std::string& prefix) {
+    const auto code = last_socket_error();
+#ifdef _WIN32
+    return prefix + " (WSA" + std::to_string(code) + ")";
+#else
+    return prefix + " (errno " + std::to_string(code) + ": " + std::strerror(code) + ")";
+#endif
+}
+
+std::optional<ScopedSocket> open_transport_socket(const std::string& host, std::uint16_t port) {
+    ensure_winsock_runtime();
+
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+
+    addrinfo* result = nullptr;
+    if (const auto err = ::getaddrinfo(host.c_str(), nullptr, &hints, &result); err != 0 || result == nullptr) {
+        if (result) {
+            ::freeaddrinfo(result);
+        }
+        return std::nullopt;
+    }
+
+    ScopedSocket socket{};
+    NativeSocket handle = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (handle == kInvalidNativeSocket) {
+        ::freeaddrinfo(result);
+        return std::nullopt;
+    }
+
+    socket.reset(handle);
+
+    sockaddr_in address = *reinterpret_cast<sockaddr_in*>(result->ai_addr);
+    address.sin_port = htons(port);
+    ::freeaddrinfo(result);
+
+    if (::connect(socket.get(), reinterpret_cast<const sockaddr*>(&address), sizeof(address)) < 0) {
+        return std::nullopt;
+    }
+
+    return socket;
+}
+
+struct PublisherIdentityMetadata {
+    ephemeralnet::PeerId peer_id{};
+    std::uint32_t public_identity{0};
+};
+
+std::optional<PublisherIdentityMetadata> extract_publisher_identity(const protocol::Manifest& manifest) {
+    const auto peer_it = manifest.metadata.find("publisher_peer");
+    const auto public_it = manifest.metadata.find("publisher_public");
+    if (peer_it == manifest.metadata.end() || public_it == manifest.metadata.end()) {
+        return std::nullopt;
+    }
+
+    const auto peer = ephemeralnet::peer_id_from_string(peer_it->second);
+    if (!peer.has_value()) {
+        return std::nullopt;
+    }
+
+    std::uint32_t public_identity = 0;
+    if (!parse_uint32(public_it->second, public_identity)) {
+        return std::nullopt;
+    }
+
+    PublisherIdentityMetadata metadata{};
+    metadata.peer_id = *peer;
+    metadata.public_identity = public_identity;
+    return metadata;
+}
+
+std::optional<ephemeralnet::ChunkData> decrypt_chunk_with_manifest(const protocol::Manifest& manifest,
+                                                                   const protocol::ChunkPayload& payload) {
+    if (manifest.threshold == 0 || manifest.shards.size() < manifest.threshold) {
+        return std::nullopt;
+    }
+
+    std::vector<ephemeralnet::crypto::ShamirShare> shares;
+    shares.reserve(manifest.shards.size());
+    for (const auto& shard : manifest.shards) {
+        ephemeralnet::crypto::ShamirShare share{};
+        share.index = shard.index;
+        share.value = shard.value;
+        shares.push_back(share);
+    }
+
+    const auto secret = ephemeralnet::crypto::Shamir::combine(shares, manifest.threshold);
+    ephemeralnet::crypto::Key chunk_key{};
+    chunk_key.bytes = secret;
+
+    const auto plaintext = ephemeralnet::crypto::CryptoManager::decrypt_with_key(
+        chunk_key,
+        manifest.chunk_id,
+        std::span<const std::uint8_t>(payload.data.data(), payload.data.size()),
+        manifest.nonce);
+    if (!plaintext.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto digest = ephemeralnet::crypto::Sha256::digest(std::span<const std::uint8_t>(plaintext->data(), plaintext->size()));
+    if (digest != manifest.chunk_hash) {
+        return std::nullopt;
+    }
+
+    return plaintext;
+}
+
+bool manifest_expired(const protocol::Manifest& manifest) {
+    const auto now = std::chrono::system_clock::now();
+    return manifest.expires_at <= now;
+}
+
+bool write_payload_to_file(const std::filesystem::path& destination,
+                           std::span<const std::uint8_t> payload) {
+    try {
+        std::ofstream out(destination, std::ios::binary | std::ios::trunc);
+        if (!out) {
+            return false;
+        }
+        if (!payload.empty()) {
+            out.write(reinterpret_cast<const char*>(payload.data()),
+                      static_cast<std::streamsize>(payload.size()));
+        }
+        out.flush();
+        return static_cast<bool>(out);
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+struct TransportIdentityContext {
+    ephemeralnet::PeerId peer_id{};
+    std::uint32_t private_scalar{0};
+    std::uint32_t public_scalar{0};
+};
+
+struct TransportSessionContext {
+    ScopedSocket socket;
+    std::array<std::uint8_t, 32> session_key{};
+    std::uint8_t negotiated_version{protocol::kMinimumMessageVersion};
+};
+
+std::optional<std::vector<std::uint8_t>> read_encrypted_message(NativeSocket socket,
+                                                                const std::array<std::uint8_t, 32>& key,
+                                                                std::chrono::milliseconds timeout) {
+    if (!socket_set_timeout(socket, timeout)) {
+        return std::nullopt;
+    }
+
+    std::array<std::uint8_t, kTransportNonceSize> nonce_buffer{};
+    if (!socket_recv_all(socket, nonce_buffer.data(), nonce_buffer.size())) {
+        socket_set_timeout(socket, std::chrono::milliseconds::zero());
+        return std::nullopt;
+    }
+
+    std::array<std::uint8_t, kTransportLengthFieldSize> length_buffer{};
+    if (!socket_recv_all(socket, length_buffer.data(), length_buffer.size())) {
+        socket_set_timeout(socket, std::chrono::milliseconds::zero());
+        return std::nullopt;
+    }
+
+    const auto length = (static_cast<std::uint32_t>(length_buffer[0]) << 24)
+        | (static_cast<std::uint32_t>(length_buffer[1]) << 16)
+        | (static_cast<std::uint32_t>(length_buffer[2]) << 8)
+        | static_cast<std::uint32_t>(length_buffer[3]);
+
+    if (length > kTransportMaxPayloadSize) {
+        socket_set_timeout(socket, std::chrono::milliseconds::zero());
+        return std::nullopt;
+    }
+
+    std::vector<std::uint8_t> ciphertext(length);
+    if (length > 0 && !socket_recv_all(socket, ciphertext.data(), ciphertext.size())) {
+        socket_set_timeout(socket, std::chrono::milliseconds::zero());
+        return std::nullopt;
+    }
+
+    socket_set_timeout(socket, std::chrono::milliseconds::zero());
+
+    ephemeralnet::crypto::Key key_material{};
+    key_material.bytes = key;
+    ephemeralnet::crypto::Nonce nonce{};
+    std::copy(nonce_buffer.begin(), nonce_buffer.end(), nonce.bytes.begin());
+
+    std::vector<std::uint8_t> plaintext(ciphertext.size());
+    ephemeralnet::crypto::ChaCha20::apply(key_material, nonce, ciphertext, plaintext, 0u);
+    return plaintext;
+}
+
+bool send_encrypted_message(NativeSocket socket,
+                            const std::array<std::uint8_t, 32>& key,
+                            std::span<const std::uint8_t> payload) {
+    if (payload.size() > kTransportMaxPayloadSize) {
+        return false;
+    }
+
+    ephemeralnet::crypto::Key key_material{};
+    key_material.bytes = key;
+
+    ephemeralnet::crypto::Nonce nonce{};
+    std::random_device rd;
+    for (auto& byte : nonce.bytes) {
+        byte = static_cast<std::uint8_t>(rd());
+    }
+
+    std::vector<std::uint8_t> ciphertext(payload.size());
+    ephemeralnet::crypto::ChaCha20::apply(key_material, nonce, payload, ciphertext, 0u);
+
+    std::vector<std::uint8_t> buffer(kTransportNonceSize + kTransportLengthFieldSize + ciphertext.size());
+    std::copy(nonce.bytes.begin(), nonce.bytes.end(), buffer.begin());
+
+    const auto length = static_cast<std::uint32_t>(ciphertext.size());
+    buffer[kTransportNonceSize + 0] = static_cast<std::uint8_t>((length >> 24) & 0xFFu);
+    buffer[kTransportNonceSize + 1] = static_cast<std::uint8_t>((length >> 16) & 0xFFu);
+    buffer[kTransportNonceSize + 2] = static_cast<std::uint8_t>((length >> 8) & 0xFFu);
+    buffer[kTransportNonceSize + 3] = static_cast<std::uint8_t>(length & 0xFFu);
+    std::copy(ciphertext.begin(), ciphertext.end(), buffer.begin() + kTransportNonceSize + kTransportLengthFieldSize);
+
+    return socket_send_all(socket, buffer.data(), buffer.size());
+}
+
+std::optional<TransportSessionContext> establish_transport_session(const TransportIdentityContext& local,
+                                                                   const PublisherIdentityMetadata& remote,
+                                                                   std::uint64_t work_nonce,
+                                                                   const std::string& host,
+                                                                   std::uint16_t port,
+                                                                   std::string* error_out = nullptr) {
+    auto socket_opt = open_transport_socket(host, port);
+    if (!socket_opt.has_value()) {
+        if (error_out) {
+            *error_out = "Unable to connect";
+        }
+        return std::nullopt;
+    }
+
+    auto& socket = *socket_opt;
+
+    if (!socket_send_all(socket.get(), local.peer_id.data(), local.peer_id.size())) {
+        if (error_out) {
+            *error_out = "Failed to send identity";
+        }
+        return std::nullopt;
+    }
+
+    protocol::Message handshake{};
+    handshake.version = protocol::kCurrentMessageVersion;
+    handshake.type = protocol::MessageType::TransportHandshake;
+    protocol::TransportHandshakePayload handshake_payload{};
+    handshake_payload.public_identity = local.public_scalar;
+    handshake_payload.work_nonce = work_nonce;
+    handshake_payload.requested_version = protocol::kCurrentMessageVersion;
+    handshake.payload = handshake_payload;
+
+    const auto encoded = protocol::encode(handshake);
+    std::vector<std::uint8_t> frame(sizeof(std::uint32_t) + encoded.size());
+    const auto length = static_cast<std::uint32_t>(encoded.size());
+    frame[0] = static_cast<std::uint8_t>((length >> 24) & 0xFFu);
+    frame[1] = static_cast<std::uint8_t>((length >> 16) & 0xFFu);
+    frame[2] = static_cast<std::uint8_t>((length >> 8) & 0xFFu);
+    frame[3] = static_cast<std::uint8_t>(length & 0xFFu);
+    std::copy(encoded.begin(), encoded.end(), frame.begin() + sizeof(std::uint32_t));
+
+    if (!socket_send_all(socket.get(), frame.data(), frame.size())) {
+        if (error_out) {
+            *error_out = "Failed to send handshake";
+        }
+        return std::nullopt;
+    }
+
+    const auto shared = ephemeralnet::network::KeyExchange::derive_shared_secret(local.private_scalar,
+                                                                                 remote.public_identity);
+    std::array<std::uint8_t, 32> session_key = shared.bytes;
+
+    auto ack_plaintext = read_encrypted_message(socket.get(), session_key, kTransportHandshakeTimeout);
+    if (!ack_plaintext.has_value()) {
+        if (error_out) {
+            *error_out = "Timed out waiting for handshake ACK";
+        }
+        return std::nullopt;
+    }
+
+    const auto key_span = std::span<const std::uint8_t>(session_key.data(), session_key.size());
+    const auto ack_message = protocol::decode_signed(*ack_plaintext, key_span);
+    if (!ack_message.has_value() || ack_message->type != protocol::MessageType::HandshakeAck) {
+        if (error_out) {
+            *error_out = "Invalid handshake ACK";
+        }
+        return std::nullopt;
+    }
+    const auto* ack_payload = std::get_if<protocol::HandshakeAckPayload>(&ack_message->payload);
+    if (!ack_payload || !ack_payload->accepted) {
+        if (error_out) {
+            *error_out = "Peer rejected transport handshake";
+        }
+        return std::nullopt;
+    }
+
+    const auto negotiated_version = ack_payload->negotiated_version;
+    TransportSessionContext context{};
+    context.socket = std::move(socket);
+    context.session_key = session_key;
+    context.negotiated_version = std::clamp<std::uint8_t>(negotiated_version,
+                                                          protocol::kMinimumMessageVersion,
+                                                          protocol::kCurrentMessageVersion);
+    return context;
+}
+
+bool send_protocol_message(NativeSocket socket,
+                           const std::array<std::uint8_t, 32>& session_key,
+                           protocol::Message& message) {
+    const auto key_span = std::span<const std::uint8_t>(session_key.data(), session_key.size());
+    auto encoded = protocol::encode_signed(message, key_span);
+    return send_encrypted_message(socket, session_key, encoded);
+}
+
+std::optional<protocol::Message> receive_protocol_message(NativeSocket socket,
+                                                          const std::array<std::uint8_t, 32>& session_key,
+                                                          std::chrono::milliseconds timeout) {
+    const auto plaintext = read_encrypted_message(socket, session_key, timeout);
+    if (!plaintext.has_value()) {
+        return std::nullopt;
+    }
+    const auto key_span = std::span<const std::uint8_t>(session_key.data(), session_key.size());
+    return protocol::decode_signed(*plaintext, key_span);
 }
 
 class ProgressPrinter {
@@ -1747,6 +2324,8 @@ void print_fetch_usage() {
               << "Options:\n"
               << "  --out <path>                  Destination file or directory (default: current dir).\n"
               << "  --direct-only                Only use discovery hints/fallbacks; skip DHT/swarm fallback.\n"
+              << "  --transport-only             Only attempt transport/tcp hints (disables control + daemon fallback).\n"
+              << "  --control-fallback          Skip transport hints and use control/fallback paths immediately.\n"
               << "  --bootstrap-token <value>    Provide a precomputed PoW token for direct discovery endpoints.\n"
               << "  --bootstrap-max-attempts <n> Limit PoW search iterations when solving tokens automatically.\n"
               << "  --no-bootstrap-auto-token    Disable automatic PoW solving (requires --bootstrap-token)." << std::endl;
@@ -2223,6 +2802,19 @@ ephemeralnet::PeerId make_peer_id(const GlobalOptions& options) {
         byte = static_cast<std::uint8_t>(distribution(generator) & 0xFF);
     }
     return id;
+}
+
+std::uint32_t make_identity_scalar(const GlobalOptions& options) {
+    std::mt19937 generator;
+    if (options.identity_seed.has_value()) {
+        generator.seed(*options.identity_seed);
+    } else {
+        std::random_device rd;
+        generator.seed(rd());
+    }
+
+    std::uniform_int_distribution<std::uint32_t> distribution(2u, ephemeralnet::network::KeyExchange::kPrime - 2u);
+    return distribution(generator);
 }
 
 ephemeralnet::Config build_config(const GlobalOptions& options) {
@@ -3012,6 +3604,8 @@ int main(int argc, char** argv) {
 
         validate_global_options(options);
 
+        const auto self_peer_id = make_peer_id(options);
+
         if (index >= args.size()) {
             print_usage();
             return 1;
@@ -3054,7 +3648,7 @@ int main(int argc, char** argv) {
                 return 1;
             }
 
-            const auto peer_id = make_peer_id(options);
+            const auto peer_id = self_peer_id;
             ephemeralnet::Node node(peer_id, config);
 
 
@@ -3609,6 +4203,27 @@ int main(int argc, char** argv) {
                     ++index;
                     continue;
                 }
+                if (opt == "--transport-only") {
+                    if (discovery_options.control_fallback_only) {
+                        throw_cli_error("E_FETCH_MODE_CONFLICT",
+                                        "--transport-only cannot be combined with --control-fallback",
+                                        "Choose one discovery mode flag or omit both to allow automatic fallback.");
+                    }
+                    discovery_options.transport_only = true;
+                    discovery_options.direct_only = true;
+                    ++index;
+                    continue;
+                }
+                if (opt == "--control-fallback") {
+                    if (discovery_options.transport_only) {
+                        throw_cli_error("E_FETCH_MODE_CONFLICT",
+                                        "--control-fallback cannot be combined with --transport-only",
+                                        "Choose one discovery mode flag or omit both to allow automatic fallback.");
+                    }
+                    discovery_options.control_fallback_only = true;
+                    ++index;
+                    continue;
+                }
                 if (opt == "--bootstrap-token") {
                     ++index;
                     if (index >= args.size()) {
@@ -3746,6 +4361,11 @@ int main(int argc, char** argv) {
                 return 0;
             }
 
+            TransportIdentityContext transport_identity{};
+            transport_identity.peer_id = self_peer_id;
+            transport_identity.private_scalar = make_identity_scalar(options);
+            transport_identity.public_scalar = ephemeralnet::network::KeyExchange::compute_public(transport_identity.private_scalar);
+
             ephemeralnet::daemon::ControlFields base_fields{{"MANIFEST", manifest_uri},
                                                             {"STREAM", "client"}};
 
@@ -3836,17 +4456,131 @@ int main(int argc, char** argv) {
 
             auto attempt_direct_fetch = [&](const protocol::Manifest& manifest) -> DirectFetchOutcome {
                 DirectFetchOutcome outcome{};
-                outcome.had_hints = !manifest.discovery_hints.empty() || !manifest.fallback_hints.empty();
-                if (!outcome.had_hints) {
-                    return outcome;
-                }
-
                 std::vector<BootstrapAttemptLog> attempt_log;
+                const auto publisher_identity = extract_publisher_identity(manifest);
+                std::optional<std::uint64_t> transport_pow_nonce;
+
+                auto attempt_transport_hint = [&](const protocol::DiscoveryHint& hint,
+                                                  const std::string& label) -> bool {
+                    outcome.attempted = true;
+                    const std::string friendly_label = label.empty() ? hint.endpoint : label;
+                    if (hint.endpoint.empty()) {
+                        attempt_log.push_back({friendly_label, "Transport hint missing endpoint"});
+                        return false;
+                    }
+                    const std::string scheme = hint.scheme.empty() ? hint.transport : hint.scheme;
+                    if (scheme != "transport" && hint.transport != "tcp" && hint.transport != "transport") {
+                        attempt_log.push_back({friendly_label, "Unsupported transport hint"});
+                        return false;
+                    }
+                    if (!publisher_identity.has_value()) {
+                        attempt_log.push_back({friendly_label, "Manifest missing publisher identity metadata"});
+                        return false;
+                    }
+                    if (manifest_expired(manifest)) {
+                        attempt_log.push_back({friendly_label, "Manifest expired"});
+                        return false;
+                    }
+                    if (!transport_pow_nonce.has_value()) {
+                        attempt_log.push_back({friendly_label,
+                                               manifest.security.token_challenge_bits > 0
+                                                   ? "Unable to satisfy transport proof-of-work target"
+                                                   : "Failed to initialize transport handshake"});
+                        return false;
+                    }
+                    const auto parsed = parse_control_endpoint(hint.endpoint);
+                    if (!parsed.has_value()) {
+                        attempt_log.push_back({friendly_label, "Invalid transport endpoint"});
+                        return false;
+                    }
+                    const auto host = parsed->first;
+                    const auto port = parsed->second;
+                    const auto endpoint_desc = describe_endpoint(host, port);
+
+                    std::string error_text;
+                    auto session = establish_transport_session(transport_identity,
+                                                               *publisher_identity,
+                                                               *transport_pow_nonce,
+                                                               host,
+                                                               port,
+                                                               &error_text);
+                    if (!session.has_value()) {
+                        attempt_log.push_back({friendly_label,
+                                               error_text.empty() ? std::string{"Transport handshake failed"}
+                                                                  : error_text});
+                        return false;
+                    }
+
+                    protocol::Message request{};
+                    request.version = session->negotiated_version;
+                    request.type = protocol::MessageType::Request;
+                    protocol::RequestPayload payload{};
+                    payload.chunk_id = manifest.chunk_id;
+                    payload.requester = transport_identity.peer_id;
+                    request.payload = payload;
+
+                    if (!send_protocol_message(session->socket.get(), session->session_key, request)) {
+                        attempt_log.push_back({friendly_label, "Failed to send transport request"});
+                        return false;
+                    }
+
+                    auto reply = receive_protocol_message(session->socket.get(),
+                                                          session->session_key,
+                                                          kTransportResponseTimeout);
+                    if (!reply.has_value()) {
+                        attempt_log.push_back({friendly_label, "Timed out waiting for transport response"});
+                        return false;
+                    }
+
+                    if (reply->type == protocol::MessageType::Chunk) {
+                        const auto* chunk_payload = std::get_if<protocol::ChunkPayload>(&reply->payload);
+                        if (!chunk_payload) {
+                            attempt_log.push_back({friendly_label, "Malformed chunk payload"});
+                            return false;
+                        }
+                        const auto plaintext = decrypt_chunk_with_manifest(manifest, *chunk_payload);
+                        if (!plaintext.has_value()) {
+                            attempt_log.push_back({friendly_label, "Failed to decrypt chunk"});
+                            return false;
+                        }
+
+                        ephemeralnet::daemon::ControlResponse synthetic{};
+                        synthetic.success = true;
+                        synthetic.has_payload = true;
+                        synthetic.payload = *plaintext;
+                        synthetic.fields["SIZE"] = std::to_string(plaintext->size());
+
+                        finalize_fetch(synthetic);
+                        std::cout << "Direct fetch succeeded via " << endpoint_desc << " (transport)" << std::endl;
+                        outcome.success = true;
+                        outcome.logs = attempt_log;
+                        return true;
+                    }
+
+                    if (reply->type == protocol::MessageType::Acknowledge) {
+                        const auto* ack_payload = std::get_if<protocol::AcknowledgePayload>(&reply->payload);
+                        if (ack_payload && !ack_payload->accepted) {
+                            attempt_log.push_back({friendly_label, "Peer rejected chunk request"});
+                        } else {
+                            attempt_log.push_back({friendly_label, "Unexpected acknowledge response"});
+                        }
+                        return false;
+                    }
+
+                    attempt_log.push_back({friendly_label, "Unexpected transport response"});
+                    return false;
+                };
+
                 auto attempt_control_hint = [&](const protocol::DiscoveryHint& hint,
                                                 const std::string& label,
                                                 bool from_fallback) -> bool {
                     outcome.attempted = true;
                     const std::string friendly_label = label.empty() ? hint.endpoint : label;
+                    const std::string scheme = hint.scheme.empty() ? hint.transport : hint.scheme;
+                    if (scheme != "control") {
+                        attempt_log.push_back({friendly_label, "Unsupported scheme for this build"});
+                        return false;
+                    }
                     if (hint.transport != "control") {
                         attempt_log.push_back({friendly_label, "Unsupported transport for this build"});
                         return false;
@@ -3871,6 +4605,7 @@ int main(int argc, char** argv) {
                     auto request_fields = base_fields;
                     request_fields["BOOTSTRAP"] = "1";
                     request_fields["DISCOVERY-ENDPOINT"] = friendly_label;
+                    request_fields["DISCOVERY-SCHEME"] = scheme;
                     request_fields["DISCOVERY-TRANSPORT"] = hint.transport;
                     request_fields["DISCOVERY-PRIORITY"] = std::to_string(hint.priority);
                     if (from_fallback) {
@@ -3909,17 +4644,69 @@ int main(int argc, char** argv) {
                     return true;
                 };
 
-                auto ordered_hints = manifest.discovery_hints;
-                std::stable_sort(ordered_hints.begin(), ordered_hints.end(), [](const auto& lhs, const auto& rhs) {
-                    return lhs.priority < rhs.priority;
-                });
-                for (const auto& hint : ordered_hints) {
-                    if (attempt_control_hint(hint, hint.endpoint, false)) {
-                        return outcome;
+                std::vector<protocol::DiscoveryHint> transport_hints;
+                std::vector<protocol::DiscoveryHint> control_hints;
+                transport_hints.reserve(manifest.discovery_hints.size());
+                control_hints.reserve(manifest.discovery_hints.size());
+                for (const auto& hint : manifest.discovery_hints) {
+                    const auto scheme = hint.scheme.empty() ? hint.transport : hint.scheme;
+                    if (scheme == "transport" || hint.transport == "tcp" || hint.transport == "transport") {
+                        transport_hints.push_back(hint);
+                    } else {
+                        control_hints.push_back(hint);
                     }
                 }
 
-                if (!manifest.fallback_hints.empty()) {
+                const bool has_transport_paths = !transport_hints.empty();
+                const bool has_control_paths = !control_hints.empty() || !manifest.fallback_hints.empty();
+                if (discovery_options.transport_only) {
+                    outcome.had_hints = has_transport_paths;
+                } else if (discovery_options.control_fallback_only) {
+                    outcome.had_hints = has_control_paths;
+                } else {
+                    outcome.had_hints = has_transport_paths || has_control_paths;
+                }
+                if (!outcome.had_hints) {
+                    return outcome;
+                }
+
+                if (!discovery_options.control_fallback_only && publisher_identity.has_value() && has_transport_paths) {
+                    transport_pow_nonce = compute_transport_pow(transport_identity.peer_id,
+                                                                publisher_identity->peer_id,
+                                                                transport_identity.public_scalar,
+                                                                manifest.security.token_challenge_bits);
+                }
+
+                auto sort_by_priority = [](std::vector<protocol::DiscoveryHint>& hints) {
+                    std::stable_sort(hints.begin(), hints.end(), [](const auto& lhs, const auto& rhs) {
+                        return lhs.priority < rhs.priority;
+                    });
+                };
+
+                sort_by_priority(transport_hints);
+                sort_by_priority(control_hints);
+
+                if (!discovery_options.control_fallback_only) {
+                    for (const auto& hint : transport_hints) {
+                        if (attempt_transport_hint(hint, hint.endpoint)) {
+                            return outcome;
+                        }
+                    }
+                } else if (!transport_hints.empty()) {
+                    attempt_log.push_back({"transport", "Skipped transport hints due to --control-fallback"});
+                }
+
+                if (!discovery_options.transport_only) {
+                    for (const auto& hint : control_hints) {
+                        if (attempt_control_hint(hint, hint.endpoint, false)) {
+                            return outcome;
+                        }
+                    }
+                } else if (!control_hints.empty()) {
+                    attempt_log.push_back({"control", "Skipped control hints due to --transport-only"});
+                }
+
+                if (!discovery_options.transport_only && !manifest.fallback_hints.empty()) {
                     auto fallback_hints = manifest.fallback_hints;
                     std::stable_sort(fallback_hints.begin(), fallback_hints.end(), [](const auto& lhs, const auto& rhs) {
                         return lhs.priority < rhs.priority;
@@ -3932,6 +4719,7 @@ int main(int argc, char** argv) {
                             continue;
                         }
                         protocol::DiscoveryHint synthetic{};
+                        synthetic.scheme = "control";
                         synthetic.transport = "control";
                         synthetic.endpoint = describe_endpoint(parsed->first, parsed->second);
                         synthetic.priority = fallback.priority;
@@ -3939,6 +4727,9 @@ int main(int argc, char** argv) {
                             return outcome;
                         }
                     }
+                } else if (discovery_options.transport_only && !manifest.fallback_hints.empty()) {
+                    attempt_log.push_back({"fallback",
+                                           "Skipped fallback URIs due to --transport-only"});
                 }
 
                 outcome.logs = std::move(attempt_log);
@@ -3972,6 +4763,11 @@ int main(int argc, char** argv) {
 
             if (discovery_options.direct_only) {
                 if (!direct_outcome.has_value() || !direct_outcome->had_hints) {
+                    if (discovery_options.transport_only) {
+                        throw_cli_error("E_FETCH_DIRECT_ONLY_NO_HINTS",
+                                        "Manifest does not advertise transport/tcp hints",
+                                        "Re-store the payload from a node that publishes transport endpoints or drop --transport-only.");
+                    }
                     throw_cli_error("E_FETCH_DIRECT_ONLY_NO_HINTS",
                                     "Manifest does not contain discovery hints or fallbacks",
                                     "Store the payload from a node that advertises discovery metadata or remove --direct-only.");

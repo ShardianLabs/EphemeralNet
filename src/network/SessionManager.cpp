@@ -2,6 +2,7 @@
 
 #include "ephemeralnet/Types.hpp"
 #include "ephemeralnet/crypto/ChaCha20.hpp"
+#include "ephemeralnet/protocol/Message.hpp"
 
 #include <algorithm>
 #include <array>
@@ -11,6 +12,7 @@
 #include <exception>
 #include <iostream>
 #include <random>
+#include <span>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -31,6 +33,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
 #endif
@@ -80,6 +83,8 @@ constexpr std::size_t kPeerIdSize = sizeof(ephemeralnet::PeerId);
 constexpr std::size_t kNonceSize = sizeof(ephemeralnet::crypto::Nonce::bytes);
 constexpr std::size_t kLengthFieldSize = sizeof(std::uint32_t);
 constexpr std::size_t kMaxPayloadSize = 1 * 1024 * 1024;  // 1 MiB
+constexpr std::size_t kMaxHandshakePayload = 2048;
+constexpr std::chrono::milliseconds kHandshakeTimeout{2000};
 
 std::array<std::uint8_t, kPeerIdSize> peer_id_bytes(const ephemeralnet::PeerId& peer_id) {
     std::array<std::uint8_t, kPeerIdSize> bytes{};
@@ -199,6 +204,11 @@ std::uint16_t SessionManager::listening_port() const noexcept {
 void SessionManager::set_message_handler(MessageHandler handler) {
     std::scoped_lock lock(handler_mutex_);
     handler_ = std::move(handler);
+}
+
+void SessionManager::set_handshake_handler(HandshakeHandler handler) {
+    std::scoped_lock lock(handler_mutex_);
+    handshake_handler_ = std::move(handler);
 }
 
 std::size_t SessionManager::active_session_count() const {
@@ -330,6 +340,60 @@ bool SessionManager::send(const PeerId& peer_id, std::span<const std::uint8_t> p
     return send_all(session->socket, buffer.data(), buffer.size());
 }
 
+bool SessionManager::handle_pending_handshake(const PeerId& peer_id, SocketHandle socket) {
+    HandshakeHandler handler_copy;
+    {
+        std::scoped_lock lock(handler_mutex_);
+        handler_copy = handshake_handler_;
+    }
+
+    if (!handler_copy) {
+        return false;
+    }
+
+    std::vector<std::uint8_t> raw_message;
+    if (!read_handshake_payload(socket, raw_message, kHandshakeTimeout)) {
+        return false;
+    }
+
+    const auto decoded = protocol::decode(raw_message);
+    if (!decoded.has_value() || decoded->type != protocol::MessageType::TransportHandshake) {
+        return false;
+    }
+
+    const auto* payload = std::get_if<protocol::TransportHandshakePayload>(&decoded->payload);
+    if (payload == nullptr) {
+        return false;
+    }
+
+    const auto acceptance = handler_copy(peer_id, *payload);
+    if (!acceptance.has_value() || !acceptance->accepted) {
+        return false;
+    }
+
+    if (!acceptance->ack_payload.empty()) {
+        if (!send_encrypted(socket, acceptance->session_key, acceptance->ack_payload)) {
+            return false;
+        }
+    }
+
+    auto session = std::make_shared<Session>();
+    session->socket = socket;
+    session->key = acceptance->session_key;
+    session->endpoint = endpoint_string(socket);
+    session->running.store(true);
+
+    {
+        std::scoped_lock lock(sessions_mutex_);
+        sessions_[peer_key_string(peer_id)] = session;
+        keys_[peer_key_string(peer_id)] = acceptance->session_key;
+    }
+
+    session->reader = std::thread(&SessionManager::receive_loop, this, peer_id, session);
+    session->reader.detach();
+    return true;
+}
+
 void SessionManager::accept_loop() {
     while (running_) {
         sockaddr_in remote{};
@@ -351,16 +415,19 @@ void SessionManager::accept_loop() {
         PeerId peer_id{};
         std::copy(peer_bytes.begin(), peer_bytes.end(), peer_id.begin());
 
+        const auto socket_handle = from_native(client_socket);
         const auto key = peer_key(peer_id);
         if (!key.has_value()) {
-            close_socket(from_native(client_socket));
+            if (!handle_pending_handshake(peer_id, socket_handle)) {
+                close_socket(socket_handle);
+            }
             continue;
         }
 
         auto session = std::make_shared<Session>();
-        session->socket = from_native(client_socket);
+        session->socket = socket_handle;
         session->key = *key;
-        session->endpoint = endpoint_string(from_native(client_socket));
+        session->endpoint = endpoint_string(socket_handle);
         session->running.store(true);
 
         {
@@ -371,6 +438,76 @@ void SessionManager::accept_loop() {
         session->reader = std::thread(&SessionManager::receive_loop, this, peer_id, session);
         session->reader.detach();
     }
+}
+
+bool SessionManager::read_handshake_payload(SocketHandle socket,
+                                            std::vector<std::uint8_t>& buffer,
+                                            std::chrono::milliseconds timeout) const {
+    if (timeout.count() > 0) {
+        if (!set_recv_timeout(socket, timeout)) {
+            return false;
+        }
+    }
+
+    std::array<std::uint8_t, kLengthFieldSize> length_bytes{};
+    if (!recv_all(socket, length_bytes.data(), length_bytes.size())) {
+        set_recv_timeout(socket, std::chrono::milliseconds::zero());
+        return false;
+    }
+
+    const auto length = (static_cast<std::uint32_t>(length_bytes[0]) << 24)
+        | (static_cast<std::uint32_t>(length_bytes[1]) << 16)
+        | (static_cast<std::uint32_t>(length_bytes[2]) << 8)
+        | (static_cast<std::uint32_t>(length_bytes[3]));
+
+    if (length == 0 || length > kMaxHandshakePayload) {
+        set_recv_timeout(socket, std::chrono::milliseconds::zero());
+        return false;
+    }
+
+    buffer.resize(length);
+    if (!recv_all(socket, buffer.data(), buffer.size())) {
+        set_recv_timeout(socket, std::chrono::milliseconds::zero());
+        return false;
+    }
+
+    set_recv_timeout(socket, std::chrono::milliseconds::zero());
+    return true;
+}
+
+bool SessionManager::send_encrypted(SocketHandle socket,
+                                    const std::array<std::uint8_t, 32>& key_bytes,
+                                    std::span<const std::uint8_t> payload) {
+    if (payload.size() > kMaxPayloadSize) {
+        return false;
+    }
+
+    crypto::Key key{};
+    key.bytes = key_bytes;
+
+    crypto::Nonce nonce{};
+    {
+        std::random_device rd;
+        for (auto& byte : nonce.bytes) {
+            byte = static_cast<std::uint8_t>(rd());
+        }
+    }
+
+    std::vector<std::uint8_t> ciphertext(payload.size());
+    crypto::ChaCha20::apply(key, nonce, payload, ciphertext, 0u);
+
+    std::vector<std::uint8_t> buffer(kNonceSize + kLengthFieldSize + ciphertext.size());
+    std::copy(nonce.bytes.begin(), nonce.bytes.end(), buffer.begin());
+
+    const auto length = static_cast<std::uint32_t>(ciphertext.size());
+    buffer[kNonceSize + 0] = static_cast<std::uint8_t>((length >> 24) & 0xFFu);
+    buffer[kNonceSize + 1] = static_cast<std::uint8_t>((length >> 16) & 0xFFu);
+    buffer[kNonceSize + 2] = static_cast<std::uint8_t>((length >> 8) & 0xFFu);
+    buffer[kNonceSize + 3] = static_cast<std::uint8_t>(length & 0xFFu);
+
+    std::copy(ciphertext.begin(), ciphertext.end(), buffer.begin() + kNonceSize + kLengthFieldSize);
+
+    return send_all(socket, buffer.data(), buffer.size());
 }
 
 void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session> session) {
@@ -510,6 +647,24 @@ bool SessionManager::recv_all(SocketHandle handle, std::uint8_t* buffer, std::si
         }
         received_total += static_cast<std::size_t>(received);
     }
+    return true;
+}
+
+bool SessionManager::set_recv_timeout(SocketHandle handle, std::chrono::milliseconds timeout) {
+    auto socket = to_native(handle);
+#ifdef _WIN32
+    DWORD value = static_cast<DWORD>(timeout.count());
+    if (::setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&value), sizeof(value)) < 0) {
+        return false;
+    }
+#else
+    timeval tv{};
+    tv.tv_sec = static_cast<time_t>(timeout.count() / 1000);
+    tv.tv_usec = static_cast<suseconds_t>((timeout.count() % 1000) * 1000);
+    if (::setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&tv), sizeof(tv)) < 0) {
+        return false;
+    }
+#endif
     return true;
 }
 

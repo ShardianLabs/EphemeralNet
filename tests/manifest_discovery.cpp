@@ -37,6 +37,8 @@ int main() {
     auto manifest = advertise_node.store_chunk(make_peer_id(0x20), make_payload(0x30), 120s);
 
     assert(!manifest.discovery_hints.empty());
+    assert(manifest.discovery_hints.front().scheme == "control");
+    assert(manifest.discovery_hints.front().transport == "control");
     assert(manifest.discovery_hints.front().endpoint == "relay.example:61000");
     assert(manifest.discovery_hints.front().priority == 0);
     assert(!manifest.fallback_hints.empty());
@@ -52,6 +54,8 @@ int main() {
     auto default_port_manifest = default_port_node.store_chunk(make_peer_id(0x50), make_payload(0x60), 60s);
 
     assert(!default_port_manifest.discovery_hints.empty());
+    assert(default_port_manifest.discovery_hints.front().scheme == "control");
+    assert(default_port_manifest.discovery_hints.front().transport == "control");
     assert(default_port_manifest.discovery_hints.front().endpoint == "public.example:52000");
 
     // When no advertised host is configured, the bound control host should be used if routable.
@@ -63,6 +67,8 @@ int main() {
     auto fallback_manifest = fallback_node.store_chunk(make_peer_id(0x80), make_payload(0x90), 90s);
 
     assert(!fallback_manifest.discovery_hints.empty());
+    assert(fallback_manifest.discovery_hints.front().scheme == "control");
+    assert(fallback_manifest.discovery_hints.front().transport == "control");
     assert(fallback_manifest.discovery_hints.front().endpoint == "198.51.100.5:48080");
 
     // Explicit advertised endpoint list should preserve insertion order.
@@ -90,8 +96,12 @@ int main() {
     auto multi_manifest = multi_endpoint_node.store_chunk(make_peer_id(0xA0), make_payload(0xB0), 45s);
 
     assert(multi_manifest.discovery_hints.size() >= 2);
+    assert(multi_manifest.discovery_hints[0].scheme == "control");
+    assert(multi_manifest.discovery_hints[0].transport == "control");
     assert(multi_manifest.discovery_hints[0].endpoint == "manual.example:60500");
     assert(multi_manifest.discovery_hints[0].priority == 0);
+    assert(multi_manifest.discovery_hints[1].scheme == "transport");
+    assert(multi_manifest.discovery_hints[1].transport == "tcp");
     assert(multi_manifest.discovery_hints[1].endpoint == "auto.example:61500");
     assert(multi_manifest.discovery_hints[1].priority == 1);
 

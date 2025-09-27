@@ -16,7 +16,7 @@ namespace ephemeralnet::protocol {
 
 namespace {
 
-constexpr std::uint8_t kManifestVersion = 3;
+constexpr std::uint8_t kManifestVersion = 4;
 constexpr char kScheme[] = "eph://";
 constexpr std::size_t kAttestationDigestSize = 32;
 
@@ -151,13 +151,18 @@ std::string encode_manifest(const Manifest& manifest) {
 
     std::size_t discovery_bytes = 1;  // count byte
     for (const auto& hint : manifest.discovery_hints) {
+        const std::string& scheme = hint.scheme.empty() ? hint.transport : hint.scheme;
+        if (scheme.size() > std::numeric_limits<std::uint8_t>::max()) {
+            throw std::length_error("manifest discovery scheme too long");
+        }
         if (hint.transport.size() > std::numeric_limits<std::uint8_t>::max()) {
             throw std::length_error("manifest discovery transport too long");
         }
         if (hint.endpoint.size() > std::numeric_limits<std::uint16_t>::max()) {
             throw std::length_error("manifest discovery endpoint too long");
         }
-        discovery_bytes += 1 + hint.transport.size();   // transport length + data
+        discovery_bytes += 1 + scheme.size();            // scheme length + data
+        discovery_bytes += 1 + hint.transport.size();    // transport length + data
         discovery_bytes += 2 + hint.endpoint.size();     // endpoint length + data
         discovery_bytes += 1;                            // priority
     }
@@ -216,6 +221,9 @@ std::string encode_manifest(const Manifest& manifest) {
 
     buffer.push_back(static_cast<std::uint8_t>(manifest.discovery_hints.size()));
     for (const auto& hint : manifest.discovery_hints) {
+        const std::string& scheme = hint.scheme.empty() ? hint.transport : hint.scheme;
+        buffer.push_back(static_cast<std::uint8_t>(scheme.size()));
+        buffer.insert(buffer.end(), scheme.begin(), scheme.end());
         buffer.push_back(static_cast<std::uint8_t>(hint.transport.size()));
         buffer.insert(buffer.end(), hint.transport.begin(), hint.transport.end());
         append_u16(buffer, static_cast<std::uint16_t>(hint.endpoint.size()));
@@ -256,7 +264,7 @@ Manifest decode_manifest(const std::string& uri) {
     }
 
     const auto version = payload[offset++];
-    if (version != 1 && version != kManifestVersion) {
+    if (version != 1 && version != 2 && version != 3 && version != kManifestVersion) {
         throw std::invalid_argument("unsupported manifest version");
     }
 
@@ -338,6 +346,19 @@ Manifest decode_manifest(const std::string& uri) {
     manifest.discovery_hints.clear();
     manifest.discovery_hints.reserve(discovery_count);
     for (std::size_t i = 0; i < discovery_count; ++i) {
+        std::string scheme;
+        if (version >= 4) {
+            if (offset >= payload.size()) {
+                throw std::invalid_argument("manifest discovery scheme truncated");
+            }
+            const auto scheme_length = payload[offset++];
+            if (offset + scheme_length > payload.size()) {
+                throw std::invalid_argument("manifest discovery scheme truncated");
+            }
+            scheme.assign(payload.begin() + offset, payload.begin() + offset + scheme_length);
+            offset += scheme_length;
+        }
+
         if (offset >= payload.size()) {
             throw std::invalid_argument("manifest discovery transport truncated");
         }
@@ -363,7 +384,13 @@ Manifest decode_manifest(const std::string& uri) {
             throw std::invalid_argument("manifest discovery priority missing");
         }
         DiscoveryHint hint{};
+        if (version >= 4) {
+            hint.scheme = std::move(scheme);
+        }
         hint.transport = std::move(transport);
+        if (hint.scheme.empty()) {
+            hint.scheme = hint.transport;
+        }
         hint.endpoint = std::move(endpoint);
         hint.priority = payload[offset++];
         manifest.discovery_hints.push_back(std::move(hint));

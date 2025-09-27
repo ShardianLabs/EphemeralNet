@@ -20,6 +20,7 @@ struct KeyShard {
 };
 
 struct DiscoveryHint {
+    std::string scheme;
     std::string transport;
     std::string endpoint;
     std::uint8_t priority{0};

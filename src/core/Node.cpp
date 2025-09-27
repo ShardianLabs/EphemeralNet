@@ -403,13 +403,13 @@ std::optional<std::pair<std::string, std::uint16_t>> parse_endpoint(const std::s
 
 std::vector<Node::ControlEndpoint> Node::preferred_control_endpoints() const {
     std::vector<ControlEndpoint> endpoints;
-    endpoints.reserve(config_.advertised_endpoints.size() + 1);
+    endpoints.reserve(config_.advertised_endpoints.size() + config_.auto_advertise_candidates.size() + 2);
     std::unordered_set<std::string> seen;
 
     const auto transport_port = sessions_.listening_port();
     const auto fallback_port = transport_port != 0 ? transport_port : config_.control_port;
 
-    auto append = [&](const std::string& host, std::uint16_t port) {
+    auto append = [&](const std::string& host, std::uint16_t port, bool manual) {
         if (host.empty() || port == 0) {
             return;
         }
@@ -418,24 +418,41 @@ std::vector<Node::ControlEndpoint> Node::preferred_control_endpoints() const {
         }
         const auto key = host + ":" + std::to_string(port);
         if (seen.insert(key).second) {
-            endpoints.push_back(ControlEndpoint{host, port});
+            endpoints.push_back(ControlEndpoint{host, port, manual});
+        }
+    };
+
+    auto append_self_endpoint = [&]() {
+        const auto self = self_endpoint();
+        if (self.empty()) {
+            return;
+        }
+        if (const auto parsed = parse_endpoint(self)) {
+            append(parsed->first, parsed->second, false);
         }
     };
 
     if (!config_.advertised_endpoints.empty()) {
         for (const auto& endpoint : config_.advertised_endpoints) {
             const auto port = endpoint.port != 0 ? endpoint.port : fallback_port;
-            append(endpoint.host, port);
+            append(endpoint.host, port, endpoint.manual);
         }
-    } else if (config_.advertise_control_host.has_value()) {
-        const auto manual_port = config_.advertise_control_port.value_or(fallback_port);
-        append(*config_.advertise_control_host, manual_port);
-    } else if (!config_.control_host.empty()) {
-        append(config_.control_host, fallback_port);
-    } else if (const auto self = self_endpoint(); !self.empty()) {
-        if (const auto parsed = parse_endpoint(self)) {
-            append(parsed->first, parsed->second);
+    } else {
+        if (config_.advertise_control_host.has_value()) {
+            const auto manual_port = config_.advertise_control_port.value_or(fallback_port);
+            append(*config_.advertise_control_host, manual_port, true);
+        } else if (!config_.control_host.empty()) {
+            append(config_.control_host, fallback_port, true);
         }
+    }
+
+    for (const auto& candidate : config_.auto_advertise_candidates) {
+        const auto port = candidate.port != 0 ? candidate.port : fallback_port;
+        append(candidate.host, port, false);
+    }
+
+    if (transport_port != 0) {
+        append_self_endpoint();
     }
 
     return endpoints;
@@ -1418,34 +1435,45 @@ protocol::Manifest Node::store_chunk(const ChunkId& chunk_id,
         }
     }
 
+    manifest.metadata["publisher_peer"] = peer_id_to_string(id_);
+    manifest.metadata["publisher_public"] = std::to_string(identity_public_);
+
     auto format_endpoint = [](const std::string& host, std::uint16_t port) {
         return host + ":" + std::to_string(port);
     };
 
-    auto add_discovery_entry = [&](const std::string& host, std::uint16_t port, std::uint8_t priority) {
-        if (host.empty() || port == 0) {
+    auto add_discovery_entry = [&](const ControlEndpoint& endpoint, std::uint8_t priority) {
+        if (endpoint.host.empty() || endpoint.port == 0) {
             return;
         }
         protocol::DiscoveryHint hint{};
-        hint.transport = "control";
-        hint.endpoint = format_endpoint(host, port);
+        if (endpoint.manual) {
+            hint.scheme = "control";
+            hint.transport = "control";
+        } else {
+            hint.scheme = "transport";
+            hint.transport = "tcp";
+        }
+        hint.endpoint = format_endpoint(endpoint.host, endpoint.port);
         hint.priority = priority;
         manifest.discovery_hints.push_back(hint);
 
-        protocol::FallbackHint fallback{};
-        fallback.uri = "control://" + hint.endpoint;
-        fallback.priority = static_cast<std::uint8_t>(std::min<int>(priority + 10, 255));
-        manifest.fallback_hints.push_back(fallback);
+        if (endpoint.manual) {
+            protocol::FallbackHint fallback{};
+            fallback.uri = "control://" + hint.endpoint;
+            fallback.priority = static_cast<std::uint8_t>(std::min<int>(priority + 10, 255));
+            manifest.fallback_hints.push_back(fallback);
+        }
     };
 
     std::unordered_set<std::string> seen_endpoints;
-    auto try_add_endpoint = [&](const std::string& host, std::uint16_t port, std::uint8_t priority) {
-        if (host.empty() || port == 0) {
+    auto try_add_endpoint = [&](const ControlEndpoint& endpoint, std::uint8_t priority) {
+        if (endpoint.host.empty() || endpoint.port == 0) {
             return;
         }
-        const auto endpoint = format_endpoint(host, port);
-        if (seen_endpoints.insert(endpoint).second) {
-            add_discovery_entry(host, port, priority);
+        const auto endpoint_key = format_endpoint(endpoint.host, endpoint.port);
+        if (seen_endpoints.insert(endpoint_key).second) {
+            add_discovery_entry(endpoint, priority);
         }
     };
 
@@ -1458,21 +1486,25 @@ protocol::Manifest Node::store_chunk(const ChunkId& chunk_id,
         return current;
     };
 
-    const auto append_advertised_endpoint = [&](const std::string& host, std::uint16_t port) {
-        if (host.empty() || port == 0) {
+    const auto append_advertised_endpoint = [&](const ControlEndpoint& endpoint) {
+        if (endpoint.host.empty() || endpoint.port == 0) {
             return;
         }
-        try_add_endpoint(host, port, take_priority());
+        try_add_endpoint(endpoint, take_priority());
     };
 
     const auto control_endpoints = preferred_control_endpoints();
     for (const auto& endpoint : control_endpoints) {
-        append_advertised_endpoint(endpoint.host, endpoint.port);
+        append_advertised_endpoint(endpoint);
     }
 
     std::uint8_t hint_priority = next_priority == 0 ? 1 : next_priority;
     for (const auto& bootstrap : config_.bootstrap_nodes) {
-        try_add_endpoint(bootstrap.host, bootstrap.port, hint_priority);
+        ControlEndpoint endpoint{};
+        endpoint.host = bootstrap.host;
+        endpoint.port = bootstrap.port;
+        endpoint.manual = true;
+        try_add_endpoint(endpoint, hint_priority);
         if (hint_priority < std::numeric_limits<std::uint8_t>::max()) {
             ++hint_priority;
         }
@@ -1950,6 +1982,10 @@ void Node::initialize_transport_handler() {
             external_handler_(message);
         }
     });
+    sessions_.set_handshake_handler([this](const PeerId& peer_id,
+                                           const protocol::TransportHandshakePayload& payload) {
+        return handle_transport_handshake(peer_id, payload);
+    });
 }
 
 void Node::handle_transport_message(const network::TransportMessage& message) {
@@ -1971,6 +2007,49 @@ void Node::handle_transport_message(const network::TransportMessage& message) {
     note_peer_message_version(message.peer_id, decoded->version);
 
     handle_protocol_message(*decoded, message);
+}
+
+std::optional<network::SessionManager::HandshakeAcceptance> Node::handle_transport_handshake(
+    const PeerId& peer_id,
+    const protocol::TransportHandshakePayload& payload) {
+    if (!network::KeyExchange::validate_public(payload.public_identity)) {
+        return std::nullopt;
+    }
+
+    const auto requested_version = is_message_version_supported(payload.requested_version)
+                                       ? payload.requested_version
+                                       : preferred_message_version();
+    const auto negotiated_version = std::clamp<std::uint8_t>(
+        std::min<std::uint8_t>(requested_version, preferred_message_version()),
+        protocol::kMinimumMessageVersion,
+        protocol::kCurrentMessageVersion);
+
+    if (!perform_handshake(peer_id, payload.public_identity, payload.work_nonce)) {
+        return std::nullopt;
+    }
+
+    const auto key = session_shared_key(peer_id);
+    if (!key.has_value()) {
+        return std::nullopt;
+    }
+
+    protocol::Message ack{};
+    ack.version = negotiated_version;
+    ack.type = protocol::MessageType::HandshakeAck;
+    protocol::HandshakeAckPayload ack_payload{};
+    ack_payload.accepted = true;
+    ack_payload.negotiated_version = negotiated_version;
+    ack_payload.responder_public = identity_public_;
+    ack.payload = ack_payload;
+
+    const auto key_span = std::span<const std::uint8_t>(key->data(), key->size());
+    auto encoded_ack = protocol::encode_signed(ack, key_span);
+
+    network::SessionManager::HandshakeAcceptance acceptance{};
+    acceptance.accepted = true;
+    acceptance.session_key = *key;
+    acceptance.ack_payload = std::move(encoded_ack);
+    return acceptance;
 }
 
 void Node::handle_protocol_message(const protocol::Message& message, const network::TransportMessage& transport) {

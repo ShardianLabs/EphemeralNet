@@ -168,6 +168,28 @@ std::optional<Payload> decode_payload_v1(MessageType type,
             payload.peer_id = parse_peer_id(data + 1 + kChunkIdSize);
             return Payload{payload};
         }
+        case MessageType::TransportHandshake: {
+            const auto needed = 4 + 8 + 1;
+            if (remaining < needed) {
+                return std::nullopt;
+            }
+            TransportHandshakePayload payload{};
+            payload.public_identity = read_u32(data);
+            payload.work_nonce = read_u64(data + 4);
+            payload.requested_version = *(data + 12);
+            return Payload{payload};
+        }
+        case MessageType::HandshakeAck: {
+            const auto needed = 1 + 1 + 4;
+            if (remaining < needed) {
+                return std::nullopt;
+            }
+            HandshakeAckPayload payload{};
+            payload.accepted = *(data) != 0;
+            payload.negotiated_version = *(data + 1);
+            payload.responder_public = read_u32(data + 2);
+            return Payload{payload};
+        }
         default:
             return std::nullopt;
     }
@@ -228,6 +250,14 @@ std::vector<std::uint8_t> encode(const Message& message) {
                 out.push_back(static_cast<std::uint8_t>(payload.accepted ? 1 : 0));
                 out.insert(out.end(), chunk_bytes.begin(), chunk_bytes.end());
                 out.insert(out.end(), peer_bytes.begin(), peer_bytes.end());
+            } else if constexpr (std::is_same_v<PayloadType, TransportHandshakePayload>) {
+                write_u32(out, payload.public_identity);
+                write_u64(out, payload.work_nonce);
+                out.push_back(payload.requested_version);
+            } else if constexpr (std::is_same_v<PayloadType, HandshakeAckPayload>) {
+                out.push_back(static_cast<std::uint8_t>(payload.accepted ? 1 : 0));
+                out.push_back(payload.negotiated_version);
+                write_u32(out, payload.responder_public);
             }
         },
         message.payload);

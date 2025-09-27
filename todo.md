@@ -26,6 +26,8 @@
 - Auto-advertise detection filters private/unroutable endpoints unless operators opt-in via `--control-expose` or `--advertise-allow-private`.
 - Auto-advertise detection preserves all conflicting gateway/interface results and surfaces structured warnings in daemon logs and CLI output.
 - Transport auto-advertise now derives routable endpoints from UPnP/STUN data even when the control plane stays on loopback, so zero-config nodes remain reachable without exposing `--advertise-control` unless operators explicitly pin it (still honouring `--advertise-auto`).
+- Discovery hints now always include auto-advertised data-plane (`transport/tcp`) endpoints alongside manually pinned `control` contacts, so manifests expose both schemes for future transport bootstrap flows.
+- CLI fetch exposes `--transport-only` (force transport/tcp hints) and `--control-fallback` (skip transport) so operators can pin the desired discovery mode.
 - SwarmCoordinator distributes manifests/shards with replication and rebalance plans.
 - Optional persistent on-disk storage with secure TTL-driven wipe.
 - Node CLI exposes `serve`, `store`, `fetch`, and `list` over the `Node` API.
@@ -69,6 +71,7 @@
 - Reviewed crypto hardening levers (key rotation cadence, TTL bounds, announce throttles) using soak metrics and tuned defaults/documentation accordingly.
 - Anti-Sybil defences enforce PoW across handshake/store/announce paths with CLI/daemon helpers, abuse heuristics, metrics, and bundled Prometheus/Grafana alerting assets.
 - Manifest-only fetch bootstrapper shipped (schema extensions, CLI bootstrap flow, and cross-platform docs/tests) together with `--control-expose`/`--control-loopback` safeguards for daemon binding on VPS deployments.
+- Introduced a `scheme`/`transport` pair on `protocol::DiscoveryHint`, updated manifest encode/decode, and taught the CLI/docs/tests to use it.
 
 ## Next milestones
 - **OPS & OBSERVABILITY**

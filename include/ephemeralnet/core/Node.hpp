@@ -114,6 +114,7 @@ private:
     struct ControlEndpoint {
         std::string host;
         std::uint16_t port{0};
+        bool manual{false};
     };
 
     PeerId id_{};
@@ -196,6 +197,9 @@ private:
     void initialize_transport_handler();
     void handle_transport_message(const network::TransportMessage& message);
     void handle_protocol_message(const protocol::Message& message, const network::TransportMessage& transport);
+    std::optional<network::SessionManager::HandshakeAcceptance> handle_transport_handshake(
+        const PeerId& peer_id,
+        const protocol::TransportHandshakePayload& payload);
     void handle_request(const protocol::RequestPayload& payload, const PeerId& sender);
     void handle_chunk(const protocol::ChunkPayload& payload, const PeerId& sender);
     void handle_acknowledge(const protocol::AcknowledgePayload& payload, const PeerId& sender);

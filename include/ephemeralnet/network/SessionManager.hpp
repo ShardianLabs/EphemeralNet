@@ -1,9 +1,11 @@
 #pragma once
 
 #include "ephemeralnet/Types.hpp"
+#include "ephemeralnet/protocol/Message.hpp"
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -27,6 +29,13 @@ struct TransportMessage {
 class SessionManager {
 public:
     using MessageHandler = std::function<void(const TransportMessage&)>;
+    struct HandshakeAcceptance {
+        bool accepted{false};
+        std::array<std::uint8_t, 32> session_key{};
+        std::vector<std::uint8_t> ack_payload;
+    };
+    using HandshakeHandler = std::function<std::optional<HandshakeAcceptance>(const PeerId& peer_id,
+                                                                              const protocol::TransportHandshakePayload& payload)>;
     using SocketHandle = intptr_t;
     static constexpr SocketHandle INVALID_SOCKET_HANDLE = static_cast<SocketHandle>(-1);
 
@@ -42,6 +51,7 @@ public:
     std::uint16_t listening_port() const noexcept;
 
     void set_message_handler(MessageHandler handler);
+    void set_handshake_handler(HandshakeHandler handler);
 
     void register_peer_key(const PeerId& peer_id, const std::array<std::uint8_t, 32>& key);
 
@@ -69,6 +79,7 @@ private:
     PeerId self_id_{};
     mutable std::mutex handler_mutex_;
     MessageHandler handler_{};
+    HandshakeHandler handshake_handler_{};
 
     std::atomic<bool> running_{false};
     SocketHandle listen_socket_{INVALID_SOCKET_HANDLE};
@@ -81,12 +92,20 @@ private:
 
     void accept_loop();
     void receive_loop(const PeerId& peer_id, std::shared_ptr<Session> session);
+    bool handle_pending_handshake(const PeerId& peer_id, SocketHandle socket);
+    bool read_handshake_payload(SocketHandle socket,
+                                std::vector<std::uint8_t>& buffer,
+                                std::chrono::milliseconds timeout) const;
+    bool send_encrypted(SocketHandle socket,
+                        const std::array<std::uint8_t, 32>& key,
+                        std::span<const std::uint8_t> payload);
     void teardown_sessions();
     std::optional<std::array<std::uint8_t, 32>> peer_key(const PeerId& peer_id) const;
     static std::string peer_key_string(const PeerId& peer_id);
 
     static bool send_all(SocketHandle socket, const std::uint8_t* data, std::size_t length);
     static bool recv_all(SocketHandle socket, std::uint8_t* buffer, std::size_t length);
+    static bool set_recv_timeout(SocketHandle socket, std::chrono::milliseconds timeout);
     static void close_socket(SocketHandle socket);
     static bool configure_socket(SocketHandle socket, bool server_mode);
     static SocketHandle create_socket();

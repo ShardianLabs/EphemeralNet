@@ -52,6 +52,8 @@ Retrieve a manifest payload to a local file or directory. When the local daemon 
 - Command options:
   - `--out <path>`: Destination file or directory. Defaults to `--fetch-default-dir` or the current directory.
   - `--direct-only`: Use discovery hints/fallbacks exclusively. Skips the local daemon/DHT fallback.
+  - `--transport-only`: Attempt only transport/tcp hints. If none succeed the command fails without contacting control endpoints or the local daemon.
+  - `--control-fallback`: Skip transport hints entirely and jump straight to control-plane hints/fallback URIs (legacy behaviour).
   - `--bootstrap-token <value>`: Provide a precomputed PoW token when discovery endpoints demand one. Useful for air-gapped token solvers.
   - `--bootstrap-max-attempts <n>`: Cap the number of nonce attempts when auto-solving PoW tokens (default `250000`).
   - `--no-bootstrap-auto-token`: Disable automatic PoW solving. Use with `--bootstrap-token` when you want to supply your own nonce.
@@ -59,7 +61,8 @@ Retrieve a manifest payload to a local file or directory. When the local daemon 
 Behavioural notes:
 
 - Without `--out`, the CLI picks a filename from manifest metadata (`filename` key) or falls back to `chunk_<timestamp>`.
-- Fetch now always attempts discovery hints/fallbacks first (sorted by priority). If none succeed, the CLI falls back to the local daemon, which in turn leverages the swarm/DHT.
+- Discovery hints are sorted by priority, but transport hints (`scheme="transport"` or `transport="tcp"`) are now attempted before any control-plane hints. If every transport/control hint fails, the CLI still falls back to the local daemon, which can query the swarm/DHT.
+- Discovery hints advertise both a `scheme` and a lower-level `transport`. Auto-advertised data-plane endpoints surface as `scheme="transport"`/`transport="tcp"` and require the manifest to embed the publisher peer/public scalar so the CLI can satisfy the transport handshake PoW. Manually pinned control endpoints continue to use `scheme="control"`. Use `--transport-only` to insist on transport hints (great for air-gapped restores) or `--control-fallback` to disable the transport handshake entirely for legacy nodes.
 - Fallback hints that reference `control://host:port` are attempted after discovery hints fail; other URI schemes currently log an informative error.
 - `--direct-only` skips the swarm fallback entirely—handy for air-gapped restores or when you intentionally avoid the public DHT.
 - Progress is displayed per attempt ("Direct download", "Fallback download", or "Downloading" when the daemon streams the result).

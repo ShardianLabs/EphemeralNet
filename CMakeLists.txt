@@ -172,6 +172,23 @@ if(EPHEMERALNET_BUILD_TESTS)
 
     add_test(NAME EphemeralNet.ProtocolAuth COMMAND ephemeralnet_protocol_auth_tests)
 
+    add_executable(ephemeralnet_transport_handshake_tests
+        tests/transport_handshake.cpp
+    )
+
+    target_link_libraries(ephemeralnet_transport_handshake_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_transport_handshake_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_transport_handshake_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.TransportHandshake COMMAND ephemeralnet_transport_handshake_tests)
+
     add_executable(ephemeralnet_dht_tests
         tests/dht_buckets.cpp
     )

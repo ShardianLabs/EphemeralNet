@@ -24,6 +24,7 @@ int main() {
     manifest.metadata["filename"] = "secret.bin";
 
     ephemeralnet::protocol::DiscoveryHint hint{};
+    hint.scheme = "control";
     hint.transport = "control";
     hint.endpoint = "198.51.100.10:47777";
     hint.priority = 3;
@@ -52,6 +53,7 @@ int main() {
     assert(decoded.shards[0].value == shard.value);
     assert(decoded.metadata == manifest.metadata);
     assert(decoded.discovery_hints.size() == 1);
+    assert(decoded.discovery_hints[0].scheme == hint.scheme);
     assert(decoded.discovery_hints[0].transport == hint.transport);
     assert(decoded.discovery_hints[0].endpoint == hint.endpoint);
     assert(decoded.discovery_hints[0].priority == hint.priority);
