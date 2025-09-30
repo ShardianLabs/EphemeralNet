@@ -52,6 +52,7 @@ struct Config {
     std::string storage_directory{"storage"};
     std::string control_host{"127.0.0.1"};
     std::uint16_t control_port{47777};
+    std::uint16_t transport_listen_port{45000};
     std::optional<std::string> control_token{};
     std::size_t control_stream_max_bytes{32ull * 1024ull * 1024ull};
     std::optional<std::uint32_t> identity_seed{};

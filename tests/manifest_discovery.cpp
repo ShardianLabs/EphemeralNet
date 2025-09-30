@@ -96,13 +96,13 @@ int main() {
     auto multi_manifest = multi_endpoint_node.store_chunk(make_peer_id(0xA0), make_payload(0xB0), 45s);
 
     assert(multi_manifest.discovery_hints.size() >= 2);
-    assert(multi_manifest.discovery_hints[0].scheme == "control");
-    assert(multi_manifest.discovery_hints[0].transport == "control");
-    assert(multi_manifest.discovery_hints[0].endpoint == "manual.example:60500");
+    assert(multi_manifest.discovery_hints[0].scheme == "transport");
+    assert(multi_manifest.discovery_hints[0].transport == "tcp");
+    assert(multi_manifest.discovery_hints[0].endpoint == "auto.example:61500");
     assert(multi_manifest.discovery_hints[0].priority == 0);
-    assert(multi_manifest.discovery_hints[1].scheme == "transport");
-    assert(multi_manifest.discovery_hints[1].transport == "tcp");
-    assert(multi_manifest.discovery_hints[1].endpoint == "auto.example:61500");
+    assert(multi_manifest.discovery_hints[1].scheme == "control");
+    assert(multi_manifest.discovery_hints[1].transport == "control");
+    assert(multi_manifest.discovery_hints[1].endpoint == "manual.example:60500");
     assert(multi_manifest.discovery_hints[1].priority == 1);
 
     return 0;

@@ -16,6 +16,7 @@ EphemeralNet is an ephemeral P2P filesystem written in C++ that focuses on shari
 - **Control-plane proof-of-work**: handshake and store operations enforce configurable PoW to discourage spam and Sybil abuse.
 - **Bootstrap gossip hints**: manifest broadcasts share the ordered set of advertised control endpoints so hint-only (`--direct-only`) peers immediately learn multiple routable contacts.
 - **Auto-inferred public endpoints**: binding the control plane to `0.0.0.0` automatically promotes UPnP/STUN discoveries so peers learn a routable control endpoint without extra flags.
+- **Shardian bootstrap defaults**: `eph start` pins the transport listener to TCP 45000, seeds the DHT with `bootstrap1.shardian.com`/`bootstrap2.shardian.com`, and reuses the shared STUN/TURN relays so zero-config peers join the public mesh while the control plane stays on loopback.
 - **TTL auditing**: consistent reports that surface expirations pending in local storage and the DHT.
 - **Cleanup coordination**: synchronises local expirations with automatic announcement withdrawal and emits notifications.
 - **Secure transport**: ChaCha20-encrypted TCP sessions replace the simulated manager and unlock peer-to-peer messaging.
@@ -87,7 +88,7 @@ eph man
 eph stop
 ```
 
-Global switches control persistence (`--no-persistent`), storage path (`--storage-dir`), secure wipe passes (`--wipe-passes`), deterministic identity (`--identity-seed`), control-plane endpoints (`--control-host`, `--control-port`), TTL bounds (`--min-ttl`, `--max-ttl`), session key rotation cadence (`--key-rotation`), announce throttling (`--announce-interval`, `--announce-burst`, `--announce-window`, `--announce-pow`), concurrency (`--fetch-parallel`, `--upload-parallel`), fetch defaults (`--fetch-default-dir`, `--fetch-ignore-manifest-name`), and version/manual discovery (`--version`, `eph man`).
+Global switches control persistence (`--no-persistent`), storage path (`--storage-dir`), secure wipe passes (`--wipe-passes`), deterministic identity (`--identity-seed`), control-plane endpoints (`--control-host`, `--control-port`), the transport/data-plane listener (`--transport-port`, default 45000), TTL bounds (`--min-ttl`, `--max-ttl`), session key rotation cadence (`--key-rotation`), announce throttling (`--announce-interval`, `--announce-burst`, `--announce-window`, `--announce-pow`), concurrency (`--fetch-parallel`, `--upload-parallel`), fetch defaults (`--fetch-default-dir`, `--fetch-ignore-manifest-name`), and version/manual discovery (`--version`, `eph man`).
 Fetch now attempts manifest discovery hints first and automatically falls back to the local daemon/DHT—use `--direct-only` when you want to skip that fallback or when operating entirely over routable advertised endpoints.
 
 > The `start` command reuses the same options as `serve` to configure the daemon before backgrounding it.

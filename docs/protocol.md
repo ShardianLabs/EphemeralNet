@@ -72,7 +72,7 @@ Manifests are serialized and base64-encoded in the `eph://` URI returned to clie
 
 ### Bootstrap Gossip
 
-- When a node broadcasts a manifest to bootstrap peers, it now reuses the same prioritized advertised endpoint list (manual overrides first, then vetted auto-detections). The Announce payload delivered to each peer carries every routable control-plane host/port so newcomers can try multiple contacts without re-fetching the manifest.
+- When a node broadcasts a manifest to bootstrap peers, it now reuses the same prioritized advertised endpoint list (auto-discovered transport endpoints first, then manual control fallbacks). The Announce payload delivered to each peer carries every routable contact so newcomers attempt direct transport before resorting to control-plane bootstrap.
 - If no custom endpoints are available the daemon falls back to its own externally reachable address, preserving the previous behaviour.
 - The swarm coordinator tracks which peers were notified and which endpoints were delivered, enabling diagnostic tooling and regression tests to assert that gossip remained aligned with the advertised list.
 

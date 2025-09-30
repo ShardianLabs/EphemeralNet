@@ -5,6 +5,7 @@ This document defines the operating guidelines for EphemeralNet bootstrap, STUN/
 ## 1. Scope
 
 - **Covered services**: Public bootstrap/control daemons, TURN/STUN relays, and supporting automation that the community relies upon for discovery and traversal.
+- **Shardian references**: The canonical DNS entries `bootstrap1.shardian.com`, `bootstrap2.shardian.com`, `stun.shardian.com`, and `turn.shardian.com` are treated as shared community infrastructure. When delegating or mirroring them, operators must meet the same uptime and abuse-handling expectations described below.
 - **Audience**: Infrastructure operators, incident responders, and community moderators coordinating access to EphemeralNet resources.
 - **Goals**: Maintain availability, protect user privacy, and minimise the risk of abuse or illegal content distribution through shared services.
 

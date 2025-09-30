@@ -6,10 +6,9 @@
 namespace ephemeralnet::network {
 
 namespace {
-constexpr std::array<const char*, 3> kStunFallbackHosts{
-    "stun1.example.net",
-    "stun2.example.net",
-    "stun3.example.net",
+constexpr std::array<const char*, 2> kStunFallbackHosts{
+    "stun.shardian.com",
+    "turn.shardian.com",
 };
 }
 

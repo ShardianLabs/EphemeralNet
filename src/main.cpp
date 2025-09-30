@@ -78,6 +78,52 @@
 namespace {
 
 constexpr std::string_view kEphemeralNetVersion = EPHEMERALNET_VERSION;
+constexpr std::uint16_t kDefaultTransportPort = 45000;
+
+struct BootstrapSeedConfig {
+    const char* host;
+    std::uint16_t port;
+    std::uint32_t identity_seed;
+};
+
+constexpr std::array<BootstrapSeedConfig, 2> kShardianBootstrapSeeds{std::array<BootstrapSeedConfig, 2>{
+    BootstrapSeedConfig{"bootstrap1.shardian.com", 45000, 0x53485241u},
+    BootstrapSeedConfig{"bootstrap2.shardian.com", 45000, 0x53485242u},
+}};
+
+ephemeralnet::PeerId peer_id_from_identity_seed(std::uint32_t seed) {
+    std::array<std::uint8_t, 4> seed_bytes{};
+    seed_bytes[0] = static_cast<std::uint8_t>((seed >> 24) & 0xFFu);
+    seed_bytes[1] = static_cast<std::uint8_t>((seed >> 16) & 0xFFu);
+    seed_bytes[2] = static_cast<std::uint8_t>((seed >> 8) & 0xFFu);
+    seed_bytes[3] = static_cast<std::uint8_t>(seed & 0xFFu);
+    const auto digest = ephemeralnet::crypto::Sha256::digest(std::span<const std::uint8_t>(seed_bytes.data(), seed_bytes.size()));
+    ephemeralnet::PeerId id{};
+    std::copy(digest.begin(), digest.end(), id.begin());
+    return id;
+}
+
+std::uint32_t derive_public_identity_from_seed(std::uint32_t seed) {
+    std::mt19937 generator;
+    generator.seed(seed);
+    std::uniform_int_distribution<std::uint32_t> distribution(2u, ephemeralnet::network::KeyExchange::kPrime - 2u);
+    const auto scalar = distribution(generator);
+    return ephemeralnet::network::KeyExchange::compute_public(scalar);
+}
+
+std::vector<ephemeralnet::Config::BootstrapNode> shardian_bootstrap_nodes() {
+    std::vector<ephemeralnet::Config::BootstrapNode> nodes;
+    nodes.reserve(kShardianBootstrapSeeds.size());
+    for (const auto& seed : kShardianBootstrapSeeds) {
+        ephemeralnet::Config::BootstrapNode node{};
+        node.host = seed.host;
+        node.port = seed.port;
+        node.id = peer_id_from_identity_seed(seed.identity_seed);
+        node.public_identity = derive_public_identity_from_seed(seed.identity_seed);
+        nodes.push_back(std::move(node));
+    }
+    return nodes;
+}
 
 namespace protocol = ephemeralnet::protocol;
 namespace bootstrap = ephemeralnet::bootstrap;
@@ -122,6 +168,7 @@ struct GlobalOptions {
     std::optional<std::uint16_t> advertise_control_port{};
     bool advertise_allow_private{false};
     std::optional<ephemeralnet::Config::AdvertiseAutoMode> advertise_auto_mode{};
+    std::optional<std::uint16_t> transport_listen_port{};
 };
 
 std::string trim(std::string value);
@@ -1888,6 +1935,15 @@ void apply_profile_to_options(const config::Value& profile, GlobalOptions& optio
         }
     }
 
+    if (!options.transport_listen_port) {
+        if (auto port = config::get_int64_any(profile,
+                                              {{"transport", "port"},
+                                               {"network", "transport_port"},
+                                               {"node", "transport_port"}})) {
+            options.transport_listen_port = get_uint16(*port, "transport.port");
+        }
+    }
+
     if (!options.control_token) {
         if (auto token = config::get_string_any(profile, {{"control", "token"}, {"control-token"}})) {
             options.control_token = *token;
@@ -2255,6 +2311,7 @@ void print_usage() {
               << "  --control-expose          Bind control socket on 0.0.0.0 for remote access\n"
               << "  --control-loopback        Force control socket to stay on 127.0.0.1\n"
               << "  --control-port <port>     Control socket port (default 47777)\n"
+              << "  --transport-port <port>  Transport listening port (default 45000)\n"
               << "  --control-token <secret>  Pre-shared token for control-plane authentication\n"
               << "  --advertise-control <ep>  Host[:port] advertised inside manifests for remote fetches\n"
               << "  --advertise-allow-private Allow auto-advertise of private/control addresses\n"
@@ -2376,6 +2433,7 @@ void print_manual() {
               << "    --control-expose       Bind control socket on 0.0.0.0 (prompts for confirmation).\n"
               << "    --control-loopback     Force control socket onto 127.0.0.1 even if profile overrides it.\n"
               << "    --control-port <port>  Control socket port.\n"
+              << "    --transport-port <port>  Transport layer listening port.\n"
               << "    --control-token <tok>  Control-plane authentication token.\n"
               << "    --advertise-control <ep>\n"
               << "                          Host[:port] embedded into manifests for direct fetches.\n"
@@ -2631,6 +2689,14 @@ void validate_global_options(GlobalOptions& options) {
         }
     }
 
+    if (options.transport_listen_port) {
+        if (*options.transport_listen_port == 0) {
+            throw_cli_error("E_INVALID_TRANSPORT_PORT",
+                            "--transport-port must be between 1 and 65535",
+                            "Choose a transport port greater than zero, e.g. --transport-port 45000");
+        }
+    }
+
     if (options.control_token) {
         auto token = strip_quotes(*options.control_token);
         token = trim(token);
@@ -2864,6 +2930,9 @@ ephemeralnet::Config build_config(const GlobalOptions& options) {
     if (options.control_port) {
         config.control_port = *options.control_port;
     }
+    if (options.transport_listen_port) {
+        config.transport_listen_port = *options.transport_listen_port;
+    }
     if (options.control_token) {
         config.control_token = strip_quotes(*options.control_token);
     }
@@ -2892,6 +2961,12 @@ ephemeralnet::Config build_config(const GlobalOptions& options) {
     }
     if (options.upload_parallel) {
         config.upload_max_parallel_transfers = *options.upload_parallel;
+    }
+    if (config.bootstrap_nodes.empty()) {
+        config.bootstrap_nodes = shardian_bootstrap_nodes();
+    }
+    if (config.transport_listen_port == 0) {
+        config.transport_listen_port = kDefaultTransportPort;
     }
     return config;
 }
@@ -2959,6 +3034,10 @@ std::vector<std::string> build_daemon_arguments(const GlobalOptions& options) {
     if (options.control_port) {
         args.emplace_back("--control-port");
         args.emplace_back(std::to_string(*options.control_port));
+    }
+    if (options.transport_listen_port) {
+        args.emplace_back("--transport-port");
+        args.emplace_back(std::to_string(*options.transport_listen_port));
     }
     if (options.control_token) {
         args.emplace_back("--control-token");
@@ -3494,6 +3573,17 @@ int main(int argc, char** argv) {
                 options.control_port = port;
                 continue;
             }
+            if (opt == "--transport-port") {
+                const auto value = require_value(opt);
+                std::uint16_t port{};
+                if (!parse_uint16(value, port)) {
+                    throw_cli_error("E_INVALID_TRANSPORT_PORT",
+                                    "--transport-port must be an integer between 1 and 65535",
+                                    "For example: --transport-port 45000");
+                }
+                options.transport_listen_port = port;
+                continue;
+            }
             if (opt == "--control-token") {
                 options.control_token = require_value(opt);
                 continue;
@@ -3667,7 +3757,7 @@ int main(int argc, char** argv) {
             bool runtime_auto_advertise_conflict = false;
             {
                 std::scoped_lock lock(node_mutex);
-                node.start_transport(0);
+                node.start_transport(config.transport_listen_port);
                 runtime_auto_advertise_warnings = node.config().auto_advertise_warnings;
                 runtime_auto_advertise_conflict = node.config().auto_advertise_conflict;
             }
@@ -3903,6 +3993,9 @@ int main(int argc, char** argv) {
             const auto store_pow = response->fields.contains("STORE_POW") ? response->fields.at("STORE_POW") : std::string("0");
             const auto control_host = response->fields.contains("CONTROL_HOST") ? response->fields.at("CONTROL_HOST") : std::string("127.0.0.1");
             const auto control_port = response->fields.contains("CONTROL_PORT") ? response->fields.at("CONTROL_PORT") : std::string("47777");
+            const auto transport_port = response->fields.contains("TRANSPORT_PORT")
+                                            ? response->fields.at("TRANSPORT_PORT")
+                                            : std::to_string(kDefaultTransportPort);
             const auto control_stream_max = response->fields.contains("CONTROL_STREAM_MAX") ? response->fields.at("CONTROL_STREAM_MAX") : std::string("0");
             const auto storage_persistent = response->fields.contains("STORAGE_PERSISTENT") ? response->fields.at("STORAGE_PERSISTENT") : std::string("0");
             const auto storage_dir = response->fields.contains("STORAGE_DIR") ? response->fields.at("STORAGE_DIR") : std::string("storage");
@@ -3914,6 +4007,9 @@ int main(int argc, char** argv) {
             const auto advertise_endpoints = response->fields.contains("ADVERTISE_ENDPOINTS")
                                                  ? response->fields.at("ADVERTISE_ENDPOINTS")
                                                  : std::string();
+            const auto bootstrap_nodes = response->fields.contains("BOOTSTRAP_NODES")
+                                              ? response->fields.at("BOOTSTRAP_NODES")
+                                              : std::string();
 
             std::cout << "  Default TTL:        " << default_ttl << " seconds" << std::endl;
             std::cout << "  TTL window:         " << min_ttl << "s - " << max_ttl << "s" << std::endl;
@@ -3924,12 +4020,23 @@ int main(int argc, char** argv) {
             std::cout << "  Handshake PoW:      " << handshake_pow << " leading zero bits" << std::endl;
             std::cout << "  Store PoW:          " << store_pow << " leading zero bits" << std::endl;
             std::cout << "  Control endpoint:   " << control_host << ':' << control_port << std::endl;
+            std::cout << "  Transport port:     " << transport_port << std::endl;
             std::cout << "  Advertise auto:     " << advertise_auto << std::endl;
             if (!advertise_endpoints.empty()) {
                 std::cout << "  Advertised endpoints:" << std::endl;
                 std::istringstream endpoints_stream(advertise_endpoints);
                 std::string line;
                 while (std::getline(endpoints_stream, line)) {
+                    if (!line.empty()) {
+                        std::cout << "    - " << line << std::endl;
+                    }
+                }
+            }
+            if (!bootstrap_nodes.empty()) {
+                std::cout << "  Bootstrap seeds:" << std::endl;
+                std::istringstream seeds_stream(bootstrap_nodes);
+                std::string line;
+                while (std::getline(seeds_stream, line)) {
                     if (!line.empty()) {
                         std::cout << "    - " << line << std::endl;
                     }

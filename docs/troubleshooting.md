@@ -18,6 +18,7 @@ Common operational issues and their recommended fixes.
 | Mismatched peer IDs between restarts. | Random identity due to missing seed. | Supply `--identity-seed` or `--peer-id` for deterministic identity during automation. |
 | `Failed to register manifest` errors in daemon logs. | TTL expired or manifest invalid. | Regenerate the `eph://` manifest and ensure system clocks are synchronized. |
 | Remote peers time out immediately. | Port forwarding/firewall missing for TCP 47777. | Validate from outside the LAN (`nc -vz <ip> 47777`), open the port in the router or security group, or migrate to a relay/VPS. |
+| Transport handshakes keep failing. | TCP 45000 (default transport port) blocked or hairpin NAT disabled. | Forward/allow TCP 45000 alongside the control port, or switch the swarm to relays (Shardian defaults use `stun.shardian.com` and `turn.shardian.com`). |
 | `defaults` shows `127.0.0.1:<port>` as the first advertised endpoint even on a VPS. | NAT/STUN failed to discover a routable transport endpoint, so auto-advertise fell back to the loopback bind. | Check port-forwarding for the transport port printed at startup, re-run `eph status` for warnings, or pin `--advertise-control host[:port]` to the public hostname. Control can stay on loopback; only the transport endpoint must be reachable. |
 | Operators want to hide the origin IP. | Auto-advertise exposes the host's WAN address. | Disable auto-advertise (`off`/`warn`) and publish a TURN/STUN relay hostname instead; update runbooks with the privacy rationale. |
 

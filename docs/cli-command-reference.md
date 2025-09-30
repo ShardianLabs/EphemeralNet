@@ -29,6 +29,7 @@ Run the client as `eph [global options] <command> [command options]`. Global opt
 | `--control-expose` | Bind the control plane on `0.0.0.0` for remote management. | Prompts for confirmation unless `--yes`; prints a warning when no `--control-token` is present. Transport auto-advertise now runs independently, so exposing control is only required when you need remote CLI/API access. |
 | `--control-loopback` | Force the control plane to stay on `127.0.0.1`. | Overrides any profile/default that points at a non-loopback host. |
 | `--control-port <port>` | TCP port for the control plane. | 1–65535; default `47777`. |
+| `--transport-port <port>` | TCP port for the transport/data plane. | 1–65535; default `45000`. |
 | `--control-token <secret>` | Shared secret for control auth. | Whitespace not allowed. |
 | `--advertise-auto <on|off|warn>` | Controls how auto-discovered transport endpoints are published. | `on` publishes every candidate, `warn` logs conflicts and publishes only when a single candidate is detected, `off` disables transport auto-advertise entirely (manual `--advertise-control` entries are still honored). |
 | `--max-store-bytes <bytes>` | Control-plane upload cap. | `0` disables the cap; default `33554432`. |

@@ -1493,8 +1493,21 @@ protocol::Manifest Node::store_chunk(const ChunkId& chunk_id,
         try_add_endpoint(endpoint, take_priority());
     };
 
-    const auto control_endpoints = preferred_control_endpoints();
+    auto control_endpoints = preferred_control_endpoints();
+    // Prefer transport-advertised endpoints before manual control fallbacks.
+    std::vector<ControlEndpoint> transport_first;
+    transport_first.reserve(control_endpoints.size());
     for (const auto& endpoint : control_endpoints) {
+        if (!endpoint.manual) {
+            transport_first.push_back(endpoint);
+        }
+    }
+    for (const auto& endpoint : control_endpoints) {
+        if (endpoint.manual) {
+            transport_first.push_back(endpoint);
+        }
+    }
+    for (const auto& endpoint : transport_first) {
         append_advertised_endpoint(endpoint);
     }
 

@@ -857,6 +857,7 @@ private:
                              {"STORE_POW", std::to_string(config_copy.store_pow_difficulty)},
                              {"CONTROL_HOST", config_copy.control_host},
                              {"CONTROL_PORT", std::to_string(config_copy.control_port)},
+                             {"TRANSPORT_PORT", std::to_string(config_copy.transport_listen_port)},
                              {"CONTROL_STREAM_MAX", std::to_string(config_copy.control_stream_max_bytes)},
                              {"STORAGE_PERSISTENT", config_copy.storage_persistent_enabled ? "1" : "0"},
                              {"STORAGE_DIR", config_copy.storage_directory},
@@ -888,6 +889,25 @@ private:
                 }
             }
             fields["ADVERTISE_ENDPOINTS"] = serialized.str();
+        }
+
+        if (!config_copy.bootstrap_nodes.empty()) {
+            std::ostringstream bootstrap_stream;
+            bool first = true;
+            for (const auto& node : config_copy.bootstrap_nodes) {
+                if (node.host.empty()) {
+                    continue;
+                }
+                if (!first) {
+                    bootstrap_stream << '\n';
+                }
+                first = false;
+                bootstrap_stream << ephemeralnet::peer_id_to_string(node.id) << '@' << node.host << ':' << node.port;
+                if (node.public_identity) {
+                    bootstrap_stream << " pub=" << *node.public_identity;
+                }
+            }
+            fields["BOOTSTRAP_NODES"] = bootstrap_stream.str();
         }
 
         send_response(client, fields, true);
