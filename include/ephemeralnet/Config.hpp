@@ -25,6 +25,11 @@ struct Config {
         std::string source;
     };
 
+    struct RelayEndpoint {
+        std::string host;
+        std::uint16_t port{0};
+    };
+
     std::chrono::seconds default_chunk_ttl{std::chrono::hours(6)};
     std::chrono::seconds announce_interval{std::chrono::minutes(15)};
     std::chrono::seconds cleanup_interval{std::chrono::minutes(5)};
@@ -70,6 +75,8 @@ struct Config {
     std::vector<AdvertiseCandidate> auto_advertise_candidates;
     std::vector<std::string> auto_advertise_warnings;
     bool auto_advertise_conflict{false};
+    bool relay_enabled{true};
+    std::vector<RelayEndpoint> relay_endpoints;
     std::uint8_t shard_threshold{3};
     std::uint8_t shard_total{5};
     std::chrono::seconds bootstrap_contact_ttl{std::chrono::minutes(15)};

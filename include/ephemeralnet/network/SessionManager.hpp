@@ -58,6 +58,9 @@ public:
     bool connect(const PeerId& peer_id, const std::string& host, std::uint16_t port);
     bool send(const PeerId& peer_id, std::span<const std::uint8_t> payload);
 
+    bool adopt_outbound_socket(const PeerId& peer_id, SocketHandle socket, bool identity_sent);
+    bool adopt_inbound_socket(SocketHandle socket, const std::optional<PeerId>& expected_peer = std::nullopt);
+
     std::size_t active_session_count() const;
 
     struct TestHooks {

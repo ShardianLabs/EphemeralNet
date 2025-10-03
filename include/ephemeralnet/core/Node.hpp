@@ -26,11 +26,16 @@
 #include <vector>
 #include <mutex>
 #include <atomic>
+#include <memory>
 
 namespace ephemeralnet {
 
 namespace test {
 class NodeTestAccess;
+}
+
+namespace network {
+class RelayClient;
 }
 
 class Node {
@@ -125,6 +130,7 @@ private:
     network::ReputationManager reputation_;
     network::SessionManager sessions_;
     network::NatTraversalManager nat_manager_;
+    std::unique_ptr<network::RelayClient> relay_client_;
     std::optional<network::NatTraversalResult> nat_status_;
     SwarmCoordinator swarm_;
     crypto::CryptoManager crypto_;

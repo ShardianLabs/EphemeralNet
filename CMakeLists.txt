@@ -22,6 +22,7 @@ add_library(ephemeralnet_core
     src/network/KeyManager.cpp
     src/network/KeyExchange.cpp
     src/network/ReputationManager.cpp
+    src/network/RelayClient.cpp
     src/crypto/ChaCha20.cpp
     src/crypto/CryptoManager.cpp
     src/crypto/Sha256.cpp

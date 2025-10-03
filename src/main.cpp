@@ -111,6 +111,16 @@ std::uint32_t derive_public_identity_from_seed(std::uint32_t seed) {
     return ephemeralnet::network::KeyExchange::compute_public(scalar);
 }
 
+struct RelaySeedConfig {
+    const char* host;
+    std::uint16_t port;
+};
+
+constexpr std::array<RelaySeedConfig, 2> kShardianRelaySeeds{
+    RelaySeedConfig{"turn.shardian.com", 47000},
+    RelaySeedConfig{"turn2.shardian.com", 47000},
+};
+
 std::vector<ephemeralnet::Config::BootstrapNode> shardian_bootstrap_nodes() {
     std::vector<ephemeralnet::Config::BootstrapNode> nodes;
     nodes.reserve(kShardianBootstrapSeeds.size());
@@ -123,6 +133,18 @@ std::vector<ephemeralnet::Config::BootstrapNode> shardian_bootstrap_nodes() {
         nodes.push_back(std::move(node));
     }
     return nodes;
+}
+
+std::vector<ephemeralnet::Config::RelayEndpoint> shardian_relay_endpoints() {
+    std::vector<ephemeralnet::Config::RelayEndpoint> endpoints;
+    endpoints.reserve(kShardianRelaySeeds.size());
+    for (const auto& seed : kShardianRelaySeeds) {
+        ephemeralnet::Config::RelayEndpoint endpoint{};
+        endpoint.host = seed.host;
+        endpoint.port = seed.port;
+        endpoints.push_back(std::move(endpoint));
+    }
+    return endpoints;
 }
 
 namespace protocol = ephemeralnet::protocol;
@@ -905,25 +927,83 @@ bool send_encrypted_message(NativeSocket socket,
     return socket_send_all(socket, buffer.data(), buffer.size());
 }
 
-std::optional<TransportSessionContext> establish_transport_session(const TransportIdentityContext& local,
-                                                                   const PublisherIdentityMetadata& remote,
-                                                                   std::uint64_t work_nonce,
-                                                                   const std::string& host,
-                                                                   std::uint16_t port,
-                                                                   std::string* error_out = nullptr) {
-    auto socket_opt = open_transport_socket(host, port);
-    if (!socket_opt.has_value()) {
-        if (error_out) {
-            *error_out = "Unable to connect";
-        }
+std::optional<std::string> socket_read_line(NativeSocket socket, std::chrono::milliseconds timeout) {
+    const bool with_timeout = timeout.count() > 0;
+    if (with_timeout && !socket_set_timeout(socket, timeout)) {
         return std::nullopt;
     }
 
-    auto& socket = *socket_opt;
+    std::string buffer;
+    buffer.reserve(64);
+    char ch = '\0';
+    while (true) {
+#ifdef _WIN32
+        const auto received = ::recv(socket, &ch, 1, 0);
+#else
+        const auto received = ::recv(socket, &ch, 1, 0);
+#endif
+        if (received <= 0) {
+            if (with_timeout) {
+                socket_set_timeout(socket, std::chrono::milliseconds{0});
+            }
+            return std::nullopt;
+        }
+        if (ch == '\n') {
+            break;
+        }
+        if (ch != '\r') {
+            buffer.push_back(ch);
+        }
+    }
 
+    if (with_timeout) {
+        socket_set_timeout(socket, std::chrono::milliseconds{0});
+    }
+    return buffer;
+}
+
+struct RelayHintEndpoint {
+    std::string host;
+    std::uint16_t port{0};
+    std::optional<ephemeralnet::PeerId> remote_peer;
+};
+
+std::optional<RelayHintEndpoint> parse_relay_hint_endpoint(const std::string& endpoint) {
+    const auto query_pos = endpoint.find('?');
+    const auto address = endpoint.substr(0, query_pos);
+    const auto parsed = parse_control_endpoint(address);
+    if (!parsed.has_value()) {
+        return std::nullopt;
+    }
+
+    RelayHintEndpoint details{};
+    details.host = parsed->first;
+    details.port = parsed->second;
+
+    if (query_pos != std::string::npos && query_pos + 1 < endpoint.size()) {
+        const auto query = endpoint.substr(query_pos + 1);
+        constexpr std::string_view kPeerPrefix{"peer="};
+        if (query.rfind(kPeerPrefix, 0) == 0 && query.size() > kPeerPrefix.size()) {
+            const auto hex = query.substr(kPeerPrefix.size());
+            if (const auto remote = ephemeralnet::peer_id_from_string(hex)) {
+                details.remote_peer = *remote;
+            } else {
+                return std::nullopt;
+            }
+        }
+    }
+
+    return details;
+}
+
+std::optional<TransportSessionContext> complete_transport_handshake(ScopedSocket socket,
+                                                                     const TransportIdentityContext& local,
+                                                                     const PublisherIdentityMetadata& remote,
+                                                                     std::uint64_t work_nonce,
+                                                                     std::string* error_out) {
     if (!socket_send_all(socket.get(), local.peer_id.data(), local.peer_id.size())) {
         if (error_out) {
-            *error_out = "Failed to send identity";
+            *error_out = format_socket_error("Failed to send identity");
         }
         return std::nullopt;
     }
@@ -948,7 +1028,7 @@ std::optional<TransportSessionContext> establish_transport_session(const Transpo
 
     if (!socket_send_all(socket.get(), frame.data(), frame.size())) {
         if (error_out) {
-            *error_out = "Failed to send handshake";
+            *error_out = format_socket_error("Failed to send handshake");
         }
         return std::nullopt;
     }
@@ -989,6 +1069,27 @@ std::optional<TransportSessionContext> establish_transport_session(const Transpo
                                                           protocol::kMinimumMessageVersion,
                                                           protocol::kCurrentMessageVersion);
     return context;
+}
+
+std::optional<TransportSessionContext> establish_transport_session(const TransportIdentityContext& local,
+                                                                   const PublisherIdentityMetadata& remote,
+                                                                   std::uint64_t work_nonce,
+                                                                   const std::string& host,
+                                                                   std::uint16_t port,
+                                                                   std::string* error_out = nullptr) {
+    auto socket_opt = open_transport_socket(host, port);
+    if (!socket_opt.has_value()) {
+        if (error_out) {
+            *error_out = "Unable to connect";
+        }
+        return std::nullopt;
+    }
+
+    return complete_transport_handshake(std::move(*socket_opt),
+                                        local,
+                                        remote,
+                                        work_nonce,
+                                        error_out);
 }
 
 bool send_protocol_message(NativeSocket socket,
@@ -2965,6 +3066,9 @@ ephemeralnet::Config build_config(const GlobalOptions& options) {
     if (config.bootstrap_nodes.empty()) {
         config.bootstrap_nodes = shardian_bootstrap_nodes();
     }
+    if (config.relay_enabled && config.relay_endpoints.empty()) {
+        config.relay_endpoints = shardian_relay_endpoints();
+    }
     if (config.transport_listen_port == 0) {
         config.transport_listen_port = kDefaultTransportPort;
     }
@@ -4576,7 +4680,9 @@ int main(int argc, char** argv) {
                         return false;
                     }
                     const std::string scheme = hint.scheme.empty() ? hint.transport : hint.scheme;
-                    if (scheme != "transport" && hint.transport != "tcp" && hint.transport != "transport") {
+                    const bool is_relay_transport = (hint.transport == "relay" || scheme == "relay");
+                    const bool is_supported_transport = is_relay_transport || hint.transport == "tcp" || hint.transport == "transport";
+                    if (!is_supported_transport) {
                         attempt_log.push_back({friendly_label, "Unsupported transport hint"});
                         return false;
                     }
@@ -4595,26 +4701,77 @@ int main(int argc, char** argv) {
                                                    : "Failed to initialize transport handshake"});
                         return false;
                     }
-                    const auto parsed = parse_control_endpoint(hint.endpoint);
-                    if (!parsed.has_value()) {
-                        attempt_log.push_back({friendly_label, "Invalid transport endpoint"});
-                        return false;
-                    }
-                    const auto host = parsed->first;
-                    const auto port = parsed->second;
-                    const auto endpoint_desc = describe_endpoint(host, port);
+                    std::optional<TransportSessionContext> session;
+                    std::string endpoint_desc;
+                    std::string handshake_error;
 
-                    std::string error_text;
-                    auto session = establish_transport_session(transport_identity,
+                    if (is_relay_transport) {
+                        const auto relay = parse_relay_hint_endpoint(hint.endpoint);
+                        if (!relay.has_value()) {
+                            attempt_log.push_back({friendly_label, "Invalid relay endpoint"});
+                            return false;
+                        }
+                        if (relay->remote_peer.has_value() && *relay->remote_peer != publisher_identity->peer_id) {
+                            attempt_log.push_back({friendly_label, "Relay hint targets a different peer"});
+                            return false;
+                        }
+
+                        auto socket_opt = open_transport_socket(relay->host, relay->port);
+                        if (!socket_opt.has_value()) {
+                            attempt_log.push_back({friendly_label, "Failed to contact relay endpoint"});
+                            return false;
+                        }
+
+                        const std::string connect_line = "CONNECT " + ephemeralnet::peer_id_to_string(transport_identity.peer_id) +
+                                                         " " + ephemeralnet::peer_id_to_string(publisher_identity->peer_id) + "\n";
+                        if (!socket_send_all(socket_opt->get(),
+                                             reinterpret_cast<const std::uint8_t*>(connect_line.data()),
+                                             connect_line.size())) {
+                            attempt_log.push_back({friendly_label, format_socket_error("Failed to send relay CONNECT")});
+                            return false;
+                        }
+
+                        auto ok_line = socket_read_line(socket_opt->get(), std::chrono::milliseconds{5000});
+                        if (!ok_line.has_value() || *ok_line != "OK") {
+                            attempt_log.push_back({friendly_label, "Relay did not acknowledge CONNECT"});
+                            return false;
+                        }
+
+                        session = complete_transport_handshake(std::move(*socket_opt),
+                                                               transport_identity,
                                                                *publisher_identity,
                                                                *transport_pow_nonce,
-                                                               host,
-                                                               port,
-                                                               &error_text);
+                                                               &handshake_error);
+                        endpoint_desc = describe_endpoint(relay->host, relay->port) + " (relay)";
+                    } else {
+                        const auto parsed = parse_control_endpoint(hint.endpoint);
+                        if (!parsed.has_value()) {
+                            attempt_log.push_back({friendly_label, "Invalid transport endpoint"});
+                            return false;
+                        }
+                        const auto host = parsed->first;
+                        const auto port = parsed->second;
+                        endpoint_desc = describe_endpoint(host, port);
+
+                        std::string error_text;
+                        session = establish_transport_session(transport_identity,
+                                                              *publisher_identity,
+                                                              *transport_pow_nonce,
+                                                              host,
+                                                              port,
+                                                              &error_text);
+                        if (!session.has_value()) {
+                            attempt_log.push_back({friendly_label,
+                                                   error_text.empty() ? std::string{"Transport handshake failed"}
+                                                                      : error_text});
+                            return false;
+                        }
+                    }
+
                     if (!session.has_value()) {
                         attempt_log.push_back({friendly_label,
-                                               error_text.empty() ? std::string{"Transport handshake failed"}
-                                                                  : error_text});
+                                               handshake_error.empty() ? std::string{"Transport handshake failed"}
+                                                                        : handshake_error});
                         return false;
                     }
 

@@ -340,6 +340,77 @@ bool SessionManager::send(const PeerId& peer_id, std::span<const std::uint8_t> p
     return send_all(session->socket, buffer.data(), buffer.size());
 }
 
+bool SessionManager::adopt_outbound_socket(const PeerId& peer_id, SocketHandle socket, bool identity_sent) {
+    const auto key = peer_key(peer_id);
+    if (!key.has_value()) {
+        close_socket(socket);
+        return false;
+    }
+
+    if (!identity_sent) {
+        const auto identity = peer_id_bytes(self_id_);
+        if (!send_all(socket, identity.data(), identity.size())) {
+            close_socket(socket);
+            return false;
+        }
+    }
+
+    auto session = std::make_shared<Session>();
+    session->socket = socket;
+    session->key = *key;
+    session->endpoint = endpoint_string(socket);
+    session->running.store(true);
+
+    {
+        std::scoped_lock lock(sessions_mutex_);
+        sessions_[peer_key_string(peer_id)] = session;
+    }
+
+    session->reader = std::thread(&SessionManager::receive_loop, this, peer_id, session);
+    session->reader.detach();
+    return true;
+}
+
+bool SessionManager::adopt_inbound_socket(SocketHandle socket, const std::optional<PeerId>& expected_peer) {
+    std::array<std::uint8_t, kPeerIdSize> peer_bytes{};
+    if (!recv_all(socket, peer_bytes.data(), peer_bytes.size())) {
+        close_socket(socket);
+        return false;
+    }
+
+    PeerId peer_id{};
+    std::copy(peer_bytes.begin(), peer_bytes.end(), peer_id.begin());
+
+    if (expected_peer.has_value() && peer_id != *expected_peer) {
+        close_socket(socket);
+        return false;
+    }
+
+    const auto key = peer_key(peer_id);
+    if (!key.has_value()) {
+        if (!handle_pending_handshake(peer_id, socket)) {
+            close_socket(socket);
+            return false;
+        }
+        return true;
+    }
+
+    auto session = std::make_shared<Session>();
+    session->socket = socket;
+    session->key = *key;
+    session->endpoint = endpoint_string(socket);
+    session->running.store(true);
+
+    {
+        std::scoped_lock lock(sessions_mutex_);
+        sessions_[peer_key_string(peer_id)] = session;
+    }
+
+    session->reader = std::thread(&SessionManager::receive_loop, this, peer_id, session);
+    session->reader.detach();
+    return true;
+}
+
 bool SessionManager::handle_pending_handshake(const PeerId& peer_id, SocketHandle socket) {
     HandshakeHandler handler_copy;
     {

@@ -3,6 +3,7 @@
 #include "ephemeralnet/Types.hpp"
 #include "ephemeralnet/network/AdvertiseDiscovery.hpp"
 #include "ephemeralnet/network/KeyExchange.hpp"
+#include "ephemeralnet/network/RelayClient.hpp"
 #include "ephemeralnet/crypto/Sha256.hpp"
 #include "ephemeralnet/crypto/Shamir.hpp"
 #include "ephemeralnet/protocol/Message.hpp"
@@ -1357,6 +1358,9 @@ Node::Node(PeerId id, Config config)
         initialize_transport_handler();
         seed_bootstrap_contacts();
         attempt_bootstrap_handshakes();
+        if (config_.relay_enabled && !config_.relay_endpoints.empty()) {
+            relay_client_ = std::make_unique<network::RelayClient>(config_, sessions_, id_);
+        }
 }
 
 Node::~Node() {
@@ -1511,6 +1515,12 @@ protocol::Manifest Node::store_chunk(const ChunkId& chunk_id,
         append_advertised_endpoint(endpoint);
     }
 
+    if (relay_client_) {
+        if (const auto relay_hint = relay_client_->current_hint(take_priority())) {
+            manifest.discovery_hints.push_back(*relay_hint);
+        }
+    }
+
     std::uint8_t hint_priority = next_priority == 0 ? 1 : next_priority;
     for (const auto& bootstrap : config_.bootstrap_nodes) {
         ControlEndpoint endpoint{};
@@ -1647,10 +1657,6 @@ bool Node::request_chunk(const PeerId& peer_id,
         }
     }
 
-    if (resolved_host.empty() || resolved_port == 0) {
-        return false;
-    }
-
     protocol::Manifest manifest{};
     try {
         manifest = protocol::decode_manifest(manifest_uri);
@@ -1664,7 +1670,25 @@ bool Node::request_chunk(const PeerId& peer_id,
 
     ensure_bootstrap_handshake(peer_id);
 
-    if (!connect_peer(peer_id, resolved_host, resolved_port)) {
+    bool connected = false;
+    if (!resolved_host.empty() && resolved_port != 0) {
+        connected = connect_peer(peer_id, resolved_host, resolved_port);
+    }
+
+    if (!connected && relay_client_) {
+        for (const auto& hint : manifest.discovery_hints) {
+            const bool is_relay = hint.transport == "relay" || hint.scheme == "relay";
+            if (!is_relay) {
+                continue;
+            }
+            if (relay_client_->connect_via_hint(hint, peer_id)) {
+                connected = true;
+                break;
+            }
+        }
+    }
+
+    if (!connected) {
         return false;
     }
 
@@ -1948,10 +1972,16 @@ void Node::tick() {
 void Node::start_transport(std::uint16_t port) {
     sessions_.start(port);
     nat_status_ = nat_manager_.coordinate("0.0.0.0", sessions_.listening_port());
+    if (relay_client_) {
+        relay_client_->start();
+    }
     refresh_advertised_endpoints();
 }
 
 void Node::stop_transport() {
+    if (relay_client_) {
+        relay_client_->stop();
+    }
     sessions_.stop();
 }
 
