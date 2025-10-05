@@ -21,11 +21,11 @@
 - `eph://` manifest ingestion and validation with key reconstruction and replicated local storage.
 - Encrypted chunk request/delivery flow across peers with secure transport and signed acknowledgements.
 - DHT bootstrapping with seed nodes and initial key negotiation.
-- Simulated NAT traversal (UPnP/STUN/hole punching) with telemetry integrated into `Node`.
-- Daemon auto-detects control-plane advertise candidates via UPnP/STUN/HTTPS echo probes at startup.
+- Real STUN-backed NAT traversal with relay diagnostics integrated into `Node`.
+- Daemon auto-detects control-plane advertise candidates via STUN/HTTPS echo probes at startup.
 - Auto-advertise detection filters private/unroutable endpoints unless operators opt-in via `--control-expose` or `--advertise-allow-private`.
 - Auto-advertise detection preserves all conflicting gateway/interface results and surfaces structured warnings in daemon logs and CLI output.
-- Transport auto-advertise now derives routable endpoints from UPnP/STUN data even when the control plane stays on loopback, so zero-config nodes remain reachable without exposing `--advertise-control` unless operators explicitly pin it (still honouring `--advertise-auto`).
+- Transport auto-advertise now derives routable endpoints from STUN data even when the control plane stays on loopback, so zero-config nodes remain reachable without exposing `--advertise-control` unless operators explicitly pin it (still honouring `--advertise-auto`).
 - Discovery hints now always include auto-advertised data-plane (`transport/tcp`) endpoints alongside manually pinned `control` contacts, so manifests expose both schemes for future transport bootstrap flows.
 - CLI fetch exposes `--transport-only` (force transport/tcp hints) and `--control-fallback` (skip transport) so operators can pin the desired discovery mode.
 - SwarmCoordinator distributes manifests/shards with replication and rebalance plans.

@@ -2,6 +2,7 @@
 
 #include "ephemeralnet/Config.hpp"
 
+#include <functional>
 #include <optional>
 #include <random>
 #include <string>
@@ -12,9 +13,7 @@ namespace ephemeralnet::network {
 struct NatTraversalResult {
     std::string external_address;
     std::uint16_t external_port{0};
-    bool upnp_available{false};
     bool stun_succeeded{false};
-    bool hole_punch_ready{false};
     std::vector<std::string> diagnostics;
 };
 
@@ -24,14 +23,23 @@ public:
 
     NatTraversalResult coordinate(const std::string& local_address, std::uint16_t local_port);
 
+    struct StunQueryResult {
+        std::string address;
+        std::uint16_t reported_port{0};
+        std::string server;
+    };
+
+    struct TestHooks {
+        std::function<std::optional<StunQueryResult>()> stun_override;
+    };
+
+    static void set_test_hooks(const TestHooks* hooks);
+
 private:
     const Config& config_;
     std::mt19937 rng_;
-    std::optional<std::uint16_t> last_allocated_port_;
 
-    std::uint16_t reserve_upnp_port(std::uint16_t preferred_port);
-    std::string simulate_stun_query();
-    bool simulate_hole_punch();
+    std::optional<StunQueryResult> perform_stun_query();
 };
 
 }  // namespace ephemeralnet::network

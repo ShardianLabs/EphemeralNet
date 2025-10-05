@@ -44,6 +44,7 @@ ephemeralnet::Config make_config(std::uint32_t seed) {
     config.key_rotation_interval = 30s;
     config.control_host = "127.0.0.1";
     config.announce_pow_difficulty = 0;
+    config.nat_stun_enabled = false;
     return config;
 }
 

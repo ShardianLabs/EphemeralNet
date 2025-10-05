@@ -15,9 +15,9 @@ struct AdvertiseDiscoveryResult {
 	bool conflict{false};
 };
 
-// Discovers candidate control endpoints by combining UPnP/NAT-PMP probes
-// with STUN measurements and HTTPS echo fallbacks. Results are ordered by
-// discovery priority but do not mutate manifests yet.
+// Discovers candidate control endpoints by combining STUN measurements with
+// HTTPS echo fallbacks. Results are ordered by discovery priority but do not
+// mutate manifests yet.
 AdvertiseDiscoveryResult discover_control_advertise_candidates(const Config& config);
 
 // Builds transport advertisement candidates from an existing NAT traversal
@@ -26,8 +26,8 @@ AdvertiseDiscoveryResult build_transport_advertise_candidates(const Config& conf
                                                              std::uint16_t transport_port,
                                                              const NatTraversalResult& traversal);
 
-// Returns the first candidate discovered via a routable method (UPnP/STUN)
-// so callers can decide whether to auto-expose the control plane.
+// Returns the first candidate discovered via a routable STUN method so
+// callers can decide whether to auto-expose the control plane.
 std::optional<Config::AdvertiseCandidate> select_public_advertise_candidate(const AdvertiseDiscoveryResult& result);
 
 }  // namespace ephemeralnet::network

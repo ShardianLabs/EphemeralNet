@@ -2591,7 +2591,7 @@ void Node::refresh_advertised_endpoints() {
             } else {
                 append_endpoint(discovery.candidates.front());
                 config_.auto_advertise_warnings.push_back(
-                    "Auto-advertise: no UPnP/STUN candidate detected; published first discovered endpoint.");
+                    "Auto-advertise: no STUN candidate detected; published first discovered endpoint.");
             }
         } else {
             for (const auto& candidate : discovery.candidates) {

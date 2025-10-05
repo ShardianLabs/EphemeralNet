@@ -1,10 +1,12 @@
 #include "ephemeralnet/core/Node.hpp"
 #include "ephemeralnet/dht/KademliaTable.hpp"
+#include "ephemeralnet/network/NatTraversal.hpp"
 #include "test_access.hpp"
 
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -63,6 +65,16 @@ void ensure_peer_delivery(ephemeralnet::Node& seeder,
 }  // namespace
 
 int main() {
+	ephemeralnet::network::NatTraversalManager::TestHooks hooks{};
+	hooks.stun_override = []() -> std::optional<ephemeralnet::network::NatTraversalManager::StunQueryResult> {
+		ephemeralnet::network::NatTraversalManager::StunQueryResult result{};
+		result.address = "45.64.61.85";
+		result.reported_port = 45000;
+		result.server = "test-stun";
+		return result;
+	};
+	ephemeralnet::network::NatTraversalManager::set_test_hooks(&hooks);
+
 	const auto seeder_id = make_peer_id(0x90);
 	const auto leecher_id = make_peer_id(0xA0);
 	const auto chunk_id = make_chunk_id(0x55);
@@ -134,6 +146,7 @@ int main() {
 
 	seeder.stop_transport();
 	leecher.stop_transport();
+	ephemeralnet::network::NatTraversalManager::set_test_hooks(nullptr);
 
 	return 0;
 }

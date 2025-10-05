@@ -15,7 +15,7 @@ EphemeralNet is an ephemeral P2P filesystem written in C++ that focuses on shari
 - **Handshake and reputation**: simplified Diffie-Hellman handshake with per-peer reputation tracking.
 - **Control-plane proof-of-work**: handshake and store operations enforce configurable PoW to discourage spam and Sybil abuse.
 - **Bootstrap gossip hints**: manifest broadcasts share the ordered set of advertised control endpoints so hint-only (`--direct-only`) peers immediately learn multiple routable contacts.
-- **Auto-inferred public endpoints**: binding the control plane to `0.0.0.0` automatically promotes UPnP/STUN discoveries so peers learn a routable control endpoint without extra flags.
+- **Auto-inferred public endpoints**: binding the control plane to `0.0.0.0` automatically promotes STUN/relay discoveries so peers learn a routable control endpoint without extra flags.
 - **Shardian bootstrap defaults**: `eph start` pins the transport listener to TCP 45000, seeds the DHT with `bootstrap1.shardian.com`/`bootstrap2.shardian.com`, and reuses the shared STUN/TURN relays so zero-config peers join the public mesh while the control plane stays on loopback.
 - **TTL auditing**: consistent reports that surface expirations pending in local storage and the DHT.
 - **Cleanup coordination**: synchronises local expirations with automatic announcement withdrawal and emits notifications.

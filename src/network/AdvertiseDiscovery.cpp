@@ -171,15 +171,11 @@ AdvertiseDiscoveryResult discover_control_advertise_candidates(const Config& con
         result.candidates.push_back(std::move(candidate));
     };
 
-    if (traversal.upnp_available && is_valid_host(traversal.external_address)) {
-        append_candidate(traversal.external_address, discovered_port, "upnp");
-    }
-
     if (traversal.stun_succeeded && is_valid_host(traversal.external_address)) {
         append_candidate(traversal.external_address, discovered_port, "stun");
     } else {
         auto echo_address = traversal.external_address;
-        if (!is_valid_host(echo_address)) {
+        if (!is_valid_host(echo_address) || is_private_or_reserved_host(echo_address)) {
             echo_address = fallback_echo_address(config);
         }
         append_candidate(echo_address, discovered_port, "https-echo");
@@ -253,19 +249,11 @@ AdvertiseDiscoveryResult build_transport_advertise_candidates(const Config& conf
     };
 
     const auto resolved_port = traversal.external_port != 0 ? traversal.external_port : transport_port;
-    if (is_valid_host(traversal.external_address) && resolved_port != 0) {
-        if (traversal.upnp_available) {
-            append_candidate(traversal.external_address, resolved_port, "upnp");
-        }
-        if (traversal.stun_succeeded) {
-            append_candidate(traversal.external_address, resolved_port, "stun");
-        }
-        if (!traversal.upnp_available && !traversal.stun_succeeded) {
-            append_candidate(traversal.external_address, resolved_port, "nat");
-        }
+    if (traversal.stun_succeeded && is_valid_host(traversal.external_address) && resolved_port != 0) {
+        append_candidate(traversal.external_address, resolved_port, "stun");
     } else {
         auto echo_address = traversal.external_address;
-        if (!is_valid_host(echo_address)) {
+        if (!is_valid_host(echo_address) || is_private_or_reserved_host(echo_address)) {
             echo_address = fallback_echo_address(config);
         }
         append_candidate(echo_address,
@@ -315,7 +303,7 @@ AdvertiseDiscoveryResult build_transport_advertise_candidates(const Config& conf
 }
 
 std::optional<Config::AdvertiseCandidate> select_public_advertise_candidate(const AdvertiseDiscoveryResult& result) {
-    constexpr std::array<std::string_view, 2> kPreferredMethods{"upnp", "stun"};
+    constexpr std::array<std::string_view, 1> kPreferredMethods{"stun"};
     for (const auto& method : kPreferredMethods) {
         const auto it = std::find_if(result.candidates.begin(), result.candidates.end(), [&](const Config::AdvertiseCandidate& candidate) {
             return candidate.via == method;

@@ -61,6 +61,7 @@ struct Config {
     std::optional<std::string> control_token{};
     std::size_t control_stream_max_bytes{32ull * 1024ull * 1024ull};
     std::optional<std::uint32_t> identity_seed{};
+    bool nat_stun_enabled{true};
     std::optional<std::string> advertise_control_host{};
     std::optional<std::uint16_t> advertise_control_port{};
     bool advertise_allow_private{false};
