@@ -93,6 +93,24 @@ Fetch now attempts manifest discovery hints first and automatically falls back t
 
 > The `start` command reuses the same options as `serve` to configure the daemon before backgrounding it.
 
+## Relay Server
+
+`eph-relay-server` is a minimal relay daemon that implements the REGISTER/CONNECT flow expected by `RelayClient`. It ships with a tiny epoll/kqueue-driven event loop so it can multiplex thousands of long-lived relay sockets without depending on libuv or Boost.Asio.
+
+Build it along with the rest of the workspace:
+
+```bash
+cmake --build build --target eph-relay-server
+```
+
+Start the daemon (binds to `0.0.0.0:9750` by default):
+
+```bash
+./build/eph-relay-server --listen 0.0.0.0:9750
+```
+
+Attach EphemeralNet nodes by enabling relay endpoints in their config; the server keeps track of `REGISTER`ed peers and forwards `CONNECT` requests by piping the sockets together as soon as the caller streams its identity bytes.
+
 ## Documentation
 
 - [Architecture](docs/architecture.md): component map and concurrency model.
