@@ -249,8 +249,12 @@ NatTraversalResult NatTraversalManager::coordinate(const std::string& local_addr
             result.stun_succeeded = true;
             result.diagnostics.emplace_back("STUN discovery succeeded via " + stun_result->server);
 
-            if (stun_result->reported_port != 0) {
-                result.external_port = stun_result->reported_port;
+            if (stun_result->reported_port != 0 && stun_result->reported_port != local_port) {
+                result.diagnostics.emplace_back("STUN reported external port " +
+                                                std::to_string(stun_result->reported_port) +
+                                                " but transport listener uses " +
+                                                std::to_string(local_port) +
+                                                "; advertising listener port");
             }
         } else {
             result.diagnostics.emplace_back("STUN discovery failed (strict firewall suspected)");

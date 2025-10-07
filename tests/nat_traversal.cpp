@@ -40,11 +40,12 @@ int main() {
 
         assert(result.stun_succeeded);
         assert(result.external_address == "45.64.61.85");
-        assert(result.external_port == 46000);
+        assert(result.external_port == 45000);
         const auto success_message = std::find_if(result.diagnostics.begin(), result.diagnostics.end(), [](const std::string& message) {
             return message.find("STUN discovery succeeded") != std::string::npos;
         });
         assert(success_message != result.diagnostics.end());
+        (void)success_message;
         assert(std::none_of(result.diagnostics.begin(), result.diagnostics.end(), [](const std::string& message) {
             return message.find("Relay fallback required") != std::string::npos;
         }));
@@ -72,6 +73,8 @@ int main() {
             return message.find("Relay fallback required") != std::string::npos;
         });
         assert(relay_message != result.diagnostics.end());
+        (void)failure_message;
+        (void)relay_message;
     }
 
     {
@@ -95,6 +98,8 @@ int main() {
             return message.find("Relay fallback required") != std::string::npos;
         });
         assert(relay_message != result.diagnostics.end());
+        (void)skipped_message;
+        (void)relay_message;
     }
 
     NatTraversalManager::set_test_hooks(nullptr);
