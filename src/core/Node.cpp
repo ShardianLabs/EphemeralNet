@@ -1822,8 +1822,8 @@ bool Node::perform_handshake(const PeerId& peer_id,
     const auto existing = handshake_state_.find(key);
     if (existing != handshake_state_.end()) {
         const auto elapsed = now - existing->second.last_attempt;
-        if (elapsed < config_.handshake_cooldown) {
-            return existing->second.success;
+        if (existing->second.success && elapsed < config_.handshake_cooldown) {
+            return true;
         }
     }
 

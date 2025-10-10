@@ -436,12 +436,16 @@ bool RelayClient::register_with_endpoint(const Config::RelayEndpoint& endpoint) 
             if (!remote.has_value()) {
                 break;
             }
+
             const auto handle = to_handle(socket);
-            if (!sessions_.adopt_inbound_socket(handle, remote)) {
+            const bool adopted = sessions_.adopt_inbound_socket(handle, remote);
+            if (!adopted) {
                 close_socket(socket);
+                socket = kInvalidSocket;
                 break;
             }
-            // Session manager now owns the socket; no further lines.
+
+            // Handoff succeeded: SessionManager now owns the socket and will drive the handshake.
             {
                 std::scoped_lock lock(state_mutex_);
                 if (state_) {
