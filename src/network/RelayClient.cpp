@@ -11,6 +11,7 @@
 #include <cstring>
 #include <optional>
 #include <sstream>
+#include <iostream>
 #include <stdexcept>
 #include <string_view>
 #include <thread>
@@ -438,7 +439,9 @@ bool RelayClient::register_with_endpoint(const Config::RelayEndpoint& endpoint) 
             }
 
             const auto handle = to_handle(socket);
+            std::cout << "[relay] BEGIN from " << peer_hex << ", adopting socket..." << std::endl;
             const bool adopted = sessions_.adopt_inbound_socket(handle, remote);
+            std::cout << "[relay] adopt_inbound_socket result=" << (adopted ? "true" : "false") << std::endl;
             if (!adopted) {
                 close_socket(socket);
                 socket = kInvalidSocket;

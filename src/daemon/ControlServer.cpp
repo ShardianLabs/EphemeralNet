@@ -555,6 +555,7 @@ private:
     std::atomic<bool> running_{false};
     NativeSocket listen_socket_{kInvalidSocket};
     std::thread accept_thread_;
+    std::atomic<bool> transport_stopped_{false};
     std::mutex rate_mutex_;
     std::unordered_map<std::string, std::vector<std::chrono::steady_clock::time_point>> store_history_;
     std::unordered_map<std::string, std::vector<std::chrono::steady_clock::time_point>> fetch_history_;
@@ -798,12 +799,26 @@ private:
     }
 
     void handle_stop(NativeSocket client, const std::string& remote_identity) {
+        bool stopped_now = false;
+        {
+            std::scoped_lock lock(node_mutex_);
+            const bool already_stopped = transport_stopped_.load(std::memory_order_acquire);
+            if (!already_stopped) {
+                node_.stop_transport();
+                transport_stopped_.store(true, std::memory_order_release);
+                stopped_now = true;
+            }
+        }
+
         auto fields = make_ok("OK_STOP");
         fields["MESSAGE"] = "Stopping daemon";
+        if (stopped_now) {
+            fields["TRANSPORT"] = "STOPPED";
+        }
         send_response(client, fields, true);
         log_event(StructuredLogger::Level::Info,
                   "control.command.stop",
-                  {{"remote", remote_identity}});
+                  {{"remote", remote_identity}, {"transport_stopped", stopped_now ? "1" : "0"}});
         if (stop_callback_) {
             stop_callback_();
         }
