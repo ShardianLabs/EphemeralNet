@@ -799,28 +799,28 @@ private:
     }
 
     void handle_stop(NativeSocket client, const std::string& remote_identity) {
-        bool stopped_now = false;
-        {
-            std::scoped_lock lock(node_mutex_);
-            const bool already_stopped = transport_stopped_.load(std::memory_order_acquire);
-            if (!already_stopped) {
-                node_.stop_transport();
-                transport_stopped_.store(true, std::memory_order_release);
-                stopped_now = true;
-            }
-        }
+        const bool should_stop_transport = !transport_stopped_.exchange(true, std::memory_order_acq_rel);
 
         auto fields = make_ok("OK_STOP");
         fields["MESSAGE"] = "Stopping daemon";
-        if (stopped_now) {
-            fields["TRANSPORT"] = "STOPPED";
+        if (should_stop_transport) {
+            fields["TRANSPORT"] = "STOPPING";
         }
         send_response(client, fields, true);
+
         log_event(StructuredLogger::Level::Info,
                   "control.command.stop",
-                  {{"remote", remote_identity}, {"transport_stopped", stopped_now ? "1" : "0"}});
+                  {{"remote", remote_identity}, {"transport_stop_queued", should_stop_transport ? "1" : "0"}});
+
         if (stop_callback_) {
             stop_callback_();
+        }
+
+        if (should_stop_transport) {
+            std::thread([this]() {
+                std::scoped_lock lock(node_mutex_);
+                node_.stop_transport();
+            }).detach();
         }
     }
 
