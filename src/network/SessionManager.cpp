@@ -372,29 +372,37 @@ bool SessionManager::adopt_outbound_socket(const PeerId& peer_id, SocketHandle s
 }
 
 bool SessionManager::adopt_inbound_socket(SocketHandle socket, const std::optional<PeerId>& expected_peer) {
+    std::cout << "[SessionManager] adopt_inbound_socket: reading peer ID..." << std::endl;
     std::array<std::uint8_t, kPeerIdSize> peer_bytes{};
     if (!recv_all(socket, peer_bytes.data(), peer_bytes.size())) {
+        std::cout << "[SessionManager] adopt_inbound_socket: failed to read peer ID" << std::endl;
         close_socket(socket);
         return false;
     }
 
     PeerId peer_id{};
     std::copy(peer_bytes.begin(), peer_bytes.end(), peer_id.begin());
+    std::cout << "[SessionManager] adopt_inbound_socket: peer ID read: " << peer_key_string(peer_id) << std::endl;
 
     if (expected_peer.has_value() && peer_id != *expected_peer) {
+        std::cout << "[SessionManager] adopt_inbound_socket: peer ID mismatch (expected " << peer_key_string(*expected_peer) << ")" << std::endl;
         close_socket(socket);
         return false;
     }
 
     const auto key = peer_key(peer_id);
     if (!key.has_value()) {
+        std::cout << "[SessionManager] adopt_inbound_socket: no key for peer, handling pending handshake..." << std::endl;
         if (!handle_pending_handshake(peer_id, socket)) {
+            std::cout << "[SessionManager] adopt_inbound_socket: handle_pending_handshake failed" << std::endl;
             close_socket(socket);
             return false;
         }
+        std::cout << "[SessionManager] adopt_inbound_socket: handshake successful" << std::endl;
         return true;
     }
 
+    std::cout << "[SessionManager] adopt_inbound_socket: key exists, starting session" << std::endl;
     auto session = std::make_shared<Session>();
     session->socket = socket;
     session->key = *key;
@@ -419,31 +427,38 @@ bool SessionManager::handle_pending_handshake(const PeerId& peer_id, SocketHandl
     }
 
     if (!handler_copy) {
+        std::cout << "[SessionManager] handle_pending_handshake: no handler" << std::endl;
         return false;
     }
 
     std::vector<std::uint8_t> raw_message;
     if (!read_handshake_payload(socket, raw_message, kHandshakeTimeout)) {
+        std::cout << "[SessionManager] handle_pending_handshake: read_handshake_payload failed" << std::endl;
         return false;
     }
 
     const auto decoded = protocol::decode(raw_message);
     if (!decoded.has_value() || decoded->type != protocol::MessageType::TransportHandshake) {
+        std::cout << "[SessionManager] handle_pending_handshake: invalid handshake message" << std::endl;
         return false;
     }
 
     const auto* payload = std::get_if<protocol::TransportHandshakePayload>(&decoded->payload);
     if (payload == nullptr) {
+        std::cout << "[SessionManager] handle_pending_handshake: invalid payload type" << std::endl;
         return false;
     }
 
+    std::cout << "[SessionManager] handle_pending_handshake: calling handler..." << std::endl;
     const auto acceptance = handler_copy(peer_id, *payload);
     if (!acceptance.has_value() || !acceptance->accepted) {
+        std::cout << "[SessionManager] handle_pending_handshake: handler rejected handshake" << std::endl;
         return false;
     }
 
     if (!acceptance->ack_payload.empty()) {
         if (!send_encrypted(socket, acceptance->session_key, acceptance->ack_payload)) {
+            std::cout << "[SessionManager] handle_pending_handshake: failed to send ACK" << std::endl;
             return false;
         }
     }
