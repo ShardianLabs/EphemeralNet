@@ -390,32 +390,13 @@ bool SessionManager::adopt_inbound_socket(SocketHandle socket, const std::option
         return false;
     }
 
-    const auto key = peer_key(peer_id);
-    if (!key.has_value()) {
-        std::cout << "[SessionManager] adopt_inbound_socket: no key for peer, handling pending handshake..." << std::endl;
-        if (!handle_pending_handshake(peer_id, socket)) {
-            std::cout << "[SessionManager] adopt_inbound_socket: handle_pending_handshake failed" << std::endl;
-            close_socket(socket);
-            return false;
-        }
-        std::cout << "[SessionManager] adopt_inbound_socket: handshake successful" << std::endl;
-        return true;
+    std::cout << "[SessionManager] adopt_inbound_socket: handling handshake..." << std::endl;
+    if (!handle_pending_handshake(peer_id, socket)) {
+        std::cout << "[SessionManager] adopt_inbound_socket: handle_pending_handshake failed" << std::endl;
+        close_socket(socket);
+        return false;
     }
-
-    std::cout << "[SessionManager] adopt_inbound_socket: key exists, starting session" << std::endl;
-    auto session = std::make_shared<Session>();
-    session->socket = socket;
-    session->key = *key;
-    session->endpoint = endpoint_string(socket);
-    session->running.store(true);
-
-    {
-        std::scoped_lock lock(sessions_mutex_);
-        sessions_[peer_key_string(peer_id)] = session;
-    }
-
-    session->reader = std::thread(&SessionManager::receive_loop, this, peer_id, session);
-    session->reader.detach();
+    std::cout << "[SessionManager] adopt_inbound_socket: handshake successful" << std::endl;
     return true;
 }
 
@@ -502,27 +483,11 @@ void SessionManager::accept_loop() {
         std::copy(peer_bytes.begin(), peer_bytes.end(), peer_id.begin());
 
         const auto socket_handle = from_native(client_socket);
-        const auto key = peer_key(peer_id);
-        if (!key.has_value()) {
-            if (!handle_pending_handshake(peer_id, socket_handle)) {
-                close_socket(socket_handle);
-            }
-            continue;
+        
+        // Always perform handshake on new connections.
+        if (!handle_pending_handshake(peer_id, socket_handle)) {
+            close_socket(socket_handle);
         }
-
-        auto session = std::make_shared<Session>();
-        session->socket = socket_handle;
-        session->key = *key;
-        session->endpoint = endpoint_string(socket_handle);
-        session->running.store(true);
-
-        {
-            std::scoped_lock lock(sessions_mutex_);
-            sessions_[peer_key_string(peer_id)] = session;
-        }
-
-        session->reader = std::thread(&SessionManager::receive_loop, this, peer_id, session);
-        session->reader.detach();
     }
 }
 
