@@ -1037,6 +1037,9 @@ std::optional<TransportSessionContext> complete_transport_handshake(ScopedSocket
                                                                                  remote.public_identity);
     std::array<std::uint8_t, 32> session_key = shared.bytes;
 
+    std::cout << "[CLI] complete_transport_handshake: remote_public=" << remote.public_identity 
+              << " local_public=" << local.public_scalar << std::endl;
+
     auto ack_plaintext = read_encrypted_message(socket.get(), session_key, kTransportHandshakeTimeout);
     if (!ack_plaintext.has_value()) {
         if (error_out) {
@@ -1044,6 +1047,8 @@ std::optional<TransportSessionContext> complete_transport_handshake(ScopedSocket
         }
         return std::nullopt;
     }
+
+    std::cout << "[CLI] complete_transport_handshake: received ACK plaintext size=" << ack_plaintext->size() << std::endl;
 
     const auto key_span = std::span<const std::uint8_t>(session_key.data(), session_key.size());
     const auto ack_message = protocol::decode_signed(*ack_plaintext, key_span);

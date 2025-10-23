@@ -2055,6 +2055,11 @@ void Node::handle_transport_message(const network::TransportMessage& message) {
 std::optional<network::SessionManager::HandshakeAcceptance> Node::handle_transport_handshake(
     const PeerId& peer_id,
     const protocol::TransportHandshakePayload& payload) {
+    
+    std::cout << "[Node] handle_transport_handshake: peer=" << peer_id_to_string(peer_id) 
+              << " remote_public=" << payload.public_identity 
+              << " local_public=" << identity_public_ << std::endl;
+
     if (!network::KeyExchange::validate_public(payload.public_identity)) {
         return std::nullopt;
     }
