@@ -11,6 +11,7 @@
 #include "ephemeralnet/bootstrap/TokenChallenge.hpp"
 #include "ephemeralnet/network/AdvertiseDiscovery.hpp"
 #include "ephemeralnet/network/KeyExchange.hpp"
+#include "ephemeralnet/crypto/HmacSha256.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1035,10 +1036,23 @@ std::optional<TransportSessionContext> complete_transport_handshake(ScopedSocket
 
     const auto shared = ephemeralnet::network::KeyExchange::derive_shared_secret(local.private_scalar,
                                                                                  remote.public_identity);
-    std::array<std::uint8_t, 32> session_key = shared.bytes;
+    
+    std::array<std::uint32_t, 2> ordered_publics{local.public_scalar, remote.public_identity};
+    std::sort(ordered_publics.begin(), ordered_publics.end());
 
-    std::cout << "[CLI] complete_transport_handshake: remote_public=" << remote.public_identity 
-              << " local_public=" << local.public_scalar << std::endl;
+    std::array<std::uint8_t, 8> material{};
+    for (std::size_t index = 0; index < ordered_publics.size(); ++index) {
+        const auto value = ordered_publics[index];
+        for (std::size_t byte = 0; byte < 4; ++byte) {
+            const auto shift = static_cast<std::uint32_t>((3 - byte) * 8);
+            material[index * 4 + byte] = static_cast<std::uint8_t>((value >> shift) & 0xFFu);
+        }
+    }
+
+    const auto shared_span = std::span<const std::uint8_t>(shared.bytes);
+    const auto material_span = std::span<const std::uint8_t>(material);
+    const auto derived_key = ephemeralnet::crypto::HmacSha256::compute(shared_span, material_span);
+    std::array<std::uint8_t, 32> session_key = derived_key;
 
     auto ack_plaintext = read_encrypted_message(socket.get(), session_key, kTransportHandshakeTimeout);
     if (!ack_plaintext.has_value()) {
@@ -1047,8 +1061,6 @@ std::optional<TransportSessionContext> complete_transport_handshake(ScopedSocket
         }
         return std::nullopt;
     }
-
-    std::cout << "[CLI] complete_transport_handshake: received ACK plaintext size=" << ack_plaintext->size() << std::endl;
 
     const auto key_span = std::span<const std::uint8_t>(session_key.data(), session_key.size());
     const auto ack_message = protocol::decode_signed(*ack_plaintext, key_span);
