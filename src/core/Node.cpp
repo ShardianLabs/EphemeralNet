@@ -1739,12 +1739,6 @@ std::optional<ChunkData> Node::fetch_chunk(const ChunkId& chunk_id) {
             }
 
             if (shard_threshold == 0) {
-                const auto providers = dht_.find_providers(chunk_id);
-                if (providers.empty()) {
-                    std::cout << "[Node] No providers available for chunk " << chunk_id_to_string(chunk_id) << "\n";
-                } else {
-                    std::cout << "[Node] Providers known for chunk " << chunk_id_to_string(chunk_id) << ": " << providers.size() << "\n";
-                }
                 return std::nullopt;
             }
 
@@ -1770,11 +1764,9 @@ std::optional<ChunkData> Node::fetch_chunk(const ChunkId& chunk_id) {
 
     const auto providers = dht_.find_providers(chunk_id);
     if (providers.empty()) {
-        std::cout << "[Node] No providers available for chunk " << chunk_id_to_string(chunk_id) << "\n";
         return std::nullopt;
     }
 
-    std::cout << "[Node] Providers known for chunk " << chunk_id_to_string(chunk_id) << ": " << providers.size() << "\n";
     return std::nullopt;
 }
 
@@ -2055,11 +2047,6 @@ void Node::handle_transport_message(const network::TransportMessage& message) {
 std::optional<network::SessionManager::HandshakeAcceptance> Node::handle_transport_handshake(
     const PeerId& peer_id,
     const protocol::TransportHandshakePayload& payload) {
-    
-    std::cout << "[Node] handle_transport_handshake: peer=" << peer_id_to_string(peer_id) 
-              << " remote_public=" << payload.public_identity 
-              << " local_public=" << identity_public_ << std::endl;
-
     if (!network::KeyExchange::validate_public(payload.public_identity)) {
         return std::nullopt;
     }
