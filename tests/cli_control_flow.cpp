@@ -1,26 +1,49 @@
 #include <array>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <random>
 #include <stdexcept>
 #include <string>
 #include <thread>
-#include <iterator>
 
 #if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
+#else
+#include <arpa/inet.h>
+#include <csignal>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #endif
 
-#if !defined(_WIN32)
-int main() {
-    std::cout << "CLI control flow test skipped (Windows only)." << std::endl;
-    return 0;
-}
+class WinsockRuntime {
+public:
+#if defined(_WIN32)
+    WinsockRuntime() {
+        WSADATA data{};
+        if (WSAStartup(MAKEWORD(2, 2), &data) != 0) {
+            throw std::runtime_error("WSAStartup failed");
+        }
+    }
+
+    ~WinsockRuntime() {
+        WSACleanup();
+    }
 #else
+    WinsockRuntime() = default;
+    ~WinsockRuntime() = default;
+#endif
+};
 
 struct CommandResult {
     int exit_code;
@@ -28,8 +51,13 @@ struct CommandResult {
 };
 
 CommandResult run_cli(const std::string& executable, const std::string& arguments) {
+#if defined(_WIN32)
     const std::string command = "cmd /C \"\"" + executable + "\" " + arguments + " 2>&1\"";
     FILE* pipe = _popen(command.c_str(), "r");
+#else
+    const std::string command = executable + " " + arguments + " 2>&1";
+    FILE* pipe = popen(command.c_str(), "r");
+#endif
     if (!pipe) {
         throw std::runtime_error("Failed to open a pipe to the CLI");
     }
@@ -40,8 +68,17 @@ CommandResult run_cli(const std::string& executable, const std::string& argument
         output.append(buffer.data());
     }
 
+#if defined(_WIN32)
     const int status = _pclose(pipe);
     return CommandResult{status, output};
+#else
+    const int status = pclose(pipe);
+    int exit_code = status;
+    if (WIFEXITED(status)) {
+        exit_code = WEXITSTATUS(status);
+    }
+    return CommandResult{exit_code, output};
+#endif
 }
 
 bool expect_contains(const std::string& haystack, const std::string& needle) {
@@ -56,14 +93,63 @@ std::string quote(const std::filesystem::path& value) {
     return quote(value.string());
 }
 
+bool can_bind_port(std::uint16_t port) {
+#if defined(_WIN32)
+    SOCKET handle = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (handle == INVALID_SOCKET) {
+        return false;
+    }
+
+    BOOL exclusive = TRUE;
+    ::setsockopt(handle, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&exclusive), sizeof(exclusive));
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = htons(port);
+
+    const bool bound = ::bind(handle, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0;
+    ::closesocket(handle);
+    return bound;
+#else
+    int handle = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (handle < 0) {
+        return false;
+    }
+
+    int reuse = 1;
+    ::setsockopt(handle, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = htons(port);
+
+    const bool bound = ::bind(handle, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0;
+    ::close(handle);
+    return bound;
+#endif
+}
+
+bool wait_for_port_release(std::uint16_t port, std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (can_bind_port(port)) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    return false;
+}
+
 bool wait_for_status(const std::string& executable,
                      const std::string& base_options,
                      std::chrono::milliseconds timeout,
                      bool expect_up) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
-    const auto status = run_cli(executable, base_options + " status");
-    const bool up = status.exit_code == 0 && expect_contains(status.output, "Daemon active");
+        const auto status = run_cli(executable, base_options + " status");
+        const bool up = status.exit_code == 0 && expect_contains(status.output, "Daemon active");
         if (expect_up == up) {
             return true;
         }
@@ -72,7 +158,18 @@ bool wait_for_status(const std::string& executable,
     return false;
 }
 
+std::uint64_t unique_suffix() {
+#if defined(_WIN32)
+    return static_cast<std::uint64_t>(::GetTickCount64());
+#else
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+#endif
+}
+
 int main() {
+    WinsockRuntime winsock_runtime;
+
     const char* executable_env = std::getenv("EPH_CLI_EXECUTABLE");
     if (!executable_env) {
         std::cerr << "EPH_CLI_EXECUTABLE is not defined" << std::endl;
@@ -81,7 +178,7 @@ int main() {
 
     const std::filesystem::path executable_path(executable_env);
     const auto temp_root = std::filesystem::temp_directory_path();
-    const auto test_dir = temp_root / ("eph-cli-" + std::to_string(::GetTickCount64()));
+    const auto test_dir = temp_root / ("eph-cli-" + std::to_string(unique_suffix()));
     std::filesystem::create_directories(test_dir);
 
     const auto cleanup = [&]() {
@@ -93,9 +190,14 @@ int main() {
     std::mt19937 gen(rd());
     std::uniform_int_distribution<int> port_dist(40000, 50000);
     const int control_port = port_dist(gen);
+    int transport_port = port_dist(gen);
+    while (transport_port == control_port) {
+        transport_port = port_dist(gen);
+    }
 
     const std::string base_options = std::string("--storage-dir ") + quote(test_dir) +
                                      " --control-host 127.0.0.1 --control-port " + std::to_string(control_port) +
+                                     " --transport-port " + std::to_string(transport_port) +
                                      " --yes";
 
     bool daemon_started = false;
@@ -107,6 +209,7 @@ int main() {
         const auto stop_res = run_cli(executable_path.string(), base_options + " stop");
         (void)stop_res;
         wait_for_status(executable_path.string(), base_options, std::chrono::seconds(3), false);
+        wait_for_port_release(static_cast<std::uint16_t>(transport_port), std::chrono::seconds(3));
         daemon_started = false;
     };
 
@@ -193,7 +296,7 @@ int main() {
         }
 
         const auto stop_res = run_cli(executable_path.string(), base_options + " stop");
-    if (stop_res.exit_code != 0 || !expect_contains(stop_res.output, "Daemon stopped")) {
+        if (stop_res.exit_code != 0 || !expect_contains(stop_res.output, "Daemon stopped")) {
             std::cerr << "Failed to stop daemon\n" << stop_res.output << std::endl;
             ensure_stop();
             cleanup();
@@ -203,6 +306,12 @@ int main() {
 
         if (!wait_for_status(executable_path.string(), base_options, std::chrono::seconds(5), false)) {
             std::cerr << "Daemon did not stop cleanly" << std::endl;
+            cleanup();
+            return 1;
+        }
+
+        if (!wait_for_port_release(static_cast<std::uint16_t>(transport_port), std::chrono::seconds(5))) {
+            std::cerr << "Transport port was not released after stop" << std::endl;
             cleanup();
             return 1;
         }
@@ -217,5 +326,3 @@ int main() {
         return 1;
     }
 }
-
-#endif

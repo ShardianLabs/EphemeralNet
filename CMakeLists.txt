@@ -812,6 +812,13 @@ if(EPHEMERALNET_BUILD_TESTS)
         ephemeralnet_enable_warnings(ephemeralnet_cli_flow_tests)
     endif()
 
+    if(WIN32)
+        target_link_libraries(ephemeralnet_cli_flow_tests
+            PRIVATE
+                ws2_32
+        )
+    endif()
+
     add_test(NAME EphemeralNet.CLIControlFlow COMMAND ephemeralnet_cli_flow_tests)
     set_tests_properties(EphemeralNet.CLIControlFlow PROPERTIES
         ENVIRONMENT "EPH_CLI_EXECUTABLE=$<TARGET_FILE:ephemeralnet>"
