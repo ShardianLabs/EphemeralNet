@@ -3917,16 +3917,16 @@ int main(int argc, char** argv) {
                 std::cout << "\nInterrupt received, shutting down..." << std::endl;
             }
 
-            std::cout << "Stopping control server..." << std::endl;
-            control_server.stop();
-            std::cout << "Control server stopped." << std::endl;
-
             {
                 std::scoped_lock lock(node_mutex);
                 std::cout << "Stopping transport..." << std::endl;
                 node.stop_transport();
             }
             std::cout << "Transport stopped." << std::endl;
+
+            std::cout << "Stopping control server..." << std::endl;
+            control_server.stop();
+            std::cout << "Control server stopped." << std::endl;
             uninstall_termination_handlers();
             std::cout << "Daemon stopped." << std::endl;
             return 0;

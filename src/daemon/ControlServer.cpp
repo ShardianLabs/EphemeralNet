@@ -555,7 +555,7 @@ private:
     std::atomic<bool> running_{false};
     NativeSocket listen_socket_{kInvalidSocket};
     std::thread accept_thread_;
-    std::atomic<bool> transport_stopped_{false};
+    std::atomic<bool> stop_requested_{false};
     std::mutex rate_mutex_;
     std::unordered_map<std::string, std::vector<std::chrono::steady_clock::time_point>> store_history_;
     std::unordered_map<std::string, std::vector<std::chrono::steady_clock::time_point>> fetch_history_;
@@ -799,25 +799,20 @@ private:
     }
 
     void handle_stop(NativeSocket client, const std::string& remote_identity) {
-        const bool should_stop_transport = !transport_stopped_.exchange(true, std::memory_order_acq_rel);
+        const bool first_request = !stop_requested_.exchange(true, std::memory_order_acq_rel);
 
-        if (stop_callback_) {
+        if (first_request && stop_callback_) {
             stop_callback_();
         }
 
-        if (should_stop_transport) {
-            std::scoped_lock lock(node_mutex_);
-            node_.stop_transport();
-        }
-
         auto fields = make_ok("OK_STOP");
-        fields["MESSAGE"] = "Stopping daemon";
-        fields["TRANSPORT"] = should_stop_transport ? "STOPPED" : "STOPPING";
+        fields["MESSAGE"] = first_request ? "Stopping daemon" : "Daemon already stopping";
+        fields["STATE"] = first_request ? "REQUESTED" : "PENDING";
         send_response(client, fields, true);
 
         log_event(StructuredLogger::Level::Info,
                   "control.command.stop",
-                  {{"remote", remote_identity}, {"transport_stop_waited", should_stop_transport ? "1" : "0"}});
+                  {{"remote", remote_identity}, {"stop_requested", first_request ? "1" : "0"}});
     }
 
     void handle_list(NativeSocket client, const std::string& remote_identity) {
