@@ -34,6 +34,8 @@ namespace ephemeralnet::network {
 
 namespace {
 
+using SocketHandle = std::intptr_t;
+
 #ifdef _WIN32
 using NativeSocket = SOCKET;
 constexpr NativeSocket kInvalidSocket = INVALID_SOCKET;
@@ -60,6 +62,12 @@ void close_socket(NativeSocket socket) {
     }
 }
 
+void shutdown_socket(NativeSocket socket) {
+    if (socket != kInvalidSocket) {
+        ::shutdown(socket, SD_BOTH);
+    }
+}
+
 #else
 using NativeSocket = int;
 constexpr NativeSocket kInvalidSocket = -1;
@@ -72,7 +80,29 @@ void close_socket(NativeSocket socket) {
     }
 }
 
+void shutdown_socket(NativeSocket socket) {
+    if (socket != kInvalidSocket) {
+        ::shutdown(socket, SHUT_RDWR);
+    }
+}
+
 #endif
+
+constexpr SocketHandle kEncodedInvalidSocket = static_cast<SocketHandle>(-1);
+
+SocketHandle encode_socket(NativeSocket socket) {
+    if (socket == kInvalidSocket) {
+        return kEncodedInvalidSocket;
+    }
+    return static_cast<SocketHandle>(socket);
+}
+
+NativeSocket decode_socket(SocketHandle handle) {
+    if (handle == kEncodedInvalidSocket) {
+        return kInvalidSocket;
+    }
+    return static_cast<NativeSocket>(handle);
+}
 
 bool send_all(NativeSocket socket, const std::uint8_t* data, std::size_t length) {
     std::size_t total = 0;
@@ -286,6 +316,7 @@ void RelayClient::stop() {
     if (!running_.exchange(false)) {
         return;
     }
+    interrupt_active_socket();
     {
         std::scoped_lock lock(state_mutex_);
         if (state_ && state_->socket != kInvalidSocket) {
@@ -397,17 +428,20 @@ bool RelayClient::register_with_endpoint(const Config::RelayEndpoint& endpoint) 
     if (socket == kInvalidSocket) {
         return false;
     }
+    track_active_socket(encode_socket(socket));
 
     const auto self_hex = peer_id_to_string(self_id_);
     std::string register_line = "REGISTER " + self_hex + "\n";
     if (!send_line(socket, register_line)) {
         close_socket(socket);
+        clear_tracked_socket();
         return false;
     }
 
     auto ack = read_line(socket, std::chrono::milliseconds{5000});
     if (!ack.has_value() || *ack != "OK") {
         close_socket(socket);
+        clear_tracked_socket();
         return false;
     }
 
@@ -442,6 +476,7 @@ bool RelayClient::register_with_endpoint(const Config::RelayEndpoint& endpoint) 
             const bool adopted = sessions_.adopt_inbound_socket(handle, remote);
             if (!adopted) {
                 close_socket(socket);
+                clear_tracked_socket();
                 socket = kInvalidSocket;
                 break;
             }
@@ -453,6 +488,7 @@ bool RelayClient::register_with_endpoint(const Config::RelayEndpoint& endpoint) 
                     state_->socket = kInvalidSocket;
                 }
             }
+            clear_tracked_socket();
             socket = kInvalidSocket;
             break;
         }
@@ -460,6 +496,7 @@ bool RelayClient::register_with_endpoint(const Config::RelayEndpoint& endpoint) 
 
     if (socket != kInvalidSocket) {
         close_socket(socket);
+        clear_tracked_socket();
         {
             std::scoped_lock lock(state_mutex_);
             if (state_) {
@@ -478,6 +515,23 @@ void RelayClient::clear_active_allocation() {
         state_->socket = kInvalidSocket;
     }
     state_.reset();
+    clear_tracked_socket();
+}
+
+void RelayClient::track_active_socket(SocketHandle handle) {
+    active_socket_.store(handle, std::memory_order_release);
+}
+
+void RelayClient::clear_tracked_socket() {
+    active_socket_.store(kInvalidSocketHandle, std::memory_order_release);
+}
+
+void RelayClient::interrupt_active_socket() {
+    const auto handle = active_socket_.load(std::memory_order_acquire);
+    const auto socket = decode_socket(handle);
+    if (socket != kInvalidSocket) {
+        shutdown_socket(socket);
+    }
 }
 
 }  // namespace ephemeralnet::network

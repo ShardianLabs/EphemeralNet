@@ -5,6 +5,7 @@
 #include "ephemeralnet/protocol/Manifest.hpp"
 
 #include <atomic>
+#include <cstdint>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -40,6 +41,10 @@ private:
     void registration_loop();
     bool register_with_endpoint(const Config::RelayEndpoint& endpoint);
     void clear_active_allocation();
+    void track_active_socket(std::intptr_t handle);
+    void clear_tracked_socket();
+    void interrupt_active_socket();
+    static constexpr std::intptr_t kInvalidSocketHandle = static_cast<std::intptr_t>(-1);
 
     const Config& config_;
     SessionManager& sessions_;
@@ -47,6 +52,7 @@ private:
 
     std::thread worker_;
     std::atomic<bool> running_{false};
+    std::atomic<std::intptr_t> active_socket_{kInvalidSocketHandle};
 
     mutable std::mutex state_mutex_;
     std::unique_ptr<RelayState> state_;
