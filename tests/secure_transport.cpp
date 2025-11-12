@@ -7,6 +7,7 @@
 #include <cassert>
 #include <chrono>
 #include <future>
+#include <iostream>
 #include <span>
 #include <thread>
 #include <vector>
@@ -42,16 +43,38 @@ int main() {
     node_a.start_transport(0);
     node_b.start_transport(0);
 
+    auto shutdown = [&]() {
+        node_a.stop_transport();
+        node_b.stop_transport();
+    };
+
+    auto require = [&](bool condition, const char* message) {
+        if (!condition) {
+            std::cerr << "[SecureTransport] " << message << std::endl;
+            shutdown();
+            return false;
+        }
+        return true;
+    };
+
     const auto port_a = node_a.transport_port();
 
     const auto pow_b = ephemeralnet::test::NodeTestAccess::handshake_work(node_b, node_a.id());
     const auto pow_a = ephemeralnet::test::NodeTestAccess::handshake_work(node_a, node_b.id());
-    assert(pow_b.has_value());
-    assert(pow_a.has_value());
+    if (!require(pow_b.has_value(), "handshake work for node_b failed")) {
+        return 1;
+    }
+    if (!require(pow_a.has_value(), "handshake work for node_a failed")) {
+        return 1;
+    }
     const bool handshake_ab = node_a.perform_handshake(node_b.id(), node_b.public_identity(), *pow_b);
     const bool handshake_ba = node_b.perform_handshake(node_a.id(), node_a.public_identity(), *pow_a);
-    assert(handshake_ab);
-    assert(handshake_ba);
+    if (!require(handshake_ab, "node_a -> node_b handshake failed")) {
+        return 1;
+    }
+    if (!require(handshake_ba, "node_b -> node_a handshake failed")) {
+        return 1;
+    }
 
     std::promise<std::vector<std::uint8_t>> promise;
     auto future = promise.get_future();
@@ -65,19 +88,26 @@ int main() {
     std::this_thread::sleep_for(50ms);
 
     const bool connected = node_b.connect_peer(node_a.id(), "127.0.0.1", port_a);
-    assert(connected);
+    if (!require(connected, "node_b could not connect to node_a")) {
+        return 1;
+    }
 
     const std::vector<std::uint8_t> payload{'O', 'K', '!'};
     const bool sent = node_b.send_secure(node_a.id(), std::span<const std::uint8_t>(payload));
-    assert(sent);
+    if (!require(sent, "node_b failed to send secure payload")) {
+        return 1;
+    }
 
     const auto status = future.wait_for(2s);
-    assert(status == std::future_status::ready);
+    if (!require(status == std::future_status::ready, "timed out waiting for secure payload")) {
+        return 1;
+    }
     const auto received = future.get();
-    assert(received == payload);
+    if (!require(received == payload, "received payload does not match expected value")) {
+        return 1;
+    }
 
-    node_a.stop_transport();
-    node_b.stop_transport();
+    shutdown();
 
     return 0;
 }

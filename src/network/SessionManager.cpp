@@ -226,7 +226,10 @@ void SessionManager::register_peer_key(const PeerId& peer_id, const std::array<s
     }
 }
 
-bool SessionManager::connect(const PeerId& peer_id, const std::string& host, std::uint16_t port) {
+bool SessionManager::connect(const PeerId& peer_id,
+                             const std::string& host,
+                             std::uint16_t port,
+                             const OutboundHandshake* handshake) {
     const auto key = peer_key(peer_id);
     if (!key.has_value()) {
         return false;
@@ -269,6 +272,19 @@ bool SessionManager::connect(const PeerId& peer_id, const std::string& host, std
     if (!send_all(from_native(socket), identity.data(), identity.size())) {
         close_socket(from_native(socket));
         return false;
+    }
+
+    if (handshake) {
+        if (!send_transport_handshake(from_native(socket), *handshake)) {
+            close_socket(from_native(socket));
+            return false;
+        }
+        if (handshake->expect_ack) {
+            if (!receive_transport_handshake_ack(from_native(socket), *handshake)) {
+                close_socket(from_native(socket));
+                return false;
+            }
+        }
     }
 
     auto session = std::make_shared<Session>();
@@ -545,6 +561,76 @@ bool SessionManager::send_encrypted(SocketHandle socket,
     std::copy(ciphertext.begin(), ciphertext.end(), buffer.begin() + kNonceSize + kLengthFieldSize);
 
     return send_all(socket, buffer.data(), buffer.size());
+}
+
+bool SessionManager::send_transport_handshake(SocketHandle socket, const OutboundHandshake& handshake) {
+    protocol::Message message{};
+    message.version = protocol::kCurrentMessageVersion;
+    message.type = protocol::MessageType::TransportHandshake;
+    message.payload = handshake.payload;
+
+    const auto encoded = protocol::encode(message);
+    std::vector<std::uint8_t> frame(kLengthFieldSize + encoded.size());
+    const auto length = static_cast<std::uint32_t>(encoded.size());
+    frame[0] = static_cast<std::uint8_t>((length >> 24) & 0xFFu);
+    frame[1] = static_cast<std::uint8_t>((length >> 16) & 0xFFu);
+    frame[2] = static_cast<std::uint8_t>((length >> 8) & 0xFFu);
+    frame[3] = static_cast<std::uint8_t>(length & 0xFFu);
+    std::copy(encoded.begin(), encoded.end(), frame.begin() + kLengthFieldSize);
+
+    return send_all(socket, frame.data(), frame.size());
+}
+
+bool SessionManager::receive_transport_handshake_ack(SocketHandle socket, const OutboundHandshake& handshake) {
+    std::array<std::uint8_t, kNonceSize> nonce_buffer{};
+    if (!recv_all(socket, nonce_buffer.data(), nonce_buffer.size())) {
+        return false;
+    }
+
+    std::array<std::uint8_t, kLengthFieldSize> length_buffer{};
+    if (!recv_all(socket, length_buffer.data(), length_buffer.size())) {
+        return false;
+    }
+
+    const auto length = (static_cast<std::uint32_t>(length_buffer[0]) << 24)
+        | (static_cast<std::uint32_t>(length_buffer[1]) << 16)
+        | (static_cast<std::uint32_t>(length_buffer[2]) << 8)
+        | (static_cast<std::uint32_t>(length_buffer[3]));
+
+    if (length == 0 || length > kMaxPayloadSize) {
+        return false;
+    }
+
+    std::vector<std::uint8_t> ciphertext(length);
+    if (!ciphertext.empty()) {
+        if (!recv_all(socket, ciphertext.data(), ciphertext.size())) {
+            return false;
+        }
+    }
+
+    crypto::Key key{};
+    key.bytes = handshake.session_key;
+
+    crypto::Nonce nonce{};
+    std::copy(nonce_buffer.begin(), nonce_buffer.end(), nonce.bytes.begin());
+
+    std::vector<std::uint8_t> plaintext(ciphertext.size());
+    if (!ciphertext.empty()) {
+        crypto::ChaCha20::apply(key, nonce, ciphertext, plaintext, 0u);
+    }
+
+    const auto key_span = std::span<const std::uint8_t>(handshake.session_key.data(), handshake.session_key.size());
+    const auto ack_message = protocol::decode_signed(plaintext, key_span);
+    if (!ack_message.has_value() || ack_message->type != protocol::MessageType::HandshakeAck) {
+        return false;
+    }
+
+    const auto* payload = std::get_if<protocol::HandshakeAckPayload>(&ack_message->payload);
+    if (payload == nullptr || !payload->accepted) {
+        return false;
+    }
+
+    return true;
 }
 
 void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session> session) {

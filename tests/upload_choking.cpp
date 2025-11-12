@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <iostream>
 #include <string>
 #include <thread>
 
@@ -62,20 +63,47 @@ int main() {
     peer_a.start_transport(0);
     peer_b.start_transport(0);
 
+    auto shutdown = [&]() {
+        seeder.stop_transport();
+        peer_a.stop_transport();
+        peer_b.stop_transport();
+    };
+
+    auto require = [&](bool condition, const char* message) {
+        if (!condition) {
+            std::cerr << "[UploadChoking] " << message << std::endl;
+            shutdown();
+            return false;
+        }
+        return true;
+    };
+
     const auto pow_peer_a = ephemeralnet::test::NodeTestAccess::handshake_work(peer_a, seeder_id);
     const auto pow_seeder_a = ephemeralnet::test::NodeTestAccess::handshake_work(seeder, peer_a_id);
     const auto pow_peer_b = ephemeralnet::test::NodeTestAccess::handshake_work(peer_b, seeder_id);
     const auto pow_seeder_b = ephemeralnet::test::NodeTestAccess::handshake_work(seeder, peer_b_id);
-    assert(pow_peer_a.has_value());
-    assert(pow_seeder_a.has_value());
-    assert(pow_peer_b.has_value());
-    assert(pow_seeder_b.has_value());
+    if (!require(pow_peer_a.has_value(), "peer A handshake work failed")) {
+        return 1;
+    }
+    if (!require(pow_seeder_a.has_value(), "seeder handshake work for peer A failed")) {
+        return 1;
+    }
+    if (!require(pow_peer_b.has_value(), "peer B handshake work failed")) {
+        return 1;
+    }
+    if (!require(pow_seeder_b.has_value(), "seeder handshake work for peer B failed")) {
+        return 1;
+    }
     const bool hs_a = seeder.perform_handshake(peer_a_id, peer_a.public_identity(), *pow_peer_a);
     const bool hs_a_back = peer_a.perform_handshake(seeder_id, seeder.public_identity(), *pow_seeder_a);
     const bool hs_b = seeder.perform_handshake(peer_b_id, peer_b.public_identity(), *pow_peer_b);
     const bool hs_b_back = peer_b.perform_handshake(seeder_id, seeder.public_identity(), *pow_seeder_b);
-    assert(hs_a && hs_a_back);
-    assert(hs_b && hs_b_back);
+    if (!require(hs_a && hs_a_back, "peer A handshake sequence failed")) {
+        return 1;
+    }
+    if (!require(hs_b && hs_b_back, "peer B handshake sequence failed")) {
+        return 1;
+    }
 
     const auto chunk_id = make_chunk_id(0x55);
     ephemeralnet::ChunkData chunk_payload(64, 0xEFu);
@@ -98,14 +126,19 @@ int main() {
     auto deadline = std::chrono::steady_clock::now() + 10s;
     bool a_complete = false;
     bool b_complete = false;
-    std::size_t max_active = 0;
+    bool observed_upload_activity = false;
 
     while (std::chrono::steady_clock::now() < deadline && (!a_complete || !b_complete)) {
         seeder.tick();
         peer_a.tick();
         peer_b.tick();
 
-        max_active = std::max(max_active, ephemeralnet::test::NodeTestAccess::active_uploads(seeder));
+        const auto active_uploads = ephemeralnet::test::NodeTestAccess::active_uploads(seeder);
+        const auto pending_uploads = ephemeralnet::test::NodeTestAccess::pending_uploads(seeder);
+        const auto completed_uploads = ephemeralnet::test::NodeTestAccess::completed_uploads(seeder);
+        if (active_uploads > 0 || pending_uploads > 0 || completed_uploads > 0) {
+            observed_upload_activity = true;
+        }
 
         if (!a_complete) {
             const auto data = peer_a.fetch_chunk(chunk_id);
@@ -120,10 +153,24 @@ int main() {
         std::this_thread::sleep_for(30ms);
     }
 
-    assert(a_complete);
-    assert(b_complete);
-    assert(max_active <= seeder_config.upload_max_parallel_transfers);
-    assert(max_active >= 1);
+    if (!require(a_complete, "peer A failed to fetch chunk")) {
+        return 1;
+    }
+    if (!require(b_complete, "peer B failed to fetch chunk")) {
+        return 1;
+    }
+    const auto peak_active = ephemeralnet::test::NodeTestAccess::peak_active_uploads(seeder);
+    const auto total_completed = ephemeralnet::test::NodeTestAccess::completed_uploads(seeder);
+
+    if (!require(peak_active <= seeder_config.upload_max_parallel_transfers, "upload concurrency exceeded limit")) {
+        return 1;
+    }
+    if (!require(total_completed >= 2, "expected both peers to complete uploads")) {
+        return 1;
+    }
+    if (!require(observed_upload_activity, "no upload activity was observed")) {
+        return 1;
+    }
 
     auto drain_deadline = std::chrono::steady_clock::now() + 3s;
     while (std::chrono::steady_clock::now() < drain_deadline
@@ -133,14 +180,19 @@ int main() {
         std::this_thread::sleep_for(30ms);
     }
 
-    assert(ephemeralnet::test::NodeTestAccess::pending_uploads(seeder) == 0);
-    assert(ephemeralnet::test::NodeTestAccess::active_uploads(seeder) == 0);
-    assert(ephemeralnet::test::NodeTestAccess::active_uploads_for_peer(seeder, peer_a_id) == 0);
-    assert(ephemeralnet::test::NodeTestAccess::active_uploads_for_peer(seeder, peer_b_id) == 0);
+    if (!require(ephemeralnet::test::NodeTestAccess::pending_uploads(seeder) == 0, "pending uploads failed to drain")) {
+        return 1;
+    }
+    if (!require(ephemeralnet::test::NodeTestAccess::active_uploads(seeder) == 0, "active uploads failed to drain")) {
+        return 1;
+    }
+    if (!require(ephemeralnet::test::NodeTestAccess::active_uploads_for_peer(seeder, peer_a_id) == 0, "peer A active uploads failed to drain")) {
+        return 1;
+    }
+    if (!require(ephemeralnet::test::NodeTestAccess::active_uploads_for_peer(seeder, peer_b_id) == 0, "peer B active uploads failed to drain")) {
+        return 1;
+    }
 
-    seeder.stop_transport();
-    peer_a.stop_transport();
-    peer_b.stop_transport();
-
+    shutdown();
     return 0;
 }

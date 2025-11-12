@@ -102,31 +102,33 @@ target_compile_definitions(ephemeralnet
         EPHEMERALNET_VERSION="${PROJECT_VERSION}"
 )
 
-add_executable(ephemeralnet_relay
-    src/relay/main.cpp
-    src/relay/EventLoop.cpp
-    src/relay/RelayServer.cpp
-)
+if(NOT WIN32)
+    add_executable(ephemeralnet_relay
+        src/relay/main.cpp
+        src/relay/EventLoop.cpp
+        src/relay/RelayServer.cpp
+    )
 
-set_target_properties(ephemeralnet_relay PROPERTIES
-    OUTPUT_NAME eph-relay-server
-)
+    set_target_properties(ephemeralnet_relay PROPERTIES
+        OUTPUT_NAME eph-relay-server
+    )
 
-if(EPHEMERALNET_WARNINGS_AS_ERRORS)
-    ephemeralnet_enable_warnings(ephemeralnet_relay TREAT_AS_ERRORS)
-else()
-    ephemeralnet_enable_warnings(ephemeralnet_relay)
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_relay TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_relay)
+    endif()
+
+    target_link_libraries(ephemeralnet_relay
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    target_include_directories(ephemeralnet_relay
+        PRIVATE
+            include
+    )
 endif()
-
-target_link_libraries(ephemeralnet_relay
-    PRIVATE
-        ephemeralnet::core
-)
-
-target_include_directories(ephemeralnet_relay
-    PRIVATE
-        include
-)
 
 if(EPHEMERALNET_BUILD_TESTS)
     enable_testing()
@@ -843,27 +845,29 @@ if(EPHEMERALNET_BUILD_TESTS)
         ENVIRONMENT "EPH_CLI_EXECUTABLE=$<TARGET_FILE:ephemeralnet>"
     )
 
-    add_executable(ephemeralnet_relay_client_tests
-        tests/relay_client_integration.cpp
-        src/relay/EventLoop.cpp
-        src/relay/RelayServer.cpp
-    )
+    if(NOT WIN32)
+        add_executable(ephemeralnet_relay_client_tests
+            tests/relay_client_integration.cpp
+            src/relay/EventLoop.cpp
+            src/relay/RelayServer.cpp
+        )
 
-    target_link_libraries(ephemeralnet_relay_client_tests
-        PRIVATE
-            ephemeralnet::core
-    )
+        target_link_libraries(ephemeralnet_relay_client_tests
+            PRIVATE
+                ephemeralnet::core
+        )
 
-    target_include_directories(ephemeralnet_relay_client_tests
-        PRIVATE
-            include
-    )
+        target_include_directories(ephemeralnet_relay_client_tests
+            PRIVATE
+                include
+        )
 
-    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
-        ephemeralnet_enable_warnings(ephemeralnet_relay_client_tests TREAT_AS_ERRORS)
-    else()
-        ephemeralnet_enable_warnings(ephemeralnet_relay_client_tests)
+        if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+            ephemeralnet_enable_warnings(ephemeralnet_relay_client_tests TREAT_AS_ERRORS)
+        else()
+            ephemeralnet_enable_warnings(ephemeralnet_relay_client_tests)
+        endif()
+
+        add_test(NAME EphemeralNet.RelayClientIntegration COMMAND ephemeralnet_relay_client_tests)
     endif()
-
-    add_test(NAME EphemeralNet.RelayClientIntegration COMMAND ephemeralnet_relay_client_tests)
 endif()

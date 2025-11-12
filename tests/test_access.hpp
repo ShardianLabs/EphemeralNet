@@ -3,6 +3,7 @@
 #include "ephemeralnet/core/Node.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <optional>
 #include <string>
@@ -95,6 +96,14 @@ public:
             return 0;
         }
         return it->second;
+    }
+
+    static std::uint64_t completed_uploads(const Node& node) {
+        return node.total_completed_uploads_.load(std::memory_order_relaxed);
+    }
+
+    static std::size_t peak_active_uploads(const Node& node) {
+        return node.peak_active_uploads_.load(std::memory_order_relaxed);
     }
 
     static void enqueue_upload(Node& node,

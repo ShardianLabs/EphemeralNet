@@ -860,6 +860,13 @@ void Node::note_upload_start(const PendingUploadRequest& request, std::size_t pa
 
     const auto peer_key = peer_id_to_string(request.peer_id);
     active_uploads_per_peer_[peer_key] += 1;
+
+    const auto current_active = active_uploads_.size();
+    auto peak = peak_active_uploads_.load(std::memory_order_relaxed);
+    while (current_active > peak
+           && !peak_active_uploads_.compare_exchange_weak(peak, current_active, std::memory_order_relaxed)) {
+        // retry until peak reflects the observed concurrency
+    }
 }
 
 void Node::note_upload_end(const PeerId& peer_id, const ChunkId& chunk_id, bool /*success*/) {
@@ -881,6 +888,7 @@ void Node::note_upload_end(const PeerId& peer_id, const ChunkId& chunk_id, bool 
         }
     }
 
+    total_completed_uploads_.fetch_add(1, std::memory_order_relaxed);
     active_uploads_.erase(it);
 }
 
@@ -1986,7 +1994,26 @@ void Node::set_message_handler(network::SessionManager::MessageHandler handler) 
 }
 
 bool Node::connect_peer(const PeerId& peer_id, const std::string& host, std::uint16_t port) {
-    return sessions_.connect(peer_id, host, port);
+    const auto session_key = session_shared_key(peer_id);
+    if (!session_key.has_value()) {
+        return false;
+    }
+
+    const auto work_nonce = generate_handshake_work(peer_id);
+    if (!work_nonce.has_value()) {
+        return false;
+    }
+
+    protocol::TransportHandshakePayload payload{};
+    payload.public_identity = identity_public_;
+    payload.work_nonce = *work_nonce;
+    payload.requested_version = preferred_message_version();
+
+    network::SessionManager::OutboundHandshake handshake{};
+    handshake.payload = payload;
+    handshake.session_key = *session_key;
+
+    return sessions_.connect(peer_id, host, port, &handshake);
 }
 
 bool Node::send_secure(const PeerId& peer_id, std::span<const std::uint8_t> payload) {

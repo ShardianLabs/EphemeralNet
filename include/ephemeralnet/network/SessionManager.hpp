@@ -36,6 +36,11 @@ public:
     };
     using HandshakeHandler = std::function<std::optional<HandshakeAcceptance>(const PeerId& peer_id,
                                                                               const protocol::TransportHandshakePayload& payload)>;
+    struct OutboundHandshake {
+        protocol::TransportHandshakePayload payload{};
+        std::array<std::uint8_t, 32> session_key{};
+        bool expect_ack{true};
+    };
     using SocketHandle = intptr_t;
     static constexpr SocketHandle INVALID_SOCKET_HANDLE = static_cast<SocketHandle>(-1);
 
@@ -55,7 +60,10 @@ public:
 
     void register_peer_key(const PeerId& peer_id, const std::array<std::uint8_t, 32>& key);
 
-    bool connect(const PeerId& peer_id, const std::string& host, std::uint16_t port);
+    bool connect(const PeerId& peer_id,
+                 const std::string& host,
+                 std::uint16_t port,
+                 const OutboundHandshake* handshake = nullptr);
     bool send(const PeerId& peer_id, std::span<const std::uint8_t> payload);
 
     bool adopt_outbound_socket(const PeerId& peer_id, SocketHandle socket, bool identity_sent);
@@ -102,6 +110,8 @@ private:
     bool send_encrypted(SocketHandle socket,
                         const std::array<std::uint8_t, 32>& key,
                         std::span<const std::uint8_t> payload);
+    bool send_transport_handshake(SocketHandle socket, const OutboundHandshake& handshake);
+    bool receive_transport_handshake_ack(SocketHandle socket, const OutboundHandshake& handshake);
     void teardown_sessions();
     std::optional<std::array<std::uint8_t, 32>> peer_key(const PeerId& peer_id) const;
     static std::string peer_key_string(const PeerId& peer_id);

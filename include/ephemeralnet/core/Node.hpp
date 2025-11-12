@@ -187,6 +187,8 @@ private:
     std::unordered_map<std::string, ActiveUploadState> active_uploads_;
     std::unordered_map<std::string, std::size_t> active_uploads_per_peer_;
     std::chrono::steady_clock::time_point last_upload_rotation_{};
+    std::atomic<std::uint64_t> total_completed_uploads_{0};
+    std::atomic<std::size_t> peak_active_uploads_{0};
     std::unordered_map<std::string, SwarmRoleLedger> swarm_roles_;
     std::unordered_map<std::string, std::uint8_t> peer_message_versions_;
     std::unordered_map<std::string, std::deque<std::chrono::steady_clock::time_point>> peer_announce_history_;
