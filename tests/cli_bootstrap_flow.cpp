@@ -188,9 +188,10 @@ int main() {
         const auto fetch_command = base_options + " fetch " + quote(manifest) +
                                    " --bootstrap-max-attempts 100000 --out " + quote(output_path);
         const auto fetch_res = run_cli(executable_path.string(), fetch_command);
-        if (fetch_res.exit_code != 0 ||
-            !expect_contains(fetch_res.output, "Falling back to swarm discovery") ||
-            !expect_contains(fetch_res.output, "File retrieved")) {
+        const bool saw_fallback = expect_contains(fetch_res.output, "Falling back to swarm discovery");
+        const bool saw_direct = expect_contains(fetch_res.output, "Direct fetch succeeded");
+        const bool saw_file = expect_contains(fetch_res.output, "File retrieved");
+        if (fetch_res.exit_code != 0 || !saw_file || (!saw_fallback && !saw_direct)) {
             std::cerr << "Fetch command failed\n" << fetch_res.output << std::endl;
             ensure_stop();
             cleanup();

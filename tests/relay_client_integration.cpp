@@ -1,6 +1,7 @@
 #include "ephemeralnet/Config.hpp"
 #include "ephemeralnet/network/RelayClient.hpp"
 #include "ephemeralnet/network/SessionManager.hpp"
+#include "ephemeralnet/protocol/Message.hpp"
 #include "ephemeralnet/relay/EventLoop.hpp"
 #include "ephemeralnet/relay/RelayServer.hpp"
 
@@ -13,6 +14,7 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+#include <span>
 
 using namespace std::chrono_literals;
 
@@ -64,6 +66,18 @@ int main() {
 
         std::cout << "[relay-test] server listening" << std::endl;
         std::thread loop_thread([&]() { loop.run(); });
+        struct LoopGuard {
+            std::thread& thread;
+            ephemeralnet::relay::RelayServer& server;
+            ephemeralnet::relay::EventLoop& loop;
+            ~LoopGuard() {
+                server.stop();
+                loop.stop();
+                if (thread.joinable()) {
+                    thread.join();
+                }
+            }
+        } loop_guard{loop_thread, server, loop};
 
         auto peer_a = make_peer_id(0xA1);
         auto peer_b = make_peer_id(0xB2);
@@ -79,6 +93,42 @@ int main() {
         shared_key.fill(0x42);
         session_a.register_peer_key(peer_b, shared_key);
         session_b.register_peer_key(peer_a, shared_key);
+
+        auto handshake_handler = [&](const ephemeralnet::PeerId& expected_peer) {
+            return [shared_key, expected_peer](const ephemeralnet::PeerId& peer_id,
+                                              const protocol::TransportHandshakePayload& payload)
+                       -> std::optional<ephemeralnet::network::SessionManager::HandshakeAcceptance> {
+                if (peer_id != expected_peer) {
+                    return std::nullopt;
+                }
+
+                const auto negotiated_version = std::clamp<std::uint8_t>(
+                    payload.requested_version,
+                    protocol::kMinimumMessageVersion,
+                    protocol::kCurrentMessageVersion);
+
+                protocol::Message ack{};
+                ack.version = negotiated_version;
+                ack.type = protocol::MessageType::HandshakeAck;
+                protocol::HandshakeAckPayload ack_payload{};
+                ack_payload.accepted = true;
+                ack_payload.negotiated_version = negotiated_version;
+                ack_payload.responder_public = payload.public_identity;
+                ack.payload = ack_payload;
+
+                const auto key_span = std::span<const std::uint8_t>(shared_key.data(), shared_key.size());
+                auto encoded_ack = protocol::encode_signed(ack, key_span);
+
+                ephemeralnet::network::SessionManager::HandshakeAcceptance acceptance{};
+                acceptance.accepted = true;
+                acceptance.session_key = shared_key;
+                acceptance.ack_payload = std::move(encoded_ack);
+                return acceptance;
+            };
+        };
+
+        session_a.set_handshake_handler(handshake_handler(peer_b));
+        session_b.set_handshake_handler(handshake_handler(peer_a));
 
         std::mutex message_mutex;
         std::condition_variable message_cv;
@@ -144,7 +194,9 @@ int main() {
         std::cout << "[relay-test] stopping relay server" << std::endl;
         server.stop();
         loop.stop();
-        loop_thread.join();
+        if (loop_thread.joinable()) {
+            loop_thread.join();
+        }
         std::cout << "[relay-test] relay server stopped" << std::endl;
 
         std::cout << "[relay-test] stopping client A" << std::endl;
