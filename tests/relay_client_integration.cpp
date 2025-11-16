@@ -94,32 +94,33 @@ int main() {
         session_a.register_peer_key(peer_b, shared_key);
         session_b.register_peer_key(peer_a, shared_key);
 
+        using HandshakeAcceptance = ephemeralnet::network::SessionManager::HandshakeAcceptance;
         auto handshake_handler = [&](const ephemeralnet::PeerId& expected_peer) {
             return [shared_key, expected_peer](const ephemeralnet::PeerId& peer_id,
-                                              const protocol::TransportHandshakePayload& payload)
-                       -> std::optional<ephemeralnet::network::SessionManager::HandshakeAcceptance> {
+                                              const ephemeralnet::protocol::TransportHandshakePayload& payload)
+                       -> std::optional<HandshakeAcceptance> {
                 if (peer_id != expected_peer) {
                     return std::nullopt;
                 }
 
                 const auto negotiated_version = std::clamp<std::uint8_t>(
                     payload.requested_version,
-                    protocol::kMinimumMessageVersion,
-                    protocol::kCurrentMessageVersion);
+                    ephemeralnet::protocol::kMinimumMessageVersion,
+                    ephemeralnet::protocol::kCurrentMessageVersion);
 
-                protocol::Message ack{};
+                ephemeralnet::protocol::Message ack{};
                 ack.version = negotiated_version;
-                ack.type = protocol::MessageType::HandshakeAck;
-                protocol::HandshakeAckPayload ack_payload{};
+                ack.type = ephemeralnet::protocol::MessageType::HandshakeAck;
+                ephemeralnet::protocol::HandshakeAckPayload ack_payload{};
                 ack_payload.accepted = true;
                 ack_payload.negotiated_version = negotiated_version;
                 ack_payload.responder_public = payload.public_identity;
                 ack.payload = ack_payload;
 
                 const auto key_span = std::span<const std::uint8_t>(shared_key.data(), shared_key.size());
-                auto encoded_ack = protocol::encode_signed(ack, key_span);
+                auto encoded_ack = ephemeralnet::protocol::encode_signed(ack, key_span);
 
-                ephemeralnet::network::SessionManager::HandshakeAcceptance acceptance{};
+                HandshakeAcceptance acceptance{};
                 acceptance.accepted = true;
                 acceptance.session_key = shared_key;
                 acceptance.ack_payload = std::move(encoded_ack);
