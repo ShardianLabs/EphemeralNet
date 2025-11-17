@@ -1,6 +1,7 @@
 #include "ephemeralnet/network/RelayClient.hpp"
 
 #include "ephemeralnet/Types.hpp"
+#include "ephemeralnet/crypto/ChaCha20.hpp"
 #include "ephemeralnet/network/SessionManager.hpp"
 
 #include <algorithm>
@@ -13,8 +14,10 @@
 #include <sstream>
 #include <iostream>
 #include <stdexcept>
+#include <span>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -118,6 +121,24 @@ bool send_all(NativeSocket socket, const std::uint8_t* data, std::size_t length)
             return false;
         }
         total += static_cast<std::size_t>(sent);
+    }
+    return true;
+}
+
+bool recv_all(NativeSocket socket, std::uint8_t* buffer, std::size_t length) {
+    std::size_t received_total = 0;
+    while (received_total < length) {
+#ifdef _WIN32
+        const auto received = ::recv(socket, reinterpret_cast<char*>(buffer + received_total),
+                                     static_cast<int>(length - received_total), 0);
+#else
+        const auto received = ::recv(socket, reinterpret_cast<char*>(buffer + received_total),
+                                     length - received_total, 0);
+#endif
+        if (received <= 0) {
+            return false;
+        }
+        received_total += static_cast<std::size_t>(received);
     }
     return true;
 }
@@ -282,6 +303,79 @@ SessionManager::SocketHandle to_handle(NativeSocket socket) {
     return static_cast<SessionManager::SocketHandle>(socket);
 }
 
+constexpr std::size_t kNonceSize = sizeof(crypto::Nonce::bytes);
+constexpr std::size_t kLengthFieldSize = sizeof(std::uint32_t);
+
+bool send_transport_handshake(NativeSocket socket, const protocol::TransportHandshakePayload& payload) {
+    protocol::Message message{};
+    message.version = protocol::kCurrentMessageVersion;
+    message.type = protocol::MessageType::TransportHandshake;
+    message.payload = payload;
+
+    const auto encoded = protocol::encode(message);
+    std::vector<std::uint8_t> frame(kLengthFieldSize + encoded.size());
+    const auto length = static_cast<std::uint32_t>(encoded.size());
+    frame[0] = static_cast<std::uint8_t>((length >> 24) & 0xFFu);
+    frame[1] = static_cast<std::uint8_t>((length >> 16) & 0xFFu);
+    frame[2] = static_cast<std::uint8_t>((length >> 8) & 0xFFu);
+    frame[3] = static_cast<std::uint8_t>(length & 0xFFu);
+    std::copy(encoded.begin(), encoded.end(), frame.begin() + kLengthFieldSize);
+
+    return send_all(socket, frame.data(), frame.size());
+}
+
+bool receive_transport_handshake_ack(NativeSocket socket, const SessionManager::OutboundHandshake& handshake) {
+    std::array<std::uint8_t, kNonceSize> nonce_buffer{};
+    if (!recv_all(socket, nonce_buffer.data(), nonce_buffer.size())) {
+        return false;
+    }
+
+    std::array<std::uint8_t, kLengthFieldSize> length_buffer{};
+    if (!recv_all(socket, length_buffer.data(), length_buffer.size())) {
+        return false;
+    }
+
+    const auto length = (static_cast<std::uint32_t>(length_buffer[0]) << 24)
+        | (static_cast<std::uint32_t>(length_buffer[1]) << 16)
+        | (static_cast<std::uint32_t>(length_buffer[2]) << 8)
+        | (static_cast<std::uint32_t>(length_buffer[3]));
+
+    if (length == 0) {
+        return false;
+    }
+
+    std::vector<std::uint8_t> ciphertext(length);
+    if (!ciphertext.empty()) {
+        if (!recv_all(socket, ciphertext.data(), ciphertext.size())) {
+            return false;
+        }
+    }
+
+    crypto::Key key{};
+    key.bytes = handshake.session_key;
+
+    crypto::Nonce nonce{};
+    std::copy(nonce_buffer.begin(), nonce_buffer.end(), nonce.bytes.begin());
+
+    std::vector<std::uint8_t> plaintext(ciphertext.size());
+    if (!ciphertext.empty()) {
+        crypto::ChaCha20::apply(key, nonce, ciphertext, plaintext, 0u);
+    }
+
+    const auto key_span = std::span<const std::uint8_t>(handshake.session_key.data(), handshake.session_key.size());
+    const auto ack_message = protocol::decode_signed(plaintext, key_span);
+    if (!ack_message.has_value() || ack_message->type != protocol::MessageType::HandshakeAck) {
+        return false;
+    }
+
+    const auto* payload = std::get_if<protocol::HandshakeAckPayload>(&ack_message->payload);
+    if (payload == nullptr || !payload->accepted) {
+        return false;
+    }
+
+    return true;
+}
+
 }  // namespace
 
 struct RelayClient::RelayState {
@@ -389,6 +483,25 @@ bool RelayClient::connect_via_hint(const protocol::DiscoveryHint& hint, const Pe
         return false;
     }
 
+    bool builder_present = false;
+    auto handshake = build_handshake(target_peer, builder_present);
+    if (builder_present && !handshake.has_value()) {
+        close_socket(socket);
+        return false;
+    }
+    if (handshake.has_value()) {
+        if (!send_transport_handshake(socket, handshake->payload)) {
+            close_socket(socket);
+            return false;
+        }
+        if (handshake->expect_ack) {
+            if (!receive_transport_handshake_ack(socket, *handshake)) {
+                close_socket(socket);
+                return false;
+            }
+        }
+    }
+
     const auto handle = to_handle(socket);
     if (!sessions_.adopt_outbound_socket(target_peer, handle, true)) {
         close_socket(socket);
@@ -397,6 +510,21 @@ bool RelayClient::connect_via_hint(const protocol::DiscoveryHint& hint, const Pe
 
     // Ownership of the socket transferred to SessionManager.
     return true;
+}
+
+void RelayClient::set_handshake_builder(HandshakeBuilder builder) {
+    std::scoped_lock lock(handshake_mutex_);
+    handshake_builder_ = std::move(builder);
+}
+
+std::optional<SessionManager::OutboundHandshake> RelayClient::build_handshake(const PeerId& peer_id,
+                                                                              bool& builder_present) const {
+    std::scoped_lock lock(handshake_mutex_);
+    builder_present = static_cast<bool>(handshake_builder_);
+    if (!handshake_builder_) {
+        return std::nullopt;
+    }
+    return handshake_builder_(peer_id);
 }
 
 void RelayClient::registration_loop() {

@@ -219,6 +219,7 @@ private:
     void seed_bootstrap_contacts();
     void attempt_bootstrap_handshakes();
     void ensure_bootstrap_handshake(const PeerId& peer_id);
+    std::optional<network::SessionManager::OutboundHandshake> build_transport_handshake(const PeerId& peer_id) const;
     void update_swarm_plan(const protocol::Manifest& manifest);
     void rebalance_swarm_plans();
     void broadcast_manifest(const protocol::Manifest& manifest);

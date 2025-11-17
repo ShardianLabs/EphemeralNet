@@ -156,6 +156,22 @@ int main() {
         ephemeralnet::network::RelayClient client_a(config_a, session_a, peer_a);
         ephemeralnet::network::RelayClient client_b(config_b, session_b, peer_b);
 
+        const auto handshake_builder = [shared_key]() {
+            ephemeralnet::network::SessionManager::OutboundHandshake handshake{};
+            handshake.session_key = shared_key;
+            handshake.expect_ack = true;
+            ephemeralnet::protocol::TransportHandshakePayload payload{};
+            payload.public_identity = 0x12345678u;
+            payload.work_nonce = 0;
+            payload.requested_version = ephemeralnet::protocol::kCurrentMessageVersion;
+            handshake.payload = payload;
+            return handshake;
+        };
+
+        client_b.set_handshake_builder([handshake_builder](const ephemeralnet::PeerId&) {
+            return handshake_builder();
+        });
+
         client_a.start();
         std::cout << "[relay-test] relay client A started" << std::endl;
         wait_for_registration(client_a);

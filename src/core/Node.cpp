@@ -1368,6 +1368,9 @@ Node::Node(PeerId id, Config config)
         attempt_bootstrap_handshakes();
         if (config_.relay_enabled && !config_.relay_endpoints.empty()) {
             relay_client_ = std::make_unique<network::RelayClient>(config_, sessions_, id_);
+            relay_client_->set_handshake_builder([this](const PeerId& peer) {
+                return build_transport_handshake(peer);
+            });
         }
 }
 
@@ -1994,26 +1997,32 @@ void Node::set_message_handler(network::SessionManager::MessageHandler handler) 
 }
 
 bool Node::connect_peer(const PeerId& peer_id, const std::string& host, std::uint16_t port) {
+    const auto handshake = build_transport_handshake(peer_id);
+    if (!handshake.has_value()) {
+        return false;
+    }
+
+    return sessions_.connect(peer_id, host, port, &*handshake);
+}
+
+std::optional<network::SessionManager::OutboundHandshake> Node::build_transport_handshake(const PeerId& peer_id) const {
     const auto session_key = session_shared_key(peer_id);
     if (!session_key.has_value()) {
-        return false;
+        return std::nullopt;
     }
 
     const auto work_nonce = generate_handshake_work(peer_id);
     if (!work_nonce.has_value()) {
-        return false;
+        return std::nullopt;
     }
 
-    protocol::TransportHandshakePayload payload{};
-    payload.public_identity = identity_public_;
-    payload.work_nonce = *work_nonce;
-    payload.requested_version = preferred_message_version();
-
     network::SessionManager::OutboundHandshake handshake{};
-    handshake.payload = payload;
+    handshake.payload.public_identity = identity_public_;
+    handshake.payload.work_nonce = *work_nonce;
+    handshake.payload.requested_version = preferred_message_version();
     handshake.session_key = *session_key;
-
-    return sessions_.connect(peer_id, host, port, &handshake);
+    handshake.expect_ack = true;
+    return handshake;
 }
 
 bool Node::send_secure(const PeerId& peer_id, std::span<const std::uint8_t> payload) {

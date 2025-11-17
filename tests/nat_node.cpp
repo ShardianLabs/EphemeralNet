@@ -45,7 +45,9 @@ int main() {
     assert(status.has_value());
     assert(!status->external_address.empty());
     assert(status->external_port > 0);
-    assert(status->diagnostics.size() == 2);
+    assert(status->diagnostics.size() >= 2);
+    assert(status->diagnostics[0].rfind("Initial endpoint assumption", 0) == 0);
+    assert(status->diagnostics[1].rfind("STUN discovery succeeded", 0) == 0);
 
     const auto initial_diagnostics = status->diagnostics;
     node.tick();
