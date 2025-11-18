@@ -1,6 +1,6 @@
 # EphemeralNet CLI command reference
 
-Run the client as `eph [global options] <command> [command options]`. Global options always come first; anything after the command name is interpreted as command-specific. This reference mirrors the logic in `src/main.cpp` for EphemeralNet master as of November 2025.
+Run the client as `eph [options] <command> [args]`. Global options can be placed before or after the command. Command-specific options (like `--ttl` for `store`) must follow the command. This reference mirrors the logic in `src/main.cpp` for EphemeralNet master as of November 2025.
 
 ## Global options
 
@@ -40,7 +40,10 @@ Run the client as `eph [global options] <command> [command options]`. Global opt
 
 ### Global option behaviour
 
-- Options are parsed in order. The first non-option token is treated as the command. Any unknown `--flag` triggers `E_UNKNOWN_OPTION`.
+- Options are parsed in order. The first non-option token is treated as the command.
+- Global options (like `--config` or `--control-host`) can appear before or after the command.
+- Any unknown `--flag` encountered before the command triggers `E_UNKNOWN_OPTION`.
+- Unknown flags encountered *after* the command are passed to the command handler (e.g. `--ttl` for `store`).
 - Configuration profiles can populate the same fields; CLI flags always win.
 - Validation errors surface as CLI exceptions with a hint describing the fix.
 

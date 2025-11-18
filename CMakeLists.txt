@@ -870,4 +870,48 @@ if(EPHEMERALNET_BUILD_TESTS)
 
         add_test(NAME EphemeralNet.RelayClientIntegration COMMAND ephemeralnet_relay_client_tests)
     endif()
+
+    add_executable(ephemeralnet_cli_interleaved_tests
+        tests/cli_interleaved_args.cpp
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_cli_interleaved_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_cli_interleaved_tests)
+    endif()
+
+    if(WIN32)
+        target_link_libraries(ephemeralnet_cli_interleaved_tests
+            PRIVATE
+                ws2_32
+        )
+    endif()
+
+    add_test(NAME EphemeralNet.CLIInterleavedArgs COMMAND ephemeralnet_cli_interleaved_tests)
+    set_tests_properties(EphemeralNet.CLIInterleavedArgs PROPERTIES
+        ENVIRONMENT "EPH_CLI_EXECUTABLE=$<TARGET_FILE:ephemeralnet>"
+    )
+
+    add_executable(ephemeralnet_cli_fetch_dir_tests
+        tests/cli_fetch_dir.cpp
+    )
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_cli_fetch_dir_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_cli_fetch_dir_tests)
+    endif()
+
+    if(WIN32)
+        target_link_libraries(ephemeralnet_cli_fetch_dir_tests
+            PRIVATE
+                ws2_32
+        )
+    endif()
+
+    add_test(NAME EphemeralNet.CLIFetchDir COMMAND ephemeralnet_cli_fetch_dir_tests)
+    set_tests_properties(EphemeralNet.CLIFetchDir PROPERTIES
+        ENVIRONMENT "EPH_CLI_EXECUTABLE=$<TARGET_FILE:ephemeralnet>"
+    )
 endif()

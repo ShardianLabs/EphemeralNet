@@ -3507,9 +3507,23 @@ int main(int argc, char** argv) {
             return std::string(args[index++]);
         };
 
-        while (index < args.size() && args[index].starts_with("--")) {
+        std::optional<std::string> extracted_command;
+
+        while (index < args.size()) {
+            if (!args[index].starts_with("-")) {
+                if (!extracted_command) {
+                    extracted_command = std::string(args[index++]);
+                    continue;
+                }
+                break;
+            }
+
             const auto opt = args[index++];
             if (opt == "--help" || opt == "-h") {
+                if (extracted_command) {
+                    --index;
+                    break;
+                }
                 print_usage();
                 return 0;
             }
@@ -3523,27 +3537,57 @@ int main(int argc, char** argv) {
                 continue;
             }
             if (opt == "--config") {
+                if (options.config_path.has_value()) {
+                    throw_cli_error("E_DUPLICATE_OPTION",
+                                    "Option --config specified multiple times",
+                                    "Provide the configuration file only once");
+                }
                 options.config_path = require_value(opt);
                 continue;
             }
             if (opt == "--profile") {
+                if (options.profile_name.has_value()) {
+                    throw_cli_error("E_DUPLICATE_OPTION",
+                                    "Option --profile specified multiple times",
+                                    "Select a single profile");
+                }
                 options.profile_name = require_value(opt);
                 continue;
             }
             if (opt == "--env") {
+                if (options.environment.has_value()) {
+                    throw_cli_error("E_DUPLICATE_OPTION",
+                                    "Option --env specified multiple times",
+                                    "Select a single environment override");
+                }
                 options.environment = require_value(opt);
                 continue;
             }
             if (opt == "--storage-dir") {
+                if (options.storage_dir.has_value()) {
+                    throw_cli_error("E_DUPLICATE_OPTION",
+                                    "Option --storage-dir specified multiple times",
+                                    "Provide the storage directory only once");
+                }
                 options.storage_dir = require_value(opt);
                 continue;
             }
             if (opt == "--persistent") {
+                if (options.persistent_set) {
+                    throw_cli_error("E_DUPLICATE_OPTION",
+                                    "Persistence options specified multiple times",
+                                    "Use either --persistent or --no-persistent once");
+                }
                 options.persistent = true;
                 options.persistent_set = true;
                 continue;
             }
             if (opt == "--no-persistent") {
+                if (options.persistent_set) {
+                    throw_cli_error("E_DUPLICATE_OPTION",
+                                    "Persistence options specified multiple times",
+                                    "Use either --persistent or --no-persistent once");
+                }
                 options.persistent = false;
                 options.persistent_set = true;
                 continue;
@@ -3706,6 +3750,11 @@ int main(int argc, char** argv) {
                 continue;
             }
             if (opt == "--control-token") {
+                if (options.control_token.has_value()) {
+                    throw_cli_error("E_DUPLICATE_OPTION",
+                                    "Option --control-token specified multiple times",
+                                    "Provide the token only once");
+                }
                 options.control_token = require_value(opt);
                 continue;
             }
@@ -3802,6 +3851,11 @@ int main(int argc, char** argv) {
                 continue;
             }
 
+            if (extracted_command) {
+                --index;
+                break;
+            }
+
             throw_cli_error("E_UNKNOWN_OPTION",
                             "Unknown option: " + std::string(opt),
                             "Run 'eph --help' to view available options");
@@ -3817,12 +3871,16 @@ int main(int argc, char** argv) {
 
         const auto self_peer_id = make_peer_id(options);
 
-        if (index >= args.size()) {
-            print_usage();
-            return 1;
+        std::string command;
+        if (extracted_command) {
+            command = to_lower(*extracted_command);
+        } else {
+            if (index >= args.size()) {
+                print_usage();
+                return 1;
+            }
+            command = to_lower(std::string(args[index++]));
         }
-
-        std::string command = to_lower(std::string(args[index++]));
         if (command == "help") {
             print_usage();
             return 0;
