@@ -216,6 +216,12 @@ std::size_t SessionManager::active_session_count() const {
     return sessions_.size();
 }
 
+bool SessionManager::is_connected(const PeerId& peer_id) const {
+    std::scoped_lock lock(sessions_mutex_);
+    const auto it = sessions_.find(peer_key_string(peer_id));
+    return it != sessions_.end() && it->second && it->second->running.load();
+}
+
 void SessionManager::register_peer_key(const PeerId& peer_id, const std::array<std::uint8_t, 32>& key) {
     std::scoped_lock lock(sessions_mutex_);
     keys_[peer_key_string(peer_id)] = key;

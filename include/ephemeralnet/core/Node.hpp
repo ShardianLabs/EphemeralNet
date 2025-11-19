@@ -96,6 +96,15 @@ public:
     [[nodiscard]] TtlAuditReport audit_ttl() const;
     std::vector<std::string> drain_cleanup_notifications();
 
+    struct ConnectivityReport {
+        std::string nat_type;
+        std::optional<std::string> public_endpoint;
+        std::vector<std::pair<std::string, bool>> bootstrap_status;
+        std::size_t active_peers{0};
+    };
+
+    ConnectivityReport diagnose_connectivity();
+
     void start_transport(std::uint16_t port = 0);
     void stop_transport();
     std::uint16_t transport_port() const;
@@ -280,4 +289,4 @@ private:
     void refresh_advertised_endpoints();
 };
 
-}  
+}

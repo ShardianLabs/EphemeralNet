@@ -344,6 +344,7 @@ struct Metrics {
     std::atomic<std::uint64_t> command_defaults_requests_total{0};
     std::atomic<std::uint64_t> command_stop_requests_total{0};
     std::atomic<std::uint64_t> command_metrics_requests_total{0};
+    std::atomic<std::uint64_t> command_diagnostics_requests_total{0};
     std::atomic<std::uint64_t> command_store_requests_total{0};
     std::atomic<std::uint64_t> command_store_success_total{0};
     std::atomic<std::uint64_t> command_store_bytes_total{0};
@@ -398,6 +399,9 @@ struct Metrics {
         emit_counter("ephemeralnet_command_metrics_requests_total",
                       "METRICS commands processed.",
                       command_metrics_requests_total.load(std::memory_order_relaxed));
+        emit_counter("ephemeralnet_command_diagnostics_requests_total",
+                      "DIAGNOSTICS commands processed.",
+                      command_diagnostics_requests_total.load(std::memory_order_relaxed));
         emit_counter("ephemeralnet_command_store_requests_total",
                       "STORE commands processed.",
                       command_store_requests_total.load(std::memory_order_relaxed));
@@ -732,6 +736,11 @@ private:
             handle_metrics(client, remote_identity);
             return;
         }
+        if (command == "DIAGNOSTICS") {
+            metrics_.command_diagnostics_requests_total.fetch_add(1, std::memory_order_relaxed);
+            handle_diagnostics(client, remote_identity);
+            return;
+        }
         if (command == "STORE") {
             metrics_.command_store_requests_total.fetch_add(1, std::memory_order_relaxed);
             handle_store(client, std::move(request), remote_identity);
@@ -949,6 +958,38 @@ private:
                   "control.command.metrics",
                   {{"remote", remote_identity},
                    {"bytes", std::to_string(snapshot.size())}});
+    }
+
+    void handle_diagnostics(NativeSocket client, const std::string& remote_identity) {
+        Node::ConnectivityReport report;
+        {
+            std::scoped_lock lock(node_mutex_);
+            report = node_.diagnose_connectivity();
+        }
+
+        ControlFields fields;
+        fields["CODE"] = "OK_DIAGNOSTICS";
+        fields["NAT_TYPE"] = report.nat_type;
+        if (report.public_endpoint) {
+            fields["PUBLIC_ENDPOINT"] = *report.public_endpoint;
+        }
+        fields["ACTIVE_PEERS"] = std::to_string(report.active_peers);
+
+        std::ostringstream bootstrap_stream;
+        bool first = true;
+        for (const auto& [endpoint, connected] : report.bootstrap_status) {
+            if (!first) {
+                bootstrap_stream << ",";
+            }
+            first = false;
+            bootstrap_stream << endpoint << "=" << (connected ? "connected" : "disconnected");
+        }
+        fields["BOOTSTRAP_STATUS"] = bootstrap_stream.str();
+
+        send_response(client, fields, true);
+        log_event(StructuredLogger::Level::Info,
+                  "control.command.diagnostics",
+                  {{"remote", remote_identity}});
     }
 
     void handle_store(NativeSocket client, ParsedRequest request, const std::string& remote_identity) {

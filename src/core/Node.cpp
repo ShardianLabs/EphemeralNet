@@ -1952,6 +1952,28 @@ Node::TtlAuditReport Node::audit_ttl() const {
     return report;
 }
 
+Node::ConnectivityReport Node::diagnose_connectivity() {
+    ConnectivityReport report{};
+
+    if (nat_status_) {
+        report.nat_type = nat_status_->stun_succeeded ? "STUN OK" : "STUN Failed";
+        if (!nat_status_->external_address.empty()) {
+            report.public_endpoint = nat_status_->external_address + ":" + std::to_string(nat_status_->external_port);
+        }
+    } else {
+        report.nat_type = "Unknown";
+    }
+
+    for (const auto& [key, node] : bootstrap_nodes_) {
+        const bool connected = sessions_.is_connected(node.id);
+        report.bootstrap_status.push_back({node.host + ":" + std::to_string(node.port), connected});
+    }
+
+    report.active_peers = sessions_.active_session_count();
+
+    return report;
+}
+
 void Node::tick() {
     const auto now = std::chrono::steady_clock::now();
     const auto elapsed = now - last_cleanup_;
@@ -2672,4 +2694,4 @@ void Node::ensure_bootstrap_handshake(const PeerId& peer_id) {
     perform_handshake(peer_id, *it->second.public_identity, remote_work_nonce);
 }
 
-}  
+}

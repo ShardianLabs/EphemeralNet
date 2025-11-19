@@ -2586,7 +2586,7 @@ void print_manual() {
     std::cout << "EXAMPLES\n"
               << "    eph --storage-dir ./data serve\n"
               << "    eph store secret.bin --ttl 3600\n"
-              << "    eph fetch eph://... --out ./downloads/\n"
+              << "    eph fetch eph://... --out ./file.bin\n"
               << "    eph defaults\n"
               << "    eph --version\n\n";
     std::cout << "SEE ALSO\n"
@@ -4113,6 +4113,51 @@ int main(int argc, char** argv) {
                 std::cout << "  - Conflicting endpoints detected across gateways/interfaces. "
                           << "Set --advertise-control-host/--advertise-control-port to pin one." << std::endl;
             }
+            print_daemon_hint(*response);
+            return 0;
+        }
+
+        if (command == "diagnostics") {
+            if (index < args.size()) {
+                if (is_help_flag(args[index])) {
+                    std::cout << "Usage: eph diagnostics" << std::endl;
+                    std::cout << "Run connectivity diagnostics on the daemon." << std::endl;
+                    return 0;
+                }
+                throw_cli_error("E_DIAGNOSTICS_UNKNOWN_OPTION",
+                                "Unknown option for diagnostics: " + std::string(args[index]),
+                                "Run 'eph diagnostics --help' to view usage");
+            }
+            const auto response = client.send("DIAGNOSTICS");
+            if (!response) {
+                throw_daemon_unreachable();
+            }
+            if (!response->success) {
+                print_daemon_failure(*response);
+                return 1;
+            }
+
+            std::cout << "Connectivity Diagnostics" << std::endl;
+            const auto nat_type = response->fields.contains("NAT_TYPE") ? response->fields.at("NAT_TYPE") : "Unknown";
+            const auto public_endpoint = response->fields.contains("PUBLIC_ENDPOINT") ? response->fields.at("PUBLIC_ENDPOINT") : "Unknown";
+            const auto active_peers = response->fields.contains("ACTIVE_PEERS") ? response->fields.at("ACTIVE_PEERS") : "0";
+            const auto bootstrap_status = response->fields.contains("BOOTSTRAP_STATUS") ? response->fields.at("BOOTSTRAP_STATUS") : "";
+
+            std::cout << "  NAT Type:         " << nat_type << std::endl;
+            std::cout << "  Public Endpoint:  " << public_endpoint << std::endl;
+            std::cout << "  Active Peers:     " << active_peers << std::endl;
+
+            if (!bootstrap_status.empty()) {
+                std::cout << "  Bootstrap Nodes:" << std::endl;
+                std::istringstream stream(bootstrap_status);
+                std::string segment;
+                while (std::getline(stream, segment, ',')) {
+                    std::cout << "    - " << segment << std::endl;
+                }
+            } else {
+                std::cout << "  Bootstrap Nodes:  None configured or reported" << std::endl;
+            }
+
             print_daemon_hint(*response);
             return 0;
         }

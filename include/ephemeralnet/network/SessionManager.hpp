@@ -70,6 +70,7 @@ public:
     bool adopt_inbound_socket(SocketHandle socket, const std::optional<PeerId>& expected_peer = std::nullopt);
 
     std::size_t active_session_count() const;
+    bool is_connected(const PeerId& peer_id) const;
 
     struct TestHooks {
         std::function<void(const PeerId&, std::size_t)> before_send;
