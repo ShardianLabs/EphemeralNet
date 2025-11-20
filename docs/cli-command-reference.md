@@ -1,6 +1,6 @@
 # EphemeralNet CLI command reference
 
-Run the client as `eph [options] <command> [args]`. Global options can be placed before or after the command. Command-specific options (like `--ttl` for `store`) must follow the command. This reference mirrors the logic in `src/main.cpp` for EphemeralNet master as of November 2025.
+Run the client as `eph [options] <command> [args]`. Global options can be placed before or after the command. Command-specific options (like `--ttl` for `store`) must follow the command. This reference mirrors the logic in `src/main.cpp` for EphemeralNet master as of November 2025. For a narrative walkthrough (response fields, control-plane codes, links to implementation files), see `docs/handbook/cli-commands.md`.
 
 ## Global options
 

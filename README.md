@@ -119,3 +119,4 @@ Attach EphemeralNet nodes by enabling relay endpoints in their config; the serve
 - [Troubleshooting](docs/troubleshooting.md): common failures and remediation steps.
 - [Performance Tuning Runbook](ops/performance-tuning.md): sizing guidance and announce throttling playbooks for operators.
 - [Governance & AUP](docs/governance-and-aaup.md): policies for operating public bootstrap/STUN infrastructure and handling abuse reports.
+- [Handbook](docs/handbook/README.md): aggregated chapters covering the CLI reference, usage scenarios, feature catalog, and developer walkthrough for eph.shardian.com.
