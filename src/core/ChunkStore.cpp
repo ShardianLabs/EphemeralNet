@@ -32,6 +32,7 @@ void ChunkStore::put(const ChunkId& id,
                      std::chrono::seconds ttl,
                      std::array<std::uint8_t, 12> nonce,
                      bool encrypted) {
+    std::scoped_lock lock(chunks_mutex_);
     const auto key = chunk_id_to_string(id);
     const auto effective_ttl = ttl.count() > 0 ? ttl : config_.default_chunk_ttl;
     const auto sanitized_ttl = std::max(effective_ttl, kMinimumTtl);
@@ -72,6 +73,7 @@ std::optional<ChunkData> ChunkStore::get(const ChunkId& id) {
 }
 
 std::optional<ChunkRecord> ChunkStore::get_record(const ChunkId& id) {
+    std::scoped_lock lock(chunks_mutex_);
     const auto key = chunk_id_to_string(id);
     const auto it = chunks_.find(key);
     if (it == chunks_.end()) {
@@ -87,6 +89,7 @@ std::optional<ChunkRecord> ChunkStore::get_record(const ChunkId& id) {
 }
 
 std::vector<ChunkId> ChunkStore::sweep_expired() {
+    std::scoped_lock lock(chunks_mutex_);
     const auto now = std::chrono::steady_clock::now();
     std::vector<ChunkId> removed;
     for (auto it = chunks_.begin(); it != chunks_.end();) {
@@ -104,6 +107,7 @@ std::vector<ChunkId> ChunkStore::sweep_expired() {
 }
 
 std::size_t ChunkStore::size() const noexcept {
+    std::scoped_lock lock(chunks_mutex_);
     return chunks_.size();
 }
 
@@ -112,6 +116,7 @@ std::chrono::steady_clock::time_point ChunkStore::compute_expiry(std::chrono::se
 }
 
 std::vector<ChunkStore::SnapshotEntry> ChunkStore::snapshot() const {
+    std::scoped_lock lock(chunks_mutex_);
     std::vector<SnapshotEntry> result;
     result.reserve(chunks_.size());
 

@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -54,6 +55,7 @@ private:
     bool wipe_on_expiry_{true};
     std::uint8_t wipe_passes_{1};
     std::filesystem::path storage_root_;
+    mutable std::mutex chunks_mutex_;
 
     static std::chrono::steady_clock::time_point compute_expiry(std::chrono::seconds ttl);
     std::filesystem::path chunk_path_for_key(const std::string& key) const;
