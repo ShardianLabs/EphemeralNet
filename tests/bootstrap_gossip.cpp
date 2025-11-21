@@ -10,6 +10,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <iostream>
 
 using namespace std::chrono_literals;
 
@@ -65,6 +66,13 @@ void ensure_peer_delivery(ephemeralnet::Node& seeder,
 }  // namespace
 
 int main() {
+    auto log = [](const std::string& message) {
+        std::cout << "[BootstrapGossip] " << message << std::endl;
+        std::cout.flush();
+    };
+
+    log("starting test harness");
+
 	ephemeralnet::network::NatTraversalManager::TestHooks hooks{};
 	hooks.stun_override = []() -> std::optional<ephemeralnet::network::NatTraversalManager::StunQueryResult> {
 		ephemeralnet::network::NatTraversalManager::StunQueryResult result{};
@@ -74,6 +82,7 @@ int main() {
 		return result;
 	};
 	ephemeralnet::network::NatTraversalManager::set_test_hooks(&hooks);
+    log("test hooks installed");
 
 	const auto seeder_id = make_peer_id(0x90);
 	const auto leecher_id = make_peer_id(0xA0);
@@ -96,6 +105,7 @@ int main() {
 
 	seeder.start_transport(0);
 	leecher.start_transport(0);
+    log("transports started");
 
 	const auto aggregated_endpoints = ephemeralnet::test::NodeTestAccess::advertised_endpoints(seeder);
 	std::vector<std::string> expected_endpoints;
@@ -113,6 +123,7 @@ int main() {
 	assert(!expected_endpoints.empty());
 	assert(std::find(expected_endpoints.begin(), expected_endpoints.end(), "control-a.ephemeral:45555") != expected_endpoints.end());
 	assert(auto_entries > 0);
+    log("advertised endpoints collected count=" + std::to_string(expected_endpoints.size()));
 
 	const auto pow_leecher = ephemeralnet::test::NodeTestAccess::handshake_work(leecher, seeder_id);
 	const auto pow_seeder = ephemeralnet::test::NodeTestAccess::handshake_work(seeder, leecher_id);
@@ -122,6 +133,7 @@ int main() {
 	const bool handshake_ba = leecher.perform_handshake(seeder_id, seeder.public_identity(), *pow_seeder);
 	assert(handshake_ab);
 	assert(handshake_ba);
+    log("handshakes complete");
 
 	ephemeralnet::PeerContact contact{};
 	contact.id = leecher_id;
@@ -131,9 +143,11 @@ int main() {
 
 	ephemeralnet::ChunkData payload(64, 0x5Au);
 	seeder.store_chunk(chunk_id, payload, 600s);
+    log("chunk stored and manifest broadcast");
 
 	const auto peer_key = ephemeralnet::peer_id_to_string(leecher_id);
 	ensure_peer_delivery(seeder, chunk_id, peer_key, expected_endpoints, leecher);
+    log("ensure_peer_delivery complete");
 
 	const auto plan = ephemeralnet::test::NodeTestAccess::swarm_plan(seeder, chunk_id);
 	assert(plan.has_value());
@@ -143,10 +157,12 @@ int main() {
 		assert(std::find(delivered_it->second.begin(), delivered_it->second.end(), endpoint) != delivered_it->second.end());
 	}
 	assert(plan->delivered_peers.contains(peer_key));
+    log("swarm plan validated");
 
 	seeder.stop_transport();
 	leecher.stop_transport();
 	ephemeralnet::network::NatTraversalManager::set_test_hooks(nullptr);
+    log("transports stopped");
 
 	return 0;
 }

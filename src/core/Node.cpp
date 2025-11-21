@@ -2066,6 +2066,7 @@ void Node::tick() {
 }
 
 void Node::start_transport(std::uint16_t port) {
+    initialize_transport_handler();
     sessions_.start(port);
     nat_status_ = nat_manager_.coordinate("0.0.0.0", sessions_.listening_port());
     if (relay_client_) {
@@ -2075,6 +2076,8 @@ void Node::start_transport(std::uint16_t port) {
 }
 
 void Node::stop_transport() {
+    sessions_.set_message_handler({});
+    sessions_.set_handshake_handler({});
     if (relay_client_) {
         relay_client_->stop();
     }
