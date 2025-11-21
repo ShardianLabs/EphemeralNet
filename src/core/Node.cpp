@@ -468,25 +468,35 @@ void Node::schedule_assigned_fetch(const protocol::AnnouncePayload& payload) {
         return;
     }
 
+    const auto chunk_key = chunk_id_to_string(payload.chunk_id);
+
     protocol::Manifest manifest{};
-    if (const auto cached = manifest_for_chunk(payload.chunk_id)) {
-        manifest = *cached;
-    } else {
+    bool manifest_cached = false;
+    {
+        SchedulerLock lock(scheduler_mutex_);
+        const auto it = manifest_cache_.find(chunk_key);
+        if (it != manifest_cache_.end()) {
+            manifest = it->second;
+            manifest_cached = true;
+        }
+    }
+
+    if (!manifest_cached) {
         try {
             manifest = protocol::decode_manifest(payload.manifest_uri);
         } catch (const std::exception&) {
             return;
         }
-        manifest_cache_[chunk_id_to_string(payload.chunk_id)] = manifest;
     }
-
-    note_peer_seed(payload.chunk_id, payload.peer_id);
-    note_local_leecher(payload.chunk_id);
 
     const auto key = chunk_id_to_string(payload.chunk_id);
     const auto now = std::chrono::steady_clock::now();
 
     SchedulerLock lock(scheduler_mutex_);
+    manifest_cache_[chunk_key] = manifest;
+
+    note_peer_seed(payload.chunk_id, payload.peer_id);
+    note_local_leecher(payload.chunk_id);
 
     auto [it, inserted] = pending_chunk_fetches_.try_emplace(key);
     auto& state = it->second;
@@ -1552,7 +1562,10 @@ protocol::Manifest Node::store_chunk(const ChunkId& chunk_id,
     manifest.security.advisory =
         "Manifest-only fetch bootstrap requires presenting a PoW token to seed control endpoints.";
 
-    manifest_cache_[chunk_id_to_string(chunk_id)] = manifest;
+    {
+        SchedulerLock lock(scheduler_mutex_);
+        manifest_cache_[chunk_id_to_string(chunk_id)] = manifest;
+    }
     dht_.publish_shards(chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, sanitized_ttl);
     announce_chunk(chunk_id, sanitized_ttl);
     update_swarm_plan(manifest);
@@ -1579,7 +1592,10 @@ bool Node::ingest_manifest(const std::string& manifest_uri) {
         return false;
     }
 
-    manifest_cache_[chunk_id_to_string(manifest.chunk_id)] = manifest;
+    {
+        SchedulerLock lock(scheduler_mutex_);
+        manifest_cache_[chunk_id_to_string(manifest.chunk_id)] = manifest;
+    }
     dht_.publish_shards(manifest.chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, *ttl);
     update_swarm_plan(manifest);
     return true;
@@ -1627,7 +1643,10 @@ std::optional<ChunkData> Node::receive_chunk(const std::string& manifest_uri, Ch
         return std::nullopt;
     }
 
-    manifest_cache_[chunk_id_to_string(manifest.chunk_id)] = manifest;
+    {
+        SchedulerLock lock(scheduler_mutex_);
+        manifest_cache_[chunk_id_to_string(manifest.chunk_id)] = manifest;
+    }
     dht_.publish_shards(manifest.chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, *ttl);
     announce_chunk(manifest.chunk_id, *ttl);
     chunk_store_.put(manifest.chunk_id,
@@ -1675,7 +1694,10 @@ bool Node::request_chunk(const PeerId& peer_id,
         return false;
     }
 
-    manifest_cache_[chunk_id_to_string(manifest.chunk_id)] = manifest;
+    {
+        SchedulerLock lock(scheduler_mutex_);
+        manifest_cache_[chunk_id_to_string(manifest.chunk_id)] = manifest;
+    }
     note_peer_seed(manifest.chunk_id, peer_id);
     note_local_leecher(manifest.chunk_id);
 
@@ -1801,6 +1823,7 @@ std::optional<std::array<std::uint8_t, 32>> Node::rotate_session_key(const PeerI
 }
 
 std::optional<SwarmDistributionPlan> Node::swarm_plan(const ChunkId& chunk_id) const {
+    SchedulerLock lock(scheduler_mutex_);
     const auto it = swarm_plans_.find(chunk_id_to_string(chunk_id));
     if (it == swarm_plans_.end()) {
         return std::nullopt;
@@ -2323,24 +2346,27 @@ void Node::handle_announce(const protocol::AnnouncePayload& payload,
         return;
     }
 
-    const auto chunk_key = chunk_id_to_string(manifest.chunk_id);
-    manifest_cache_[chunk_key] = manifest;
-    dht_.publish_shards(manifest.chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, *ttl_opt);
-    update_swarm_plan(manifest);
-    note_peer_seed(manifest.chunk_id, sender);
-    clear_announce_failures(sender);
+    {
+        SchedulerLock lock(scheduler_mutex_);
+        const auto chunk_key = chunk_id_to_string(manifest.chunk_id);
+        manifest_cache_[chunk_key] = manifest;
+        dht_.publish_shards(manifest.chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, *ttl_opt);
+        update_swarm_plan(manifest);
+        note_peer_seed(manifest.chunk_id, sender);
+        clear_announce_failures(sender);
 
-    auto advertised_ttl = payload.ttl.count() > 0 ? payload.ttl : *ttl_opt;
-    if (advertised_ttl > *ttl_opt) {
-        advertised_ttl = *ttl_opt;
-    }
-    advertised_ttl = clamp_chunk_ttl(advertised_ttl, config_.min_manifest_ttl, config_.max_manifest_ttl);
-    if (!payload.endpoint.empty()) {
-        PeerContact contact{};
-        contact.id = sender;
-        contact.address = payload.endpoint;
-        contact.expires_at = now + advertised_ttl;
-        dht_.add_contact(payload.chunk_id, std::move(contact), advertised_ttl);
+        auto advertised_ttl = payload.ttl.count() > 0 ? payload.ttl : *ttl_opt;
+        if (advertised_ttl > *ttl_opt) {
+            advertised_ttl = *ttl_opt;
+        }
+        advertised_ttl = clamp_chunk_ttl(advertised_ttl, config_.min_manifest_ttl, config_.max_manifest_ttl);
+        if (!payload.endpoint.empty()) {
+            PeerContact contact{};
+            contact.id = sender;
+            contact.address = payload.endpoint;
+            contact.expires_at = now + advertised_ttl;
+            dht_.add_contact(payload.chunk_id, std::move(contact), advertised_ttl);
+        }
     }
 
     schedule_assigned_fetch(payload);
@@ -2355,6 +2381,7 @@ std::optional<std::array<std::uint8_t, 32>> Node::session_shared_key(const PeerI
 }
 
 std::optional<protocol::Manifest> Node::manifest_for_chunk(const ChunkId& chunk_id) const {
+    SchedulerLock lock(scheduler_mutex_);
     const auto key = chunk_id_to_string(chunk_id);
     const auto it = manifest_cache_.find(key);
     if (it == manifest_cache_.end()) {
@@ -2364,6 +2391,7 @@ std::optional<protocol::Manifest> Node::manifest_for_chunk(const ChunkId& chunk_
 }
 
 void Node::update_swarm_plan(const protocol::Manifest& manifest) {
+    SchedulerLock lock(scheduler_mutex_);
     const auto key = chunk_id_to_string(manifest.chunk_id);
     const auto load_snapshot = gather_peer_load();
     auto plan = swarm_.compute_plan(manifest.chunk_id, manifest, dht_, id_, load_snapshot);
@@ -2390,6 +2418,7 @@ void Node::update_swarm_plan(const protocol::Manifest& manifest) {
 }
 
 void Node::rebalance_swarm_plans() {
+    SchedulerLock lock(scheduler_mutex_);
     const auto now = std::chrono::steady_clock::now();
     std::vector<std::string> stale_keys;
     stale_keys.reserve(swarm_plans_.size());
@@ -2434,14 +2463,6 @@ void Node::broadcast_manifest(const protocol::Manifest& manifest) {
         return;
     }
 
-    const auto key = chunk_id_to_string(manifest.chunk_id);
-    const auto plan_it = swarm_plans_.find(key);
-    if (plan_it == swarm_plans_.end()) {
-        return;
-    }
-
-    auto& plan = plan_it->second;
-
     std::vector<std::string> gossip_endpoints;
     const auto control_endpoints = preferred_control_endpoints();
     gossip_endpoints.reserve(control_endpoints.size());
@@ -2459,37 +2480,78 @@ void Node::broadcast_manifest(const protocol::Manifest& manifest) {
     }
 
     const auto manifest_uri = protocol::encode_manifest(manifest);
+    const auto key = chunk_id_to_string(manifest.chunk_id);
 
-    bool any_delivered = false;
-    for (const auto& assignment : plan.assignments) {
-        if (assignment.peer.id == id_) {
-            continue;
+    std::vector<SwarmAssignment> pending_assignments;
+    {
+        SchedulerLock lock(scheduler_mutex_);
+        const auto plan_it = swarm_plans_.find(key);
+        if (plan_it == swarm_plans_.end()) {
+            return;
         }
-        if (assignment.shard_indices.empty()) {
-            continue;
+        for (const auto& assignment : plan_it->second.assignments) {
+            if (assignment.peer.id == id_ || assignment.shard_indices.empty()) {
+                continue;
+            }
+            const auto peer_key = peer_id_to_string(assignment.peer.id);
+            if (plan_it->second.delivered_peers.contains(peer_key)) {
+                continue;
+            }
+            pending_assignments.push_back(assignment);
         }
-        const auto peer_key = peer_id_to_string(assignment.peer.id);
-        if (plan.delivered_peers.contains(peer_key)) {
-            continue;
-        }
+    }
+
+    if (pending_assignments.empty()) {
+        return;
+    }
+
+    std::vector<std::pair<std::string, std::vector<std::string>>> delivery_results;
+    delivery_results.reserve(pending_assignments.size());
+    for (const auto& assignment : pending_assignments) {
         bool delivered = false;
+        std::vector<std::string> endpoints_used;
         for (const auto& endpoint : gossip_endpoints) {
             if (deliver_manifest(manifest, assignment, manifest_uri, *ttl_opt, endpoint)) {
                 delivered = true;
-                auto& recorded = plan.delivered_endpoints[peer_key];
+                endpoints_used.push_back(endpoint);
+            }
+        }
+        if (delivered) {
+            delivery_results.emplace_back(peer_id_to_string(assignment.peer.id), std::move(endpoints_used));
+        }
+    }
+
+    if (delivery_results.empty()) {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    {
+        SchedulerLock lock(scheduler_mutex_);
+        const auto plan_it = swarm_plans_.find(key);
+        if (plan_it == swarm_plans_.end()) {
+            return;
+        }
+
+        auto& plan = plan_it->second;
+        bool any_updated = false;
+        for (auto& [peer_key, endpoints] : delivery_results) {
+            if (plan.delivered_peers.contains(peer_key)) {
+                continue;
+            }
+            plan.delivered_peers.insert(peer_key);
+            auto& recorded = plan.delivered_endpoints[peer_key];
+            for (const auto& endpoint : endpoints) {
                 if (std::find(recorded.begin(), recorded.end(), endpoint) == recorded.end()) {
                     recorded.push_back(endpoint);
                 }
             }
+            any_updated = true;
         }
-        if (delivered) {
-            plan.delivered_peers.insert(peer_key);
-            any_delivered = true;
-        }
-    }
 
-    if (any_delivered) {
-        plan.last_broadcast = std::chrono::steady_clock::now();
+        if (any_updated) {
+            plan.last_broadcast = now;
+        }
     }
 }
 

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -38,6 +39,7 @@ public:
     }
 
     static std::optional<std::size_t> pending_attempts(const Node& node, const ChunkId& chunk_id) {
+        auto guard = lock_scheduler(node);
         const auto key = chunk_id_to_string(chunk_id);
         const auto it = node.pending_chunk_fetches_.find(key);
         if (it == node.pending_chunk_fetches_.end()) {
@@ -47,6 +49,7 @@ public:
     }
 
     static bool has_pending_fetch(const Node& node, const ChunkId& chunk_id) {
+        auto guard = lock_scheduler(node);
         const auto key = chunk_id_to_string(chunk_id);
         return node.pending_chunk_fetches_.find(key) != node.pending_chunk_fetches_.end();
     }
@@ -56,6 +59,7 @@ public:
                                         const PeerId& provider_id,
                                         std::chrono::seconds ttl = std::chrono::seconds(120),
                                         std::string address = "127.0.0.1:0") {
+        auto guard = lock_scheduler(node);
         PeerContact contact{};
         contact.id = provider_id;
         contact.address = std::move(address);
@@ -64,6 +68,7 @@ public:
     }
 
     static void force_availability_refresh(Node& node, const ChunkId& chunk_id) {
+        auto guard = lock_scheduler(node);
         const auto key = chunk_id_to_string(chunk_id);
         const auto it = node.pending_chunk_fetches_.find(key);
         if (it == node.pending_chunk_fetches_.end()) {
@@ -73,6 +78,7 @@ public:
     }
 
     static std::optional<std::size_t> provider_count(Node& node, const ChunkId& chunk_id) {
+        auto guard = lock_scheduler(node);
         const auto key = chunk_id_to_string(chunk_id);
         const auto it = node.pending_chunk_fetches_.find(key);
         if (it != node.pending_chunk_fetches_.end()) {
@@ -82,14 +88,17 @@ public:
     }
 
     static std::size_t pending_uploads(const Node& node) {
+        auto guard = lock_scheduler(node);
         return node.pending_uploads_.size();
     }
 
     static std::size_t active_uploads(const Node& node) {
+        auto guard = lock_scheduler(node);
         return node.active_uploads_.size();
     }
 
     static std::size_t active_uploads_for_peer(const Node& node, const PeerId& peer_id) {
+        auto guard = lock_scheduler(node);
         const auto key = peer_id_to_string(peer_id);
         const auto it = node.active_uploads_per_peer_.find(key);
         if (it == node.active_uploads_per_peer_.end()) {
@@ -110,6 +119,7 @@ public:
                                const PeerId& peer_id,
                                const ChunkId& chunk_id,
                                std::size_t payload_size) {
+        auto guard = lock_scheduler(node);
         Node::PendingUploadRequest request{};
         request.chunk_id = chunk_id;
         request.peer_id = peer_id;
@@ -122,6 +132,7 @@ public:
                                      const PeerId& peer_id,
                                      const ChunkId& chunk_id,
                                      std::chrono::steady_clock::time_point started_at) {
+        auto guard = lock_scheduler(node);
         Node::ActiveUploadState state{};
         state.chunk_id = chunk_id;
         state.peer_id = peer_id;
@@ -137,6 +148,7 @@ public:
     }
 
     static SwarmSnapshot swarm_snapshot(const Node& node, const ChunkId& chunk_id) {
+        auto guard = lock_scheduler(node);
         SwarmSnapshot snapshot{};
         if (const auto* ledger = node.find_swarm_ledger(chunk_id)) {
             snapshot.self_seed = ledger->self_seed;
@@ -153,6 +165,7 @@ public:
     }
 
     static std::optional<SwarmDistributionPlan> swarm_plan(const Node& node, const ChunkId& chunk_id) {
+        auto guard = lock_scheduler(node);
         const auto key = chunk_id_to_string(chunk_id);
         const auto it = node.swarm_plans_.find(key);
         if (it == node.swarm_plans_.end()) {
@@ -162,15 +175,13 @@ public:
     }
 
     static void rebroadcast_manifest(Node& node, const ChunkId& chunk_id) {
-        const auto key = chunk_id_to_string(chunk_id);
-        const auto it = node.manifest_cache_.find(key);
-        if (it == node.manifest_cache_.end()) {
-            return;
+        if (const auto manifest = node.manifest_for_chunk(chunk_id)) {
+            node.broadcast_manifest(*manifest);
         }
-        node.broadcast_manifest(it->second);
     }
 
     static void withdraw_provider(Node& node, const ChunkId& chunk_id, const PeerId& provider) {
+        auto guard = lock_scheduler(node);
         node.dht_.withdraw_contact(chunk_id, provider);
     }
 
@@ -181,6 +192,7 @@ public:
     }
 
     static bool announce_blocked(const Node& node, const PeerId& peer_id) {
+        auto guard = lock_scheduler(node);
         const auto key = peer_id_to_string(peer_id);
         const auto it = node.peer_announce_lockouts_.find(key);
         if (it == node.peer_announce_lockouts_.end()) {
@@ -190,6 +202,7 @@ public:
     }
 
     static void expire_announce_lock(Node& node, const PeerId& peer_id) {
+        auto guard = lock_scheduler(node);
         const auto key = peer_id_to_string(peer_id);
         const auto it = node.peer_announce_lockouts_.find(key);
         if (it != node.peer_announce_lockouts_.end()) {
@@ -202,7 +215,12 @@ public:
     }
 
     static std::vector<Config::AdvertisedEndpoint> advertised_endpoints(const Node& node) {
+        auto guard = lock_scheduler(node);
         return node.config_.advertised_endpoints;
+    }
+private:
+    static std::unique_lock<std::recursive_mutex> lock_scheduler(const Node& node) {
+        return std::unique_lock<std::recursive_mutex>(node.scheduler_mutex_);
     }
 };
 
