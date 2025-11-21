@@ -87,6 +87,8 @@ private:
         std::thread reader;
         std::atomic<bool> running{false};
         std::atomic<bool> alive{false};
+        std::uint64_t debug_id{0};
+        std::string debug_peer;
     };
 
     PeerId self_id_{};

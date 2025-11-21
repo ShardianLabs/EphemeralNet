@@ -15,6 +15,8 @@
 #include <span>
 #include <stdexcept>
 #include <thread>
+#include <sstream>
+#include <unordered_map>
 #include <vector>
 #include <utility>
 #ifndef _WIN32
@@ -93,6 +95,9 @@ std::array<std::uint8_t, kPeerIdSize> peer_id_bytes(const ephemeralnet::PeerId& 
 }
 
 std::atomic<const ephemeralnet::network::SessionManager::TestHooks*> g_test_hooks{nullptr};
+std::atomic<std::uint64_t> g_session_debug_ids{0};
+std::mutex g_live_sessions_mutex;
+std::unordered_map<std::uint64_t, std::string> g_live_sessions;
 
 }  // namespace
 
@@ -299,6 +304,17 @@ bool SessionManager::connect(const PeerId& peer_id,
     session->endpoint = endpoint_string(from_native(socket));
     session->running.store(true);
     session->alive.store(true);
+    session->debug_id = g_session_debug_ids.fetch_add(1, std::memory_order_relaxed) + 1;
+    session->debug_peer = peer_key_string(peer_id);
+
+    {
+        std::lock_guard<std::mutex> lock(g_live_sessions_mutex);
+        g_live_sessions[session->debug_id] = session->debug_peer + "@" + session->endpoint;
+    }
+
+    std::cerr << "[SessionManager] register session id=" << session->debug_id
+              << " peer=" << session->debug_peer
+              << " endpoint=" << session->endpoint << std::endl;
 
     {
         std::scoped_lock lock(sessions_mutex_);
@@ -384,6 +400,17 @@ bool SessionManager::adopt_outbound_socket(const PeerId& peer_id, SocketHandle s
     session->endpoint = endpoint_string(socket);
     session->running.store(true);
     session->alive.store(true);
+    session->debug_id = g_session_debug_ids.fetch_add(1, std::memory_order_relaxed) + 1;
+    session->debug_peer = peer_key_string(peer_id);
+
+    {
+        std::lock_guard<std::mutex> lock(g_live_sessions_mutex);
+        g_live_sessions[session->debug_id] = session->debug_peer + "@" + session->endpoint;
+    }
+
+    std::cerr << "[SessionManager] register session id=" << session->debug_id
+              << " peer=" << session->debug_peer
+              << " endpoint=" << session->endpoint << std::endl;
 
     {
         std::scoped_lock lock(sessions_mutex_);
@@ -460,6 +487,17 @@ bool SessionManager::handle_pending_handshake(const PeerId& peer_id, SocketHandl
     session->endpoint = endpoint_string(socket);
     session->running.store(true);
     session->alive.store(true);
+    session->debug_id = g_session_debug_ids.fetch_add(1, std::memory_order_relaxed) + 1;
+    session->debug_peer = peer_key_string(peer_id);
+
+    {
+        std::lock_guard<std::mutex> lock(g_live_sessions_mutex);
+        g_live_sessions[session->debug_id] = session->debug_peer + "@" + session->endpoint;
+    }
+
+    std::cerr << "[SessionManager] register session id=" << session->debug_id
+              << " peer=" << session->debug_peer
+              << " endpoint=" << session->endpoint << std::endl;
 
     {
         std::scoped_lock lock(sessions_mutex_);
@@ -644,11 +682,24 @@ bool SessionManager::receive_transport_handshake_ack(SocketHandle socket, const 
 
 void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session> session) {
     session->alive.store(true);
+    const auto thread_id = std::this_thread::get_id();
+    std::cerr << "[SessionManager] receive_loop start id=" << session->debug_id
+              << " peer=" << session->debug_peer
+              << " endpoint=" << session->endpoint
+              << " thread=" << thread_id << std::endl;
+
+    auto mark_activity = [&](std::string note) {
+        std::lock_guard<std::mutex> lock(g_live_sessions_mutex);
+        g_live_sessions[session->debug_id] = session->debug_peer + "@" + session->endpoint + " " + std::move(note);
+    };
+
+    mark_activity("start");
     while (session->running.load()) {
         std::array<std::uint8_t, kNonceSize> nonce_buffer{};
         if (!recv_all(session->socket, nonce_buffer.data(), nonce_buffer.size())) {
             std::cerr << "[SessionManager] recv_all nonce failed for "
                       << session->endpoint << std::endl;
+            mark_activity("nonce-fail");
             break;
         }
 
@@ -656,6 +707,7 @@ void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session
         if (!recv_all(session->socket, length_buffer.data(), length_buffer.size())) {
             std::cerr << "[SessionManager] recv_all length failed for "
                       << session->endpoint << std::endl;
+            mark_activity("length-fail");
             break;
         }
 
@@ -667,6 +719,7 @@ void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session
         if (length > kMaxPayloadSize) {
             std::cerr << "[SessionManager] oversized payload from "
                       << session->endpoint << " size=" << length << std::endl;
+            mark_activity("oversized");
             break;
         }
 
@@ -675,6 +728,7 @@ void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session
             if (!recv_all(session->socket, ciphertext.data(), ciphertext.size())) {
                 std::cerr << "[SessionManager] recv_all payload failed for "
                           << session->endpoint << " bytes=" << ciphertext.size() << std::endl;
+                mark_activity("payload-fail");
                 break;
             }
         }
@@ -706,10 +760,13 @@ void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session
                 }
             }
             if (drop) {
+                mark_activity("dropped");
                 continue;
             }
             handler_copy(message);
         }
+
+        mark_activity("message");
     }
 
     session->running.store(false);
@@ -720,6 +777,16 @@ void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session
         sessions_.erase(peer_key_string(peer_id));
     }
     session->alive.store(false);
+
+    {
+        std::lock_guard<std::mutex> lock(g_live_sessions_mutex);
+        g_live_sessions.erase(session->debug_id);
+    }
+
+    std::cerr << "[SessionManager] receive_loop exit id=" << session->debug_id
+              << " peer=" << session->debug_peer
+              << " endpoint=" << session->endpoint
+              << " thread=" << thread_id << std::endl;
 }
 
 void SessionManager::teardown_sessions() {
@@ -743,7 +810,19 @@ void SessionManager::teardown_sessions() {
         }
         if (session->alive.load()) {
             std::cerr << "[SessionManager] timeout waiting for session "
-                      << session->endpoint << " to terminate" << std::endl;
+                      << session->endpoint << " to terminate (id=" << session->debug_id
+                      << " peer=" << session->debug_peer << ')'
+                      << std::endl;
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_live_sessions_mutex);
+        if (!g_live_sessions.empty()) {
+            std::cerr << "[SessionManager] live sessions after teardown:" << std::endl;
+            for (const auto& [id, details] : g_live_sessions) {
+                std::cerr << "  id=" << id << " " << details << std::endl;
+            }
         }
     }
 }
