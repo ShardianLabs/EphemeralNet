@@ -464,8 +464,11 @@ void Node::schedule_assigned_fetch(const protocol::AnnouncePayload& payload) {
         return;
     }
 
-    if (chunk_store_.get_record(payload.chunk_id).has_value()) {
-        return;
+    {
+        SchedulerLock lock(scheduler_mutex_);
+        if (chunk_store_.get_record(payload.chunk_id).has_value()) {
+            return;
+        }
     }
 
     const auto chunk_key = chunk_id_to_string(payload.chunk_id);
@@ -1250,7 +1253,11 @@ SwarmPeerLoadMap Node::gather_peer_load() const {
 
 bool Node::dispatch_upload(const PendingUploadRequest& request) {
     const auto manifest = manifest_for_chunk(request.chunk_id);
-    const auto record = chunk_store_.get_record(request.chunk_id);
+    std::optional<ChunkRecord> record;
+    {
+        SchedulerLock lock(scheduler_mutex_);
+        record = chunk_store_.get_record(request.chunk_id);
+    }
     if (!manifest.has_value() || !record.has_value()) {
         send_negative_ack(request.peer_id, request.chunk_id);
         return false;
@@ -1408,11 +1415,14 @@ protocol::Manifest Node::store_chunk(const ChunkId& chunk_id,
     const auto chunk_key = crypto::CryptoManager::generate_key();
     auto sealed = crypto::CryptoManager::encrypt_with_key(chunk_key, chunk_id, data);
 
-    chunk_store_.put(chunk_id,
-        std::move(sealed.data),
-        sanitized_ttl,
-        sealed.nonce.bytes,
-        sealed.encrypted);
+    {
+        SchedulerLock lock(scheduler_mutex_);
+        chunk_store_.put(chunk_id,
+            std::move(sealed.data),
+            sanitized_ttl,
+            sealed.nonce.bytes,
+            sealed.encrypted);
+    }
 
     const auto shares = crypto::Shamir::split(chunk_key.bytes, threshold, total_shares);
     std::vector<protocol::KeyShard> protocol_shards;
@@ -1649,11 +1659,14 @@ std::optional<ChunkData> Node::receive_chunk(const std::string& manifest_uri, Ch
     }
     dht_.publish_shards(manifest.chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, *ttl);
     announce_chunk(manifest.chunk_id, *ttl);
-    chunk_store_.put(manifest.chunk_id,
-                     std::move(ciphertext),
-                     *ttl,
-                     manifest.nonce.bytes,
-                     true);
+    {
+        SchedulerLock lock(scheduler_mutex_);
+        chunk_store_.put(manifest.chunk_id,
+                         std::move(ciphertext),
+                         *ttl,
+                         manifest.nonce.bytes,
+                         true);
+    }
     clear_pending_fetch(chunk_id_to_string(manifest.chunk_id));
     note_local_seed(manifest.chunk_id);
 
@@ -1663,6 +1676,7 @@ std::optional<ChunkData> Node::receive_chunk(const std::string& manifest_uri, Ch
 }
 
 std::optional<ChunkRecord> Node::export_chunk_record(const ChunkId& chunk_id) {
+    SchedulerLock lock(scheduler_mutex_);
     return chunk_store_.get_record(chunk_id);
 }
 
@@ -1742,7 +1756,12 @@ bool Node::request_chunk(const PeerId& peer_id,
 }
 
 std::optional<ChunkData> Node::fetch_chunk(const ChunkId& chunk_id) {
-    if (auto record = chunk_store_.get_record(chunk_id)) {
+    std::optional<ChunkRecord> record;
+    {
+        SchedulerLock lock(scheduler_mutex_);
+        record = chunk_store_.get_record(chunk_id);
+    }
+    if (record.has_value()) {
         if (record->encrypted) {
             std::vector<protocol::KeyShard> shard_source;
             std::uint8_t shard_threshold = 0;
@@ -1926,7 +1945,11 @@ Node::TtlAuditReport Node::audit_ttl() const {
     TtlAuditReport report{};
     const auto now = std::chrono::steady_clock::now();
 
-    const auto local_entries = chunk_store_.snapshot();
+    std::vector<ChunkStore::SnapshotEntry> local_entries;
+    {
+        SchedulerLock lock(scheduler_mutex_);
+        local_entries = chunk_store_.snapshot();
+    }
     std::unordered_set<std::string> local_keys;
     local_keys.reserve(local_entries.size());
     for (const auto& entry : local_entries) {
@@ -2001,7 +2024,11 @@ void Node::tick() {
     const auto now = std::chrono::steady_clock::now();
     const auto elapsed = now - last_cleanup_;
     if (elapsed >= config_.cleanup_interval) {
-        const auto expired_chunks = chunk_store_.sweep_expired();
+        std::vector<ChunkId> expired_chunks;
+        {
+            SchedulerLock lock(scheduler_mutex_);
+            expired_chunks = chunk_store_.sweep_expired();
+        }
         for (const auto& chunk_id : expired_chunks) {
             const auto key = chunk_id_to_string(chunk_id);
             cleanup_notifications_.push_back(key);
@@ -2084,6 +2111,7 @@ void Node::register_peer_contact(PeerContact contact) {
 }
 
 std::vector<ChunkStore::SnapshotEntry> Node::stored_chunks() const {
+    SchedulerLock lock(scheduler_mutex_);
     return chunk_store_.snapshot();
 }
 
@@ -2208,7 +2236,11 @@ void Node::handle_request(const protocol::RequestPayload& payload, const PeerId&
     note_peer_leecher(payload.chunk_id, sender);
 
     const auto manifest = manifest_for_chunk(payload.chunk_id);
-    const auto record = chunk_store_.get_record(payload.chunk_id);
+    std::optional<ChunkRecord> record;
+    {
+        SchedulerLock lock(scheduler_mutex_);
+        record = chunk_store_.get_record(payload.chunk_id);
+    }
     bool accepted = manifest.has_value() && record.has_value();
     if (manifest.has_value()) {
         const auto ttl_opt = manifest_ttl(*manifest, config_);
