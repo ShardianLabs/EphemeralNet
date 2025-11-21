@@ -11,6 +11,7 @@
 #include <span>
 #include <string>
 #include <thread>
+#include <iostream>
 #include <vector>
 
 using namespace std::chrono_literals;
@@ -68,37 +69,74 @@ int main() {
     replica.start_transport(0);
     replica_b.start_transport(0);
 
+    auto shutdown = [&]() {
+        producer.stop_transport();
+        consumer.stop_transport();
+        replica.stop_transport();
+        replica_b.stop_transport();
+    };
+
+    auto require = [&](bool condition, const char* message) {
+        if (!condition) {
+            std::cerr << "[FetchPriority] " << message << std::endl;
+            shutdown();
+            return false;
+        }
+        return true;
+    };
+
     const auto pow_from_consumer_for_producer = ephemeralnet::test::NodeTestAccess::handshake_work(consumer, producer_id);
     const auto pow_from_producer_for_consumer = ephemeralnet::test::NodeTestAccess::handshake_work(producer, consumer_id);
     const auto pow_from_replica_for_consumer = ephemeralnet::test::NodeTestAccess::handshake_work(replica, consumer_id);
     const auto pow_from_consumer_for_replica = ephemeralnet::test::NodeTestAccess::handshake_work(consumer, replica_id);
     const auto pow_from_replica_b_for_consumer = ephemeralnet::test::NodeTestAccess::handshake_work(replica_b, consumer_id);
     const auto pow_from_consumer_for_replica_b = ephemeralnet::test::NodeTestAccess::handshake_work(consumer, replica_b_id);
-    assert(pow_from_consumer_for_producer.has_value());
-    assert(pow_from_producer_for_consumer.has_value());
-    assert(pow_from_replica_for_consumer.has_value());
-    assert(pow_from_consumer_for_replica.has_value());
-    assert(pow_from_replica_b_for_consumer.has_value());
-    assert(pow_from_consumer_for_replica_b.has_value());
+    if (!require(pow_from_consumer_for_producer.has_value(), "consumer->producer handshake work failed")) {
+        return 1;
+    }
+    if (!require(pow_from_producer_for_consumer.has_value(), "producer->consumer handshake work failed")) {
+        return 1;
+    }
+    if (!require(pow_from_replica_for_consumer.has_value(), "replica->consumer handshake work failed")) {
+        return 1;
+    }
+    if (!require(pow_from_consumer_for_replica.has_value(), "consumer->replica handshake work failed")) {
+        return 1;
+    }
+    if (!require(pow_from_replica_b_for_consumer.has_value(), "replica-b->consumer handshake work failed")) {
+        return 1;
+    }
+    if (!require(pow_from_consumer_for_replica_b.has_value(), "consumer->replica-b handshake work failed")) {
+        return 1;
+    }
     const bool handshake_ab = producer.perform_handshake(consumer_id, consumer.public_identity(), *pow_from_consumer_for_producer);
     const bool handshake_ba = consumer.perform_handshake(producer_id, producer.public_identity(), *pow_from_producer_for_consumer);
     const bool handshake_cr = consumer.perform_handshake(replica_id, replica.public_identity(), *pow_from_replica_for_consumer);
     const bool handshake_rc = replica.perform_handshake(consumer_id, consumer.public_identity(), *pow_from_consumer_for_replica);
     const bool handshake_crb = consumer.perform_handshake(replica_b_id, replica_b.public_identity(), *pow_from_replica_b_for_consumer);
     const bool handshake_rb = replica_b.perform_handshake(consumer_id, consumer.public_identity(), *pow_from_consumer_for_replica_b);
-    assert(handshake_ab);
-    assert(handshake_ba);
-    assert(handshake_cr);
-    assert(handshake_rc);
-    assert(handshake_crb);
-    assert(handshake_rb);
+    if (!require(handshake_ab && handshake_ba, "consumer<->producer handshake failed")) {
+        return 1;
+    }
+    if (!require(handshake_cr && handshake_rc, "consumer<->replica handshake failed")) {
+        return 1;
+    }
+    if (!require(handshake_crb && handshake_rb, "consumer<->replica-b handshake failed")) {
+        return 1;
+    }
 
     const auto producer_port = producer.transport_port();
-    assert(producer_port != 0);
+    if (!require(producer_port != 0, "producer transport did not start")) {
+        return 1;
+    }
     const auto replica_port = replica.transport_port();
-    assert(replica_port != 0);
+    if (!require(replica_port != 0, "replica transport did not start")) {
+        return 1;
+    }
     const auto replica_b_port = replica_b.transport_port();
-    assert(replica_b_port != 0);
+    if (!require(replica_b_port != 0, "replica B transport did not start")) {
+        return 1;
+    }
 
     const auto urgent_chunk = make_chunk_id(0x70);
     const auto background_chunk = make_chunk_id(0x80);
@@ -111,21 +149,35 @@ int main() {
     const auto urgent_uri = ephemeralnet::protocol::encode_manifest(urgent_manifest);
     const auto background_uri = ephemeralnet::protocol::encode_manifest(background_manifest);
     const auto producer_background_record = producer.export_chunk_record(background_chunk);
-    assert(producer_background_record.has_value());
+    if (!require(producer_background_record.has_value(), "producer missing background chunk")) {
+        return 1;
+    }
     auto background_ciphertext_primary = producer_background_record->data;
     auto background_ciphertext_secondary = producer_background_record->data;
 
     const bool replica_ingested_manifest = replica.ingest_manifest(background_uri);
-    assert(replica_ingested_manifest);
+    if (!require(replica_ingested_manifest, "replica failed to ingest manifest")) {
+        return 1;
+    }
     const auto replica_plaintext = replica.receive_chunk(background_uri, std::move(background_ciphertext_primary));
-    assert(replica_plaintext.has_value());
-    assert(*replica_plaintext == background_data);
+    if (!require(replica_plaintext.has_value(), "replica failed to decrypt chunk")) {
+        return 1;
+    }
+    if (!require(*replica_plaintext == background_data, "replica chunk mismatch")) {
+        return 1;
+    }
 
     const bool replica_b_ingested_manifest = replica_b.ingest_manifest(background_uri);
-    assert(replica_b_ingested_manifest);
+    if (!require(replica_b_ingested_manifest, "replica B failed to ingest manifest")) {
+        return 1;
+    }
     const auto replica_b_plaintext = replica_b.receive_chunk(background_uri, std::move(background_ciphertext_secondary));
-    assert(replica_b_plaintext.has_value());
-    assert(*replica_b_plaintext == background_data);
+    if (!require(replica_b_plaintext.has_value(), "replica B failed to decrypt chunk")) {
+        return 1;
+    }
+    if (!require(*replica_b_plaintext == background_data, "replica B chunk mismatch")) {
+        return 1;
+    }
 
     std::vector<std::string> request_log;
     std::mutex request_mutex;
@@ -206,8 +258,15 @@ int main() {
 
     const auto urgent_known = ephemeralnet::test::NodeTestAccess::provider_count(consumer, urgent_chunk);
     const auto background_known = ephemeralnet::test::NodeTestAccess::provider_count(consumer, background_chunk);
-    assert(urgent_known.has_value() && background_known.has_value());
-    assert(*urgent_known < *background_known);
+    if (!require(urgent_known.has_value(), "consumer missing urgent providers")) {
+        return 1;
+    }
+    if (!require(background_known.has_value(), "consumer missing background providers")) {
+        return 1;
+    }
+    if (!require(*urgent_known < *background_known, "provider counts not biased toward background chunk")) {
+        return 1;
+    }
 
     std::optional<ephemeralnet::ChunkData> urgent_fetched;
     std::optional<ephemeralnet::ChunkData> background_fetched;
@@ -228,10 +287,18 @@ int main() {
         std::this_thread::sleep_for(50ms);
     }
 
-    assert(urgent_fetched.has_value());
-    assert(*urgent_fetched == urgent_data);
-    assert(background_fetched.has_value());
-    assert(*background_fetched == background_data);
+    if (!require(urgent_fetched.has_value(), "urgent chunk was never fetched")) {
+        return 1;
+    }
+    if (!require(*urgent_fetched == urgent_data, "urgent chunk payload mismatch")) {
+        return 1;
+    }
+    if (!require(background_fetched.has_value(), "background chunk was never fetched")) {
+        return 1;
+    }
+    if (!require(*background_fetched == background_data, "background chunk payload mismatch")) {
+        return 1;
+    }
 
     std::vector<std::string> log_copy;
     {
@@ -239,13 +306,12 @@ int main() {
         log_copy = request_log;
     }
 
-    assert(!log_copy.empty());
-    assert(log_copy.front() == ephemeralnet::chunk_id_to_string(urgent_chunk));
-
-    producer.stop_transport();
-    consumer.stop_transport();
-    replica.stop_transport();
-    replica_b.stop_transport();
-
+    if (!require(!log_copy.empty(), "producer request log is empty")) {
+        return 1;
+    }
+    if (!require(log_copy.front() == ephemeralnet::chunk_id_to_string(urgent_chunk), "urgent chunk was not requested first")) {
+        return 1;
+    }
+    shutdown();
     return 0;
 }

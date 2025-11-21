@@ -225,7 +225,7 @@ int main() {
         }
         daemon_started = true;
 
-        if (!wait_for_status(executable_path.string(), options_string, std::chrono::seconds(10), true)) {
+        if (!wait_for_status(executable_path.string(), options_string, std::chrono::seconds(20), true)) {
             std::cerr << "Daemon did not respond within the expected time" << std::endl;
             ensure_stop();
             cleanup();

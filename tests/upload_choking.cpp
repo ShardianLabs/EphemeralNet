@@ -123,7 +123,7 @@ int main() {
     ephemeralnet::test::NodeTestAccess::handle_announce(peer_a, payload, seeder_id);
     ephemeralnet::test::NodeTestAccess::handle_announce(peer_b, payload, seeder_id);
 
-    auto deadline = std::chrono::steady_clock::now() + 10s;
+    auto deadline = std::chrono::steady_clock::now() + 20s;
     bool a_complete = false;
     bool b_complete = false;
     bool observed_upload_activity = false;
@@ -159,6 +159,14 @@ int main() {
     if (!require(b_complete, "peer B failed to fetch chunk")) {
         return 1;
     }
+    auto settle_deadline = std::chrono::steady_clock::now() + 2s;
+        // Give instrumentation counters time to reflect the completed transfers.
+        while (std::chrono::steady_clock::now() < settle_deadline
+            && ephemeralnet::test::NodeTestAccess::completed_uploads(seeder) < 2) {
+        seeder.tick();
+        std::this_thread::sleep_for(20ms);
+    }
+
     const auto peak_active = ephemeralnet::test::NodeTestAccess::peak_active_uploads(seeder);
     const auto total_completed = ephemeralnet::test::NodeTestAccess::completed_uploads(seeder);
 

@@ -4,8 +4,8 @@
 #include "test_access.hpp"
 
 #include <atomic>
-#include <cassert>
 #include <chrono>
+#include <iostream>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -111,32 +111,63 @@ int main() {
     leecher_a.start_transport(0);
     leecher_b.start_transport(0);
 
+    auto shutdown = [&]() {
+        seeder.stop_transport();
+        leecher_a.stop_transport();
+        leecher_b.stop_transport();
+    };
+
+    auto require = [&](bool condition, const char* message) {
+        if (!condition) {
+            std::cerr << "[MultiNodeIntegration] " << message << std::endl;
+            shutdown();
+            return false;
+        }
+        return true;
+    };
+
     std::this_thread::sleep_for(100ms);
 
     const auto seeder_port = seeder.transport_port();
     const auto leecher_a_port = leecher_a.transport_port();
     const auto leecher_b_port = leecher_b.transport_port();
 
-    assert(seeder_port != 0);
-    assert(leecher_a_port != 0);
-    assert(leecher_b_port != 0);
+    if (!require(seeder_port != 0, "seeder transport failed to start")) {
+        return 1;
+    }
+    if (!require(leecher_a_port != 0, "leecher A transport failed to start")) {
+        return 1;
+    }
+    if (!require(leecher_b_port != 0, "leecher B transport failed to start")) {
+        return 1;
+    }
 
     const auto pow_leecher_a = ephemeralnet::test::NodeTestAccess::handshake_work(leecher_a, seeder.id());
     const auto pow_seeder_a = ephemeralnet::test::NodeTestAccess::handshake_work(seeder, leecher_a.id());
     const auto pow_leecher_b = ephemeralnet::test::NodeTestAccess::handshake_work(leecher_b, seeder.id());
     const auto pow_seeder_b = ephemeralnet::test::NodeTestAccess::handshake_work(seeder, leecher_b.id());
-    assert(pow_leecher_a.has_value());
-    assert(pow_seeder_a.has_value());
-    assert(pow_leecher_b.has_value());
-    assert(pow_seeder_b.has_value());
+    if (!require(pow_leecher_a.has_value(), "leecher A handshake work failed")) {
+        return 1;
+    }
+    if (!require(pow_seeder_a.has_value(), "seeder handshake work for leecher A failed")) {
+        return 1;
+    }
+    if (!require(pow_leecher_b.has_value(), "leecher B handshake work failed")) {
+        return 1;
+    }
+    if (!require(pow_seeder_b.has_value(), "seeder handshake work for leecher B failed")) {
+        return 1;
+    }
     const bool handshake_sa = seeder.perform_handshake(leecher_a.id(), leecher_a.public_identity(), *pow_leecher_a);
     const bool handshake_as = leecher_a.perform_handshake(seeder.id(), seeder.public_identity(), *pow_seeder_a);
     const bool handshake_sb = seeder.perform_handshake(leecher_b.id(), leecher_b.public_identity(), *pow_leecher_b);
     const bool handshake_bs = leecher_b.perform_handshake(seeder.id(), seeder.public_identity(), *pow_seeder_b);
-    assert(handshake_sa);
-    assert(handshake_as);
-    assert(handshake_sb);
-    assert(handshake_bs);
+    if (!require(handshake_sa && handshake_as, "leecher A handshake negotiation failed")) {
+        return 1;
+    }
+    if (!require(handshake_sb && handshake_bs, "leecher B handshake negotiation failed")) {
+        return 1;
+    }
 
     ephemeralnet::ChunkId chunk_id{};
     chunk_id.fill(0x5Au);
@@ -193,15 +224,22 @@ int main() {
         std::this_thread::sleep_for(100ms);
     }
 
-    assert(leecher_a_data.has_value());
-    assert(leecher_b_data.has_value());
-    assert(*leecher_a_data == chunk_payload);
-    assert(*leecher_b_data == chunk_payload);
-    assert(simulation.dropped.load(std::memory_order_relaxed) >= 1);
+    if (!require(leecher_a_data.has_value(), "leecher A failed to complete fetch")) {
+        return 1;
+    }
+    if (!require(leecher_b_data.has_value(), "leecher B failed to complete fetch")) {
+        return 1;
+    }
+    if (!require(*leecher_a_data == chunk_payload, "leecher A payload mismatch")) {
+        return 1;
+    }
+    if (!require(*leecher_b_data == chunk_payload, "leecher B payload mismatch")) {
+        return 1;
+    }
+    if (!require(simulation.dropped.load(std::memory_order_relaxed) >= 1, "expected network drops were not observed")) {
+        return 1;
+    }
 
-    seeder.stop_transport();
-    leecher_a.stop_transport();
-    leecher_b.stop_transport();
-
+    shutdown();
     return 0;
 }
