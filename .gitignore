@@ -6,6 +6,5 @@ Testing/
 *.vcxproj*
 *.sln
 compile_commands.json
-.github/
 descripcion.txt
 ops/

@@ -1,0 +1,50 @@
+name: EphemeralNet CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-and-test-windows:
+    name: Build & Test (Windows)
+    runs-on: windows-latest
+    env:
+      BUILD_DIR: build
+      CMAKE_GENERATOR: Ninja
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Cache CMake dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/_deps
+          key: ${{ runner.os }}-cmake-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake') }}
+          restore-keys: |
+            ${{ runner.os }}-cmake-
+
+      - name: Configure CMake
+        run: cmake -S . -B $env:BUILD_DIR -G $env:CMAKE_GENERATOR -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+      - name: Build
+        run: cmake --build $env:BUILD_DIR --parallel
+
+      - name: Run tests
+        run: ctest --test-dir $env:BUILD_DIR --output-on-failure
+
+      - name: Upload CTest log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-log
+          path: ${{ env.BUILD_DIR }}\\Testing\\Temporary\\LastTest.log
+          if-no-files-found: ignore

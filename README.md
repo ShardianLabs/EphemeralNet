@@ -46,6 +46,16 @@ ctest --test-dir build
 
 > **Note:** The first `cmake` configure step generates the project files and the `build/` directory. Add `-DEPHEMERALNET_BUILD_TESTS=OFF` if you want to skip test targets.
 
+## Continuous Integration
+
+GitHub Actions runs the same configure/build/test stack on every push and pull request targeting `master`. The workflow lives in `.github/workflows/ci.yml` and mirrors the local steps:
+
+1. Configure with `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo`.
+2. Build via `cmake --build build --parallel`.
+3. Execute `ctest --test-dir build --output-on-failure`.
+
+The workflow relies only on the built-in `GITHUB_TOKEN`, so no external secrets are required until deployment artifacts are introduced. Use the local commands above before pushing to keep CI green.
+
 ## CLI
 
 The `eph` binary acts as a lightweight client for the daemon and exposes the most common control commands. Typical usage:
