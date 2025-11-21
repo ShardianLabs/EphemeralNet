@@ -1533,16 +1533,18 @@ private:
             }
         }
         const std::string_view token(text_.data() + start, position_ - start);
+        const char* token_begin = token.data();
+        const char* token_end = token_begin + token.size();
         if (is_fractional) {
             double value{};
-            auto result = std::from_chars(token.begin(), token.end(), value);
+            auto result = std::from_chars(token_begin, token_end, value);
             if (result.ec != std::errc{}) {
                 throw ConfigError("E_CONFIG_PARSE", "Invalid floating point number in JSON");
             }
             return Value(value);
         }
         std::int64_t int_value{};
-        auto result = std::from_chars(token.begin(), token.end(), int_value);
+        auto result = std::from_chars(token_begin, token_end, int_value);
         if (result.ec != std::errc{}) {
             throw ConfigError("E_CONFIG_PARSE", "Invalid integer number in JSON");
         }
