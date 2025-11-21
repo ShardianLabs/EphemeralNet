@@ -37,6 +37,13 @@ ephemeralnet::ChunkId make_chunk_id(std::uint8_t seed) {
 }  // namespace
 
 int main() {
+    auto log = [](const std::string& message) {
+        std::cout << "[FetchPriority] " << message << std::endl;
+        std::cout.flush();
+    };
+
+    log("starting test harness");
+
     ephemeralnet::Config producer_config{};
     producer_config.identity_seed = 0x41u;
 
@@ -72,16 +79,20 @@ int main() {
     replica.start_transport(0);
     replica_b.start_transport(0);
 
+    log("transports started");
+
     auto shutdown = [&]() {
         producer.stop_transport();
         consumer.stop_transport();
         replica.stop_transport();
         replica_b.stop_transport();
+        log("transports stopped");
     };
 
     auto require = [&](bool condition, const char* message) {
         if (!condition) {
             std::cerr << "[FetchPriority] " << message << std::endl;
+            std::cerr.flush();
             shutdown();
             return false;
         }
@@ -94,6 +105,7 @@ int main() {
     const auto pow_from_consumer_for_replica = ephemeralnet::test::NodeTestAccess::handshake_work(consumer, replica_id);
     const auto pow_from_replica_b_for_consumer = ephemeralnet::test::NodeTestAccess::handshake_work(replica_b, consumer_id);
     const auto pow_from_consumer_for_replica_b = ephemeralnet::test::NodeTestAccess::handshake_work(consumer, replica_b_id);
+    log("handshake work derived");
     if (!require(pow_from_consumer_for_producer.has_value(), "consumer->producer handshake work failed")) {
         return 1;
     }
@@ -128,6 +140,8 @@ int main() {
         return 1;
     }
 
+    log("handshakes established");
+
     const auto producer_port = producer.transport_port();
     if (!require(producer_port != 0, "producer transport did not start")) {
         return 1;
@@ -149,6 +163,7 @@ int main() {
 
     const auto urgent_manifest = producer.store_chunk(urgent_chunk, urgent_data, 180s);
     const auto background_manifest = producer.store_chunk(background_chunk, background_data, 180s);
+    log("producer stored chunks");
     const auto urgent_uri = ephemeralnet::protocol::encode_manifest(urgent_manifest);
     const auto background_uri = ephemeralnet::protocol::encode_manifest(background_manifest);
     const auto producer_background_record = producer.export_chunk_record(background_chunk);
@@ -159,6 +174,7 @@ int main() {
     auto background_ciphertext_secondary = producer_background_record->data;
 
     const bool replica_ingested_manifest = replica.ingest_manifest(background_uri);
+    log("replica ingest manifest=" + std::string(replica_ingested_manifest ? "true" : "false"));
     if (!require(replica_ingested_manifest, "replica failed to ingest manifest")) {
         return 1;
     }
@@ -241,6 +257,7 @@ int main() {
     const bool urgent_pow_ready = ephemeralnet::test::NodeTestAccess::apply_pow(consumer, urgent_payload);
     assert(urgent_pow_ready);
     ephemeralnet::test::NodeTestAccess::handle_announce(consumer, urgent_payload, producer_id);
+    log("urgent announce handled");
 
     const bool background_pow_ready = ephemeralnet::test::NodeTestAccess::apply_pow(consumer, background_payload);
     assert(background_pow_ready);
@@ -255,6 +272,7 @@ int main() {
     ephemeralnet::test::NodeTestAccess::handle_announce(consumer, replica_b_payload, replica_b_id);
     ephemeralnet::test::NodeTestAccess::force_availability_refresh(consumer, urgent_chunk);
     ephemeralnet::test::NodeTestAccess::force_availability_refresh(consumer, background_chunk);
+    log("announces delivered to consumer");
 
     const auto urgent_known = ephemeralnet::test::NodeTestAccess::provider_count(consumer, urgent_chunk);
     const auto background_known = ephemeralnet::test::NodeTestAccess::provider_count(consumer, background_chunk);
@@ -272,6 +290,7 @@ int main() {
     std::optional<ephemeralnet::ChunkData> background_fetched;
 
     const auto deadline = std::chrono::steady_clock::now() + 6s;
+    std::size_t iteration = 0;
     while ((!urgent_fetched.has_value() || !background_fetched.has_value())
            && std::chrono::steady_clock::now() < deadline) {
         consumer.tick();
@@ -284,6 +303,12 @@ int main() {
         if (!background_fetched) {
             background_fetched = consumer.fetch_chunk(background_chunk);
         }
+        if ((iteration % 10) == 0) {
+            log("tick iteration=" + std::to_string(iteration)
+                + " urgent=" + std::string(urgent_fetched ? "ready" : "pending")
+                + " background=" + std::string(background_fetched ? "ready" : "pending"));
+        }
+        ++iteration;
         std::this_thread::sleep_for(50ms);
     }
 
@@ -312,6 +337,7 @@ int main() {
     if (!require(log_copy.front() == ephemeralnet::chunk_id_to_string(urgent_chunk), "urgent chunk was not requested first")) {
         return 1;
     }
+    log("test completed successfully");
     shutdown();
     return 0;
 }

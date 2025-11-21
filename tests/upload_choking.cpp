@@ -32,6 +32,13 @@ ephemeralnet::ChunkId make_chunk_id(std::uint8_t seed) {
 }  // namespace
 
 int main() {
+    auto log = [](const std::string& message) {
+        std::cout << "[UploadChoking] " << message << std::endl;
+        std::cout.flush();
+    };
+
+    log("starting test harness");
+
     ephemeralnet::Config seeder_config{};
     seeder_config.identity_seed = 0x10u;
     seeder_config.upload_max_parallel_transfers = 1;
@@ -63,10 +70,13 @@ int main() {
     peer_a.start_transport(0);
     peer_b.start_transport(0);
 
+    log("transports started");
+
     auto shutdown = [&]() {
         seeder.stop_transport();
         peer_a.stop_transport();
         peer_b.stop_transport();
+        log("transports stopped");
     };
 
     auto require = [&](bool condition, const char* message) {
@@ -82,6 +92,7 @@ int main() {
     const auto pow_seeder_a = ephemeralnet::test::NodeTestAccess::handshake_work(seeder, peer_a_id);
     const auto pow_peer_b = ephemeralnet::test::NodeTestAccess::handshake_work(peer_b, seeder_id);
     const auto pow_seeder_b = ephemeralnet::test::NodeTestAccess::handshake_work(seeder, peer_b_id);
+    log("handshake work prepared");
     if (!require(pow_peer_a.has_value(), "peer A handshake work failed")) {
         return 1;
     }
@@ -105,10 +116,13 @@ int main() {
         return 1;
     }
 
+    log("handshakes complete");
+
     const auto chunk_id = make_chunk_id(0x55);
     ephemeralnet::ChunkData chunk_payload(64, 0xEFu);
     auto manifest = seeder.store_chunk(chunk_id, chunk_payload, 300s);
     const auto manifest_uri = ephemeralnet::protocol::encode_manifest(manifest);
+    log("seeder stored chunk");
 
     std::string endpoint = "127.0.0.1:" + std::to_string(seeder.transport_port());
 
@@ -122,11 +136,13 @@ int main() {
 
     ephemeralnet::test::NodeTestAccess::handle_announce(peer_a, payload, seeder_id);
     ephemeralnet::test::NodeTestAccess::handle_announce(peer_b, payload, seeder_id);
+    log("announces delivered to peers");
 
     auto deadline = std::chrono::steady_clock::now() + 20s;
     bool a_complete = false;
     bool b_complete = false;
     bool observed_upload_activity = false;
+    std::size_t iteration = 0;
 
     while (std::chrono::steady_clock::now() < deadline && (!a_complete || !b_complete)) {
         seeder.tick();
@@ -151,6 +167,16 @@ int main() {
         }
 
         std::this_thread::sleep_for(30ms);
+
+        if ((iteration % 10) == 0) {
+            log("tick iteration=" + std::to_string(iteration)
+                + " active=" + std::to_string(active_uploads)
+                + " pending=" + std::to_string(pending_uploads)
+                + " completed=" + std::to_string(completed_uploads)
+                + " peerA=" + std::string(a_complete ? "ready" : "pending")
+                + " peerB=" + std::string(b_complete ? "ready" : "pending"));
+        }
+        ++iteration;
     }
 
     if (!require(a_complete, "peer A failed to fetch chunk")) {
@@ -167,6 +193,11 @@ int main() {
         peer_a.tick();
         peer_b.tick();
         std::this_thread::sleep_for(20ms);
+        if ((iteration % 10) == 0) {
+            log("settle tick iteration=" + std::to_string(iteration)
+                + " completed=" + std::to_string(ephemeralnet::test::NodeTestAccess::completed_uploads(seeder)));
+        }
+        ++iteration;
     }
 
     const auto peak_active = ephemeralnet::test::NodeTestAccess::peak_active_uploads(seeder);
@@ -188,6 +219,12 @@ int main() {
                || ephemeralnet::test::NodeTestAccess::pending_uploads(seeder) > 0)) {
         seeder.tick();
         std::this_thread::sleep_for(30ms);
+        if ((iteration % 10) == 0) {
+            log("drain tick iteration=" + std::to_string(iteration)
+                + " active=" + std::to_string(ephemeralnet::test::NodeTestAccess::active_uploads(seeder))
+                + " pending=" + std::to_string(ephemeralnet::test::NodeTestAccess::pending_uploads(seeder)));
+        }
+        ++iteration;
     }
 
     if (!require(ephemeralnet::test::NodeTestAccess::pending_uploads(seeder) == 0, "pending uploads failed to drain")) {
@@ -203,6 +240,7 @@ int main() {
         return 1;
     }
 
+    log("test completed successfully");
     shutdown();
     return 0;
 }

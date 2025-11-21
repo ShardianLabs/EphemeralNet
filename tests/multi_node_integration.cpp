@@ -98,6 +98,13 @@ struct HookGuard {
 }  // namespace
 
 int main() {
+    auto log = [](const std::string& message) {
+        std::cout << "[MultiNodeIntegration] " << message << std::endl;
+        std::cout.flush();
+    };
+
+    log("starting test harness");
+
     auto simulation = std::make_shared<Simulation>();
     ephemeralnet::network::SessionManager::set_test_hooks(&simulation->hooks);
     HookGuard guard{simulation};
@@ -107,6 +114,7 @@ int main() {
     const auto leecher_b_id = make_peer_id(0x81);
 
     simulation->drop_first_from(leecher_a_id);
+    log("configured drop for leecher A");
 
     auto seeder_config = make_config(0xAAAAB111u);
     auto leecher_a_config = make_config(0xAAAAB222u);
@@ -120,10 +128,13 @@ int main() {
     leecher_a.start_transport(0);
     leecher_b.start_transport(0);
 
+    log("transports started");
+
     auto shutdown = [&]() {
         seeder.stop_transport();
         leecher_a.stop_transport();
         leecher_b.stop_transport();
+        log("transports stopped");
     };
 
     auto require = [&](bool condition, const char* message) {
@@ -136,10 +147,14 @@ int main() {
     };
 
     std::this_thread::sleep_for(100ms);
+    log("initial settle delay complete");
 
     const auto seeder_port = seeder.transport_port();
     const auto leecher_a_port = leecher_a.transport_port();
     const auto leecher_b_port = leecher_b.transport_port();
+    log("ports assigned seeder=" + std::to_string(seeder_port)
+        + " a=" + std::to_string(leecher_a_port)
+        + " b=" + std::to_string(leecher_b_port));
 
     if (!require(seeder_port != 0, "seeder transport failed to start")) {
         return 1;
@@ -155,6 +170,7 @@ int main() {
     const auto pow_seeder_a = ephemeralnet::test::NodeTestAccess::handshake_work(seeder, leecher_a.id());
     const auto pow_leecher_b = ephemeralnet::test::NodeTestAccess::handshake_work(leecher_b, seeder.id());
     const auto pow_seeder_b = ephemeralnet::test::NodeTestAccess::handshake_work(seeder, leecher_b.id());
+    log("handshake work prepared");
     if (!require(pow_leecher_a.has_value(), "leecher A handshake work failed")) {
         return 1;
     }
@@ -178,12 +194,15 @@ int main() {
         return 1;
     }
 
+    log("handshakes complete");
+
     ephemeralnet::ChunkId chunk_id{};
     chunk_id.fill(0x5Au);
 
     ephemeralnet::ChunkData chunk_payload(256, 0xABu);
     const auto manifest = seeder.store_chunk(chunk_id, chunk_payload, 180s);
     const auto manifest_uri = ephemeralnet::protocol::encode_manifest(manifest);
+    log("seeder stored chunk and manifest prepared");
 
     ephemeralnet::protocol::AnnouncePayload announce_a{};
     announce_a.chunk_id = chunk_id;
@@ -193,6 +212,7 @@ int main() {
     announce_a.manifest_uri = manifest_uri;
     announce_a.assigned_shards.push_back(manifest.shards.front().index);
     ephemeralnet::test::NodeTestAccess::handle_announce(leecher_a, announce_a, seeder_id);
+    log("announce delivered to leecher A");
 
     ephemeralnet::protocol::AnnouncePayload announce_b{};
     announce_b.chunk_id = chunk_id;
@@ -202,10 +222,12 @@ int main() {
     announce_b.manifest_uri = manifest_uri;
     announce_b.assigned_shards.push_back(manifest.shards.back().index);
     ephemeralnet::test::NodeTestAccess::handle_announce(leecher_b, announce_b, seeder_id);
+    log("announce delivered to leecher B");
 
     auto start = std::chrono::steady_clock::now();
     std::optional<ephemeralnet::ChunkData> leecher_a_data;
     std::optional<ephemeralnet::ChunkData> leecher_b_data;
+    std::size_t iteration = 0;
 
     while (std::chrono::steady_clock::now() - start < 15s) {
         seeder.tick();
@@ -230,6 +252,14 @@ int main() {
             break;
         }
 
+        if ((iteration % 10) == 0) {
+            log("tick iteration=" + std::to_string(iteration)
+                + " leecherA=" + std::string(leecher_a_data ? "ready" : "pending")
+                + " leecherB=" + std::string(leecher_b_data ? "ready" : "pending")
+                + " dropped=" + std::to_string(simulation->dropped.load(std::memory_order_relaxed)));
+        }
+        ++iteration;
+
         std::this_thread::sleep_for(100ms);
     }
 
@@ -249,6 +279,7 @@ int main() {
         return 1;
     }
 
+    log("test completed successfully");
     shutdown();
     return 0;
 }
