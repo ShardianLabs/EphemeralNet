@@ -1396,6 +1396,7 @@ Node::~Node() {
 }
 
 void Node::announce_chunk(const ChunkId& chunk_id, std::chrono::seconds ttl) {
+    SchedulerLock lock(scheduler_mutex_);
     PeerContact self_contact{.id = id_, .address = peer_id_to_string(id_), .expires_at = std::chrono::steady_clock::now() + ttl};
     dht_.add_contact(chunk_id, self_contact, ttl);
 }
@@ -1575,8 +1576,8 @@ protocol::Manifest Node::store_chunk(const ChunkId& chunk_id,
     {
         SchedulerLock lock(scheduler_mutex_);
         manifest_cache_[chunk_id_to_string(chunk_id)] = manifest;
+        dht_.publish_shards(chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, sanitized_ttl);
     }
-    dht_.publish_shards(chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, sanitized_ttl);
     announce_chunk(chunk_id, sanitized_ttl);
     update_swarm_plan(manifest);
     broadcast_manifest(manifest);
@@ -1605,8 +1606,8 @@ bool Node::ingest_manifest(const std::string& manifest_uri) {
     {
         SchedulerLock lock(scheduler_mutex_);
         manifest_cache_[chunk_id_to_string(manifest.chunk_id)] = manifest;
+        dht_.publish_shards(manifest.chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, *ttl);
     }
-    dht_.publish_shards(manifest.chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, *ttl);
     update_swarm_plan(manifest);
     return true;
 }
@@ -1656,8 +1657,8 @@ std::optional<ChunkData> Node::receive_chunk(const std::string& manifest_uri, Ch
     {
         SchedulerLock lock(scheduler_mutex_);
         manifest_cache_[chunk_id_to_string(manifest.chunk_id)] = manifest;
+        dht_.publish_shards(manifest.chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, *ttl);
     }
-    dht_.publish_shards(manifest.chunk_id, manifest.shards, manifest.threshold, manifest.total_shares, *ttl);
     announce_chunk(manifest.chunk_id, *ttl);
     {
         SchedulerLock lock(scheduler_mutex_);
@@ -1766,7 +1767,12 @@ std::optional<ChunkData> Node::fetch_chunk(const ChunkId& chunk_id) {
             std::vector<protocol::KeyShard> shard_source;
             std::uint8_t shard_threshold = 0;
 
-            if (const auto shard_info = dht_.shard_record(chunk_id)) {
+            std::optional<KademliaTable::KeyShardRecord> shard_info;
+            {
+                SchedulerLock lock(scheduler_mutex_);
+                shard_info = dht_.shard_record(chunk_id);
+            }
+            if (shard_info.has_value()) {
                 if (shard_info->threshold > 0 && shard_info->shards.size() >= shard_info->threshold) {
                     shard_source = shard_info->shards;
                     shard_threshold = shard_info->threshold;
@@ -1780,6 +1786,7 @@ std::optional<ChunkData> Node::fetch_chunk(const ChunkId& chunk_id) {
                         shard_source = manifest.shards;
                         shard_threshold = manifest.threshold;
                         if (const auto ttl = manifest_ttl(manifest, config_)) {
+                            SchedulerLock lock(scheduler_mutex_);
                             dht_.publish_shards(manifest.chunk_id,
                                                 manifest.shards,
                                                 manifest.threshold,
@@ -1814,7 +1821,11 @@ std::optional<ChunkData> Node::fetch_chunk(const ChunkId& chunk_id) {
         return record->data;
     }
 
-    const auto providers = dht_.find_providers(chunk_id);
+    std::vector<PeerContact> providers;
+    {
+        SchedulerLock lock(scheduler_mutex_);
+        providers = dht_.find_providers(chunk_id);
+    }
     if (providers.empty()) {
         return std::nullopt;
     }
@@ -1959,7 +1970,11 @@ Node::TtlAuditReport Node::audit_ttl() const {
         }
     }
 
-    const auto locators = dht_.snapshot_locators();
+    std::vector<ChunkLocator> locators;
+    {
+        SchedulerLock lock(scheduler_mutex_);
+        locators = dht_.snapshot_locators();
+    }
     std::unordered_map<std::string, bool> locator_has_self;
     locator_has_self.reserve(locators.size());
 
@@ -2031,11 +2046,17 @@ void Node::tick() {
         }
         for (const auto& chunk_id : expired_chunks) {
             const auto key = chunk_id_to_string(chunk_id);
-            cleanup_notifications_.push_back(key);
-            dht_.withdraw_contact(chunk_id, id_);
+            {
+                SchedulerLock lock(scheduler_mutex_);
+                cleanup_notifications_.push_back(key);
+                dht_.withdraw_contact(chunk_id, id_);
+            }
             retire_swarm_ledger(chunk_id);
         }
-        dht_.sweep_expired();
+        {
+            SchedulerLock lock(scheduler_mutex_);
+            dht_.sweep_expired();
+        }
         last_cleanup_ = now;
     }
     rebalance_swarm_plans();
@@ -2107,6 +2128,7 @@ bool Node::send_secure(const PeerId& peer_id, std::span<const std::uint8_t> payl
 }
 
 void Node::register_peer_contact(PeerContact contact) {
+    SchedulerLock lock(scheduler_mutex_);
     dht_.register_peer(std::move(contact));
 }
 
@@ -2750,6 +2772,7 @@ void Node::refresh_advertised_endpoints() {
 
 void Node::seed_bootstrap_contacts() {
     const auto now = std::chrono::steady_clock::now();
+    SchedulerLock lock(scheduler_mutex_);
     for (const auto& entry : config_.bootstrap_nodes) {
         PeerContact contact{};
         contact.id = entry.id;
