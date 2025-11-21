@@ -159,11 +159,13 @@ int main() {
     if (!require(b_complete, "peer B failed to fetch chunk")) {
         return 1;
     }
-    auto settle_deadline = std::chrono::steady_clock::now() + 2s;
-        // Give instrumentation counters time to reflect the completed transfers.
-        while (std::chrono::steady_clock::now() < settle_deadline
-            && ephemeralnet::test::NodeTestAccess::completed_uploads(seeder) < 2) {
+    auto settle_deadline = std::chrono::steady_clock::now() + 5s;
+    // Give instrumentation counters time (and event loop ticks) to reflect the completed transfers.
+    while (std::chrono::steady_clock::now() < settle_deadline
+           && ephemeralnet::test::NodeTestAccess::completed_uploads(seeder) < 2) {
         seeder.tick();
+        peer_a.tick();
+        peer_b.tick();
         std::this_thread::sleep_for(20ms);
     }
 

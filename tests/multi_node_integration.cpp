@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -81,23 +82,31 @@ struct Simulation {
 };
 
 struct HookGuard {
+    explicit HookGuard(std::shared_ptr<Simulation> sim)
+        : simulation(std::move(sim)) {}
+
     ~HookGuard() {
         ephemeralnet::network::SessionManager::set_test_hooks(nullptr);
+        // Allow in-flight callbacks to observe the cleared hook pointer.
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        simulation.reset();
     }
+
+    std::shared_ptr<Simulation> simulation;
 };
 
 }  // namespace
 
 int main() {
-    Simulation simulation;
-    ephemeralnet::network::SessionManager::set_test_hooks(&simulation.hooks);
-    HookGuard guard{};
+    auto simulation = std::make_shared<Simulation>();
+    ephemeralnet::network::SessionManager::set_test_hooks(&simulation->hooks);
+    HookGuard guard{simulation};
 
     const auto seeder_id = make_peer_id(0x01);
     const auto leecher_a_id = make_peer_id(0x41);
     const auto leecher_b_id = make_peer_id(0x81);
 
-    simulation.drop_first_from(leecher_a_id);
+    simulation->drop_first_from(leecher_a_id);
 
     auto seeder_config = make_config(0xAAAAB111u);
     auto leecher_a_config = make_config(0xAAAAB222u);
@@ -236,7 +245,7 @@ int main() {
     if (!require(*leecher_b_data == chunk_payload, "leecher B payload mismatch")) {
         return 1;
     }
-    if (!require(simulation.dropped.load(std::memory_order_relaxed) >= 1, "expected network drops were not observed")) {
+    if (!require(simulation->dropped.load(std::memory_order_relaxed) >= 1, "expected network drops were not observed")) {
         return 1;
     }
 

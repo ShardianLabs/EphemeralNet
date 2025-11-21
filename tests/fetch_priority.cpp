@@ -54,6 +54,9 @@ int main() {
     ephemeralnet::Config replica_b_config{};
     replica_b_config.identity_seed = 0x62u;
 
+    std::vector<std::string> request_log;
+    std::mutex request_mutex;
+
     const auto producer_id = make_peer_id(0x10);
     const auto consumer_id = make_peer_id(0x90);
     const auto replica_id = make_peer_id(0x30);
@@ -178,9 +181,6 @@ int main() {
     if (!require(*replica_b_plaintext == background_data, "replica B chunk mismatch")) {
         return 1;
     }
-
-    std::vector<std::string> request_log;
-    std::mutex request_mutex;
 
     producer.set_message_handler([&](const ephemeralnet::network::TransportMessage& message) {
         if (message.peer_id != consumer_id) {
