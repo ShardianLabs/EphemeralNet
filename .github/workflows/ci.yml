@@ -16,7 +16,6 @@ jobs:
     env:
       BUILD_DIR: build
       CMAKE_GENERATOR: Ninja
-      CRASH_DUMPS: ${{ runner.temp }}\crash-dumps
       CTEST_OUTPUT_ON_FAILURE: 1
       CTEST_PARALLEL_LEVEL: 1
     steps:
@@ -39,9 +38,11 @@ jobs:
             ${{ runner.os }}-cmake-
 
       - name: Enable crash dumps
+        shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path $env:CRASH_DUMPS | Out-Null
-          procdump -accepteula -ma -i $env:CRASH_DUMPS
+          $CrashDir = Join-Path $env:RUNNER_TEMP 'crash-dumps'
+          New-Item -ItemType Directory -Force -Path $CrashDir | Out-Null
+          procdump -accepteula -ma -i $CrashDir
 
       - name: Configure CMake
         run: cmake -S . -B $env:BUILD_DIR -G $env:CMAKE_GENERATOR -DCMAKE_BUILD_TYPE=RelWithDebInfo
@@ -71,7 +72,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: crash-dumps
-          path: ${{ env.CRASH_DUMPS }}\*.dmp
+          path: ${{ runner.temp }}\crash-dumps\*.dmp
           if-no-files-found: ignore
 
       - name: Disable crash dumps
