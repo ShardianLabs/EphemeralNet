@@ -647,11 +647,15 @@ void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session
     while (session->running.load()) {
         std::array<std::uint8_t, kNonceSize> nonce_buffer{};
         if (!recv_all(session->socket, nonce_buffer.data(), nonce_buffer.size())) {
+            std::cerr << "[SessionManager] recv_all nonce failed for "
+                      << session->endpoint << std::endl;
             break;
         }
 
         std::array<std::uint8_t, kLengthFieldSize> length_buffer{};
         if (!recv_all(session->socket, length_buffer.data(), length_buffer.size())) {
+            std::cerr << "[SessionManager] recv_all length failed for "
+                      << session->endpoint << std::endl;
             break;
         }
 
@@ -661,12 +665,16 @@ void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session
             | (static_cast<std::uint32_t>(length_buffer[3]));
 
         if (length > kMaxPayloadSize) {
+            std::cerr << "[SessionManager] oversized payload from "
+                      << session->endpoint << " size=" << length << std::endl;
             break;
         }
 
         std::vector<std::uint8_t> ciphertext(length);
         if (!ciphertext.empty()) {
             if (!recv_all(session->socket, ciphertext.data(), ciphertext.size())) {
+                std::cerr << "[SessionManager] recv_all payload failed for "
+                          << session->endpoint << " bytes=" << ciphertext.size() << std::endl;
                 break;
             }
         }
@@ -776,11 +784,19 @@ bool SessionManager::recv_all(SocketHandle handle, std::uint8_t* buffer, std::si
     std::size_t received_total = 0;
     while (received_total < length) {
 #ifdef _WIN32
-        const auto received = ::recv(socket, reinterpret_cast<char*>(buffer + received_total), static_cast<int>(length - received_total), 0);
+    const auto received = ::recv(socket, reinterpret_cast<char*>(buffer + received_total), static_cast<int>(length - received_total), 0);
 #else
         const auto received = ::recv(socket, reinterpret_cast<char*>(buffer + received_total), length - received_total, 0);
 #endif
         if (received <= 0) {
+#ifdef _WIN32
+        const auto error = WSAGetLastError();
+#else
+        const auto error = errno;
+#endif
+        std::cerr << "[SessionManager] recv_all failure length=" << length
+              << " received=" << received_total
+              << " error=" << error << std::endl;
             return false;
         }
         received_total += static_cast<std::size_t>(received);
