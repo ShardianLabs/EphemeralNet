@@ -323,10 +323,7 @@ bool SessionManager::connect(const PeerId& peer_id,
               << " endpoint=" << session->endpoint
               << " origin=" << session->debug_origin << std::endl;
 
-    {
-        std::scoped_lock lock(sessions_mutex_);
-        sessions_[peer_key_string(peer_id)] = session;
-    }
+    replace_session(peer_id, session);
 
     session->reader = std::thread(&SessionManager::receive_loop, this, peer_id, session);
     session->reader.detach();
@@ -422,10 +419,7 @@ bool SessionManager::adopt_outbound_socket(const PeerId& peer_id, SocketHandle s
               << " endpoint=" << session->endpoint
               << " origin=" << session->debug_origin << std::endl;
 
-    {
-        std::scoped_lock lock(sessions_mutex_);
-        sessions_[peer_key_string(peer_id)] = session;
-    }
+    replace_session(peer_id, session);
 
     session->reader = std::thread(&SessionManager::receive_loop, this, peer_id, session);
     session->reader.detach();
@@ -512,9 +506,10 @@ bool SessionManager::handle_pending_handshake(const PeerId& peer_id, SocketHandl
               << " endpoint=" << session->endpoint
               << " origin=" << session->debug_origin << std::endl;
 
+    replace_session(peer_id, session);
+
     {
         std::scoped_lock lock(sessions_mutex_);
-        sessions_[peer_key_string(peer_id)] = session;
         keys_[peer_key_string(peer_id)] = acceptance->session_key;
     }
 
@@ -917,6 +912,44 @@ void SessionManager::teardown_sessions() {
             }
         }
     }
+}
+
+std::shared_ptr<SessionManager::Session> SessionManager::replace_session(const PeerId& peer_id,
+                                                                         const std::shared_ptr<Session>& session) {
+    std::shared_ptr<Session> previous;
+    const auto key = peer_key_string(peer_id);
+    {
+        std::scoped_lock lock(sessions_mutex_);
+        auto [it, inserted] = sessions_.emplace(key, session);
+        if (!inserted) {
+            previous = std::move(it->second);
+            it->second = session;
+        }
+    }
+
+    if (previous && previous != session) {
+        std::cerr << "[SessionManager] replacing existing session id=" << previous->debug_id
+                  << " peer=" << previous->debug_peer
+                  << " endpoint=" << previous->endpoint
+                  << " origin=" << previous->debug_origin << std::endl;
+
+        previous->running.store(false);
+        close_session_socket(previous);
+
+        auto wait_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (previous->alive.load() && std::chrono::steady_clock::now() < wait_deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+
+        if (previous->alive.load()) {
+            std::cerr << "[SessionManager] previous session still alive id=" << previous->debug_id
+                      << " peer=" << previous->debug_peer
+                      << " endpoint=" << previous->endpoint
+                      << " origin=" << previous->debug_origin << std::endl;
+        }
+    }
+
+    return previous;
 }
 
 std::optional<std::array<std::uint8_t, 32>> SessionManager::peer_key(const PeerId& peer_id) const {

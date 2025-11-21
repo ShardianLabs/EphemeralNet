@@ -121,6 +121,7 @@ private:
     void teardown_sessions();
     std::optional<std::array<std::uint8_t, 32>> peer_key(const PeerId& peer_id) const;
     static std::string peer_key_string(const PeerId& peer_id);
+    std::shared_ptr<Session> replace_session(const PeerId& peer_id, const std::shared_ptr<Session>& session);
 
     static bool send_all(SocketHandle socket, const std::uint8_t* data, std::size_t length);
     static bool recv_all(SocketHandle socket, std::uint8_t* buffer, std::size_t length);
