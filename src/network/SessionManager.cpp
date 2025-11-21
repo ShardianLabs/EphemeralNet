@@ -853,7 +853,17 @@ void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session
 
     {
         std::scoped_lock lock(sessions_mutex_);
-        sessions_.erase(peer_key_string(peer_id));
+        const auto key = peer_key_string(peer_id);
+        const auto it = sessions_.find(key);
+        if (it != sessions_.end() && it->second.get() == session.get()) {
+            sessions_.erase(it);
+        } else if (it != sessions_.end()) {
+            std::cerr << "[SessionManager] skip erase id=" << session->debug_id
+                      << " peer=" << session->debug_peer
+                      << " endpoint=" << session->endpoint
+                      << " origin=" << session->debug_origin
+                      << " detail=active-session-replaced" << std::endl;
+        }
     }
     session->alive.store(false);
 
