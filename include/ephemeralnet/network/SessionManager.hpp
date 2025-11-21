@@ -90,6 +90,7 @@ private:
         std::uint64_t debug_id{0};
         std::string debug_peer;
         std::string debug_origin;
+        std::atomic<bool> socket_closed{false};
     };
 
     PeerId self_id_{};
@@ -125,6 +126,7 @@ private:
     static bool recv_all(SocketHandle socket, std::uint8_t* buffer, std::size_t length);
     static bool set_recv_timeout(SocketHandle socket, std::chrono::milliseconds timeout);
     static void close_socket(SocketHandle socket);
+    static void close_session_socket(const std::shared_ptr<Session>& session);
     static bool configure_socket(SocketHandle socket, bool server_mode);
     static SocketHandle create_socket();
     static std::string endpoint_string(SocketHandle socket);

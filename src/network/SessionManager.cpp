@@ -854,7 +854,7 @@ void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session
     }
 
     session->running.store(false);
-    close_socket(session->socket);
+    close_session_socket(session);
 
     {
         std::scoped_lock lock(sessions_mutex_);
@@ -893,7 +893,7 @@ void SessionManager::teardown_sessions() {
                   << " running=" << session->running.load()
                   << " alive=" << session->alive.load() << std::endl;
         session->running.store(false);
-        close_socket(session->socket);
+        close_session_socket(session);
 
         auto wait_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         while (session->alive.load() && std::chrono::steady_clock::now() < wait_deadline) {
@@ -1014,6 +1014,16 @@ void SessionManager::close_socket(SocketHandle handle) {
     ::shutdown(socket, SHUT_RDWR);
     ::close(socket);
 #endif
+}
+
+void SessionManager::close_session_socket(const std::shared_ptr<Session>& session) {
+    if (!session) {
+        return;
+    }
+    bool expected = false;
+    if (session->socket_closed.compare_exchange_strong(expected, true)) {
+        close_socket(session->socket);
+    }
 }
 
 bool SessionManager::configure_socket(SocketHandle handle, bool server_mode) {
