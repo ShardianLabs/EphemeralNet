@@ -89,6 +89,7 @@ private:
         std::atomic<bool> alive{false};
         std::uint64_t debug_id{0};
         std::string debug_peer;
+        std::string debug_origin;
     };
 
     PeerId self_id_{};

@@ -99,6 +99,10 @@ std::atomic<std::uint64_t> g_session_debug_ids{0};
 std::mutex g_live_sessions_mutex;
 std::unordered_map<std::uint64_t, std::string> g_live_sessions;
 
+thread_local int g_last_recv_error = 0;
+thread_local std::size_t g_last_recv_expected = 0;
+thread_local std::size_t g_last_recv_obtained = 0;
+
 }  // namespace
 
 namespace ephemeralnet::network {
@@ -306,15 +310,18 @@ bool SessionManager::connect(const PeerId& peer_id,
     session->alive.store(true);
     session->debug_id = g_session_debug_ids.fetch_add(1, std::memory_order_relaxed) + 1;
     session->debug_peer = peer_key_string(peer_id);
+    session->debug_origin = "connect";
 
     {
         std::lock_guard<std::mutex> lock(g_live_sessions_mutex);
-        g_live_sessions[session->debug_id] = session->debug_peer + "@" + session->endpoint;
+        g_live_sessions[session->debug_id] = session->debug_peer + "@" + session->endpoint +
+            " origin=" + session->debug_origin + " stage=registered";
     }
 
     std::cerr << "[SessionManager] register session id=" << session->debug_id
               << " peer=" << session->debug_peer
-              << " endpoint=" << session->endpoint << std::endl;
+              << " endpoint=" << session->endpoint
+              << " origin=" << session->debug_origin << std::endl;
 
     {
         std::scoped_lock lock(sessions_mutex_);
@@ -402,15 +409,18 @@ bool SessionManager::adopt_outbound_socket(const PeerId& peer_id, SocketHandle s
     session->alive.store(true);
     session->debug_id = g_session_debug_ids.fetch_add(1, std::memory_order_relaxed) + 1;
     session->debug_peer = peer_key_string(peer_id);
+    session->debug_origin = "adopt-outbound";
 
     {
         std::lock_guard<std::mutex> lock(g_live_sessions_mutex);
-        g_live_sessions[session->debug_id] = session->debug_peer + "@" + session->endpoint;
+        g_live_sessions[session->debug_id] = session->debug_peer + "@" + session->endpoint +
+            " origin=" + session->debug_origin + " stage=registered";
     }
 
     std::cerr << "[SessionManager] register session id=" << session->debug_id
               << " peer=" << session->debug_peer
-              << " endpoint=" << session->endpoint << std::endl;
+              << " endpoint=" << session->endpoint
+              << " origin=" << session->debug_origin << std::endl;
 
     {
         std::scoped_lock lock(sessions_mutex_);
@@ -489,15 +499,18 @@ bool SessionManager::handle_pending_handshake(const PeerId& peer_id, SocketHandl
     session->alive.store(true);
     session->debug_id = g_session_debug_ids.fetch_add(1, std::memory_order_relaxed) + 1;
     session->debug_peer = peer_key_string(peer_id);
+    session->debug_origin = "inbound-handshake";
 
     {
         std::lock_guard<std::mutex> lock(g_live_sessions_mutex);
-        g_live_sessions[session->debug_id] = session->debug_peer + "@" + session->endpoint;
+        g_live_sessions[session->debug_id] = session->debug_peer + "@" + session->endpoint +
+            " origin=" + session->debug_origin + " stage=registered";
     }
 
     std::cerr << "[SessionManager] register session id=" << session->debug_id
               << " peer=" << session->debug_peer
-              << " endpoint=" << session->endpoint << std::endl;
+              << " endpoint=" << session->endpoint
+              << " origin=" << session->debug_origin << std::endl;
 
     {
         std::scoped_lock lock(sessions_mutex_);
@@ -683,31 +696,67 @@ bool SessionManager::receive_transport_handshake_ack(SocketHandle socket, const 
 void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session> session) {
     session->alive.store(true);
     const auto thread_id = std::this_thread::get_id();
+    std::ostringstream thread_stream;
+    thread_stream << thread_id;
+    const std::string thread_label = thread_stream.str();
+
     std::cerr << "[SessionManager] receive_loop start id=" << session->debug_id
               << " peer=" << session->debug_peer
               << " endpoint=" << session->endpoint
-              << " thread=" << thread_id << std::endl;
+              << " origin=" << session->debug_origin
+              << " thread=" << thread_label << std::endl;
 
-    auto mark_activity = [&](std::string note) {
-        std::lock_guard<std::mutex> lock(g_live_sessions_mutex);
-        g_live_sessions[session->debug_id] = session->debug_peer + "@" + session->endpoint + " " + std::move(note);
+    auto record_state = [&](const std::string& state) {
+        {
+            std::lock_guard<std::mutex> lock(g_live_sessions_mutex);
+            g_live_sessions[session->debug_id] = session->debug_peer + "@" + session->endpoint +
+                " origin=" + session->debug_origin + " thread=" + thread_label + " " + state;
+        }
+        std::cerr << "[SessionManager] state id=" << session->debug_id
+                  << " peer=" << session->debug_peer
+                  << " endpoint=" << session->endpoint
+                  << " origin=" << session->debug_origin
+                  << " thread=" << thread_label
+                  << " " << state << std::endl;
     };
 
-    mark_activity("start");
+    record_state("loop=0 stage=start");
+
+    std::uint64_t loop_index = 0;
     while (session->running.load()) {
+        const auto current_loop = ++loop_index;
+        auto loop_state = [&](const std::string& detail) {
+            std::ostringstream oss;
+            oss << "loop=" << current_loop << " " << detail;
+            return oss.str();
+        };
+
+        record_state(loop_state("stage=await-nonce len=" + std::to_string(kNonceSize)));
+
         std::array<std::uint8_t, kNonceSize> nonce_buffer{};
         if (!recv_all(session->socket, nonce_buffer.data(), nonce_buffer.size())) {
-            std::cerr << "[SessionManager] recv_all nonce failed for "
-                      << session->endpoint << std::endl;
-            mark_activity("nonce-fail");
+            std::ostringstream fail;
+            fail << "stage=nonce-fail expected=" << g_last_recv_expected
+                 << " received=" << g_last_recv_obtained
+                 << " err=" << g_last_recv_error;
+            record_state(loop_state(fail.str()));
+            std::cerr << "[SessionManager] recv_all nonce failed id=" << session->debug_id
+                      << " endpoint=" << session->endpoint << std::endl;
             break;
         }
 
+        record_state(loop_state("stage=nonce-ok"));
+
         std::array<std::uint8_t, kLengthFieldSize> length_buffer{};
+        record_state(loop_state("stage=await-length len=" + std::to_string(kLengthFieldSize)));
         if (!recv_all(session->socket, length_buffer.data(), length_buffer.size())) {
-            std::cerr << "[SessionManager] recv_all length failed for "
-                      << session->endpoint << std::endl;
-            mark_activity("length-fail");
+            std::ostringstream fail;
+            fail << "stage=length-fail expected=" << g_last_recv_expected
+                 << " received=" << g_last_recv_obtained
+                 << " err=" << g_last_recv_error;
+            record_state(loop_state(fail.str()));
+            std::cerr << "[SessionManager] recv_all length failed id=" << session->debug_id
+                      << " endpoint=" << session->endpoint << std::endl;
             break;
         }
 
@@ -716,21 +765,44 @@ void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session
             | (static_cast<std::uint32_t>(length_buffer[2]) << 8)
             | (static_cast<std::uint32_t>(length_buffer[3]));
 
+        {
+            std::ostringstream length_state;
+            length_state << "stage=length-ok value=" << length;
+            record_state(loop_state(length_state.str()));
+        }
+
         if (length > kMaxPayloadSize) {
+            std::ostringstream oversized_state;
+            oversized_state << "stage=oversized size=" << length;
+            record_state(loop_state(oversized_state.str()));
             std::cerr << "[SessionManager] oversized payload from "
                       << session->endpoint << " size=" << length << std::endl;
-            mark_activity("oversized");
             break;
         }
 
         std::vector<std::uint8_t> ciphertext(length);
         if (!ciphertext.empty()) {
+            std::ostringstream wait_payload;
+            wait_payload << "stage=await-payload len=" << length;
+            record_state(loop_state(wait_payload.str()));
+
             if (!recv_all(session->socket, ciphertext.data(), ciphertext.size())) {
-                std::cerr << "[SessionManager] recv_all payload failed for "
-                          << session->endpoint << " bytes=" << ciphertext.size() << std::endl;
-                mark_activity("payload-fail");
+                std::ostringstream fail;
+                fail << "stage=payload-fail expected=" << g_last_recv_expected
+                     << " received=" << g_last_recv_obtained
+                     << " err=" << g_last_recv_error;
+                record_state(loop_state(fail.str()));
+                std::cerr << "[SessionManager] recv_all payload failed id=" << session->debug_id
+                          << " endpoint=" << session->endpoint
+                          << " bytes=" << ciphertext.size() << std::endl;
                 break;
             }
+
+            std::ostringstream payload_ok;
+            payload_ok << "stage=payload-ok len=" << length;
+            record_state(loop_state(payload_ok.str()));
+        } else {
+            record_state(loop_state("stage=payload-empty"));
         }
 
         crypto::Key key{};
@@ -760,13 +832,25 @@ void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session
                 }
             }
             if (drop) {
-                mark_activity("dropped");
+                std::ostringstream drop_state;
+                drop_state << "stage=message-dropped size=" << message.payload.size();
+                record_state(loop_state(drop_state.str()));
                 continue;
             }
             handler_copy(message);
+            std::ostringstream handled_state;
+            handled_state << "stage=message-handled size=" << message.payload.size();
+            record_state(loop_state(handled_state.str()));
+        } else {
+            record_state(loop_state("stage=message-ignored"));
         }
+    }
 
-        mark_activity("message");
+    const bool loop_was_running = session->running.load();
+    if (loop_was_running) {
+        record_state("loop=" + std::to_string(loop_index) + " stage=loop-ended-break");
+    } else {
+        record_state("loop=" + std::to_string(loop_index) + " stage=loop-ended-stop");
     }
 
     session->running.store(false);
@@ -786,7 +870,8 @@ void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session
     std::cerr << "[SessionManager] receive_loop exit id=" << session->debug_id
               << " peer=" << session->debug_peer
               << " endpoint=" << session->endpoint
-              << " thread=" << thread_id << std::endl;
+              << " origin=" << session->debug_origin
+              << " thread=" << thread_label << std::endl;
 }
 
 void SessionManager::teardown_sessions() {
@@ -801,6 +886,12 @@ void SessionManager::teardown_sessions() {
         if (!session) {
             continue;
         }
+        std::cerr << "[SessionManager] teardown signal id=" << session->debug_id
+                  << " origin=" << session->debug_origin
+                  << " peer=" << session->debug_peer
+                  << " endpoint=" << session->endpoint
+                  << " running=" << session->running.load()
+                  << " alive=" << session->alive.load() << std::endl;
         session->running.store(false);
         close_socket(session->socket);
 
@@ -811,7 +902,8 @@ void SessionManager::teardown_sessions() {
         if (session->alive.load()) {
             std::cerr << "[SessionManager] timeout waiting for session "
                       << session->endpoint << " to terminate (id=" << session->debug_id
-                      << " peer=" << session->debug_peer << ')'
+                      << " peer=" << session->debug_peer
+                      << " origin=" << session->debug_origin << ')'
                       << std::endl;
         }
     }
@@ -861,6 +953,9 @@ bool SessionManager::send_all(SocketHandle handle, const std::uint8_t* data, std
 bool SessionManager::recv_all(SocketHandle handle, std::uint8_t* buffer, std::size_t length) {
     auto socket = to_native(handle);
     std::size_t received_total = 0;
+    g_last_recv_error = 0;
+    g_last_recv_expected = length;
+    g_last_recv_obtained = 0;
     while (received_total < length) {
 #ifdef _WIN32
     const auto received = ::recv(socket, reinterpret_cast<char*>(buffer + received_total), static_cast<int>(length - received_total), 0);
@@ -873,13 +968,19 @@ bool SessionManager::recv_all(SocketHandle handle, std::uint8_t* buffer, std::si
 #else
         const auto error = errno;
 #endif
+        g_last_recv_error = error;
+        g_last_recv_obtained = received_total;
         std::cerr << "[SessionManager] recv_all failure length=" << length
               << " received=" << received_total
               << " error=" << error << std::endl;
             return false;
         }
         received_total += static_cast<std::size_t>(received);
+        g_last_recv_obtained = received_total;
     }
+    g_last_recv_error = 0;
+    g_last_recv_expected = length;
+    g_last_recv_obtained = received_total;
     return true;
 }
 
