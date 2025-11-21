@@ -298,6 +298,7 @@ bool SessionManager::connect(const PeerId& peer_id,
     session->key = *key;
     session->endpoint = endpoint_string(from_native(socket));
     session->running.store(true);
+    session->alive.store(true);
 
     {
         std::scoped_lock lock(sessions_mutex_);
@@ -382,6 +383,7 @@ bool SessionManager::adopt_outbound_socket(const PeerId& peer_id, SocketHandle s
     session->key = *key;
     session->endpoint = endpoint_string(socket);
     session->running.store(true);
+    session->alive.store(true);
 
     {
         std::scoped_lock lock(sessions_mutex_);
@@ -457,6 +459,7 @@ bool SessionManager::handle_pending_handshake(const PeerId& peer_id, SocketHandl
     session->key = acceptance->session_key;
     session->endpoint = endpoint_string(socket);
     session->running.store(true);
+    session->alive.store(true);
 
     {
         std::scoped_lock lock(sessions_mutex_);
@@ -640,6 +643,7 @@ bool SessionManager::receive_transport_handshake_ack(SocketHandle socket, const 
 }
 
 void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session> session) {
+    session->alive.store(true);
     while (session->running.load()) {
         std::array<std::uint8_t, kNonceSize> nonce_buffer{};
         if (!recv_all(session->socket, nonce_buffer.data(), nonce_buffer.size())) {
@@ -707,6 +711,7 @@ void SessionManager::receive_loop(const PeerId& peer_id, std::shared_ptr<Session
         std::scoped_lock lock(sessions_mutex_);
         sessions_.erase(peer_key_string(peer_id));
     }
+    session->alive.store(false);
 }
 
 void SessionManager::teardown_sessions() {
@@ -725,8 +730,12 @@ void SessionManager::teardown_sessions() {
         close_socket(session->socket);
 
         auto wait_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-        while (session->running.load() && std::chrono::steady_clock::now() < wait_deadline) {
+        while (session->alive.load() && std::chrono::steady_clock::now() < wait_deadline) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (session->alive.load()) {
+            std::cerr << "[SessionManager] timeout waiting for session "
+                      << session->endpoint << " to terminate" << std::endl;
         }
     }
 }

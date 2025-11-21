@@ -86,6 +86,7 @@ private:
         std::string endpoint;
         std::thread reader;
         std::atomic<bool> running{false};
+        std::atomic<bool> alive{false};
     };
 
     PeerId self_id_{};
