@@ -323,7 +323,11 @@ bool SessionManager::connect(const PeerId& peer_id,
               << " endpoint=" << session->endpoint
               << " origin=" << session->debug_origin << std::endl;
 
-    replace_session(peer_id, session);
+    const bool accepted = replace_session(peer_id, session);
+
+    if (!accepted) {
+        return true;
+    }
 
     session->reader = std::thread(&SessionManager::receive_loop, this, peer_id, session);
     session->reader.detach();
@@ -419,7 +423,11 @@ bool SessionManager::adopt_outbound_socket(const PeerId& peer_id, SocketHandle s
               << " endpoint=" << session->endpoint
               << " origin=" << session->debug_origin << std::endl;
 
-    replace_session(peer_id, session);
+    const bool accepted = replace_session(peer_id, session);
+
+    if (!accepted) {
+        return true;
+    }
 
     session->reader = std::thread(&SessionManager::receive_loop, this, peer_id, session);
     session->reader.detach();
@@ -506,7 +514,11 @@ bool SessionManager::handle_pending_handshake(const PeerId& peer_id, SocketHandl
               << " endpoint=" << session->endpoint
               << " origin=" << session->debug_origin << std::endl;
 
-    replace_session(peer_id, session);
+    const bool accepted = replace_session(peer_id, session);
+
+    if (!accepted) {
+        return false;
+    }
 
     {
         std::scoped_lock lock(sessions_mutex_);
@@ -924,20 +936,78 @@ void SessionManager::teardown_sessions() {
     }
 }
 
-std::shared_ptr<SessionManager::Session> SessionManager::replace_session(const PeerId& peer_id,
-                                                                         const std::shared_ptr<Session>& session) {
+bool SessionManager::replace_session(const PeerId& peer_id,
+                                     const std::shared_ptr<Session>& session) {
     std::shared_ptr<Session> previous;
+    bool keep_existing = false;
+    bool replaced_existing = false;
     const auto key = peer_key_string(peer_id);
     {
         std::scoped_lock lock(sessions_mutex_);
-        auto [it, inserted] = sessions_.emplace(key, session);
-        if (!inserted) {
-            previous = std::move(it->second);
-            it->second = session;
+        const auto it = sessions_.find(key);
+        if (it == sessions_.end()) {
+            sessions_.emplace(key, session);
+        } else {
+            previous = it->second;
+            if (previous && previous != session) {
+                const auto self_key = peer_key_string(self_id_);
+                const bool prefer_outbound = self_key < key;
+                auto priority = [prefer_outbound](const std::shared_ptr<Session>& candidate) {
+                    if (!candidate) {
+                        return 0;
+                    }
+                    const auto& origin = candidate->debug_origin;
+                    const bool outbound = origin == "connect" || origin == "adopt-outbound";
+                    const bool inbound = origin == "inbound-handshake" || origin == "adopt-inbound";
+                    if (outbound) {
+                        return prefer_outbound ? 3 : 1;
+                    }
+                    if (inbound) {
+                        return prefer_outbound ? 1 : 3;
+                    }
+                    return 2;
+                };
+
+                const bool previous_running = previous->running.load();
+                const bool previous_alive = previous->alive.load();
+                if (previous_running && previous_alive) {
+                    const int prev_score = priority(previous);
+                    const int new_score = priority(session);
+                    if (new_score < prev_score || (new_score == prev_score && prev_score > 0)) {
+                        keep_existing = true;
+                    }
+                }
+
+                if (!keep_existing) {
+                    it->second = session;
+                    replaced_existing = true;
+                }
+            } else {
+                it->second = session;
+            }
         }
     }
 
-    if (previous && previous != session) {
+    if (keep_existing) {
+        std::cerr << "[SessionManager] dropping new session id=" << session->debug_id
+                  << " peer=" << session->debug_peer
+                  << " endpoint=" << session->endpoint
+                  << " origin=" << session->debug_origin
+                  << " detail=existing-session-preferred" << std::endl;
+
+        session->running.store(false);
+        session->alive.store(false);
+        close_session_socket(session);
+
+        {
+            std::lock_guard<std::mutex> lock(g_live_sessions_mutex);
+            g_live_sessions.erase(session->debug_id);
+        }
+
+        return false;
+    }
+
+    if (replaced_existing && previous && previous != session) {
         std::cerr << "[SessionManager] replacing existing session id=" << previous->debug_id
                   << " peer=" << previous->debug_peer
                   << " endpoint=" << previous->endpoint
@@ -959,7 +1029,7 @@ std::shared_ptr<SessionManager::Session> SessionManager::replace_session(const P
         }
     }
 
-    return previous;
+    return true;
 }
 
 std::optional<std::array<std::uint8_t, 32>> SessionManager::peer_key(const PeerId& peer_id) const {
@@ -1066,6 +1136,7 @@ void SessionManager::close_session_socket(const std::shared_ptr<Session>& sessio
     bool expected = false;
     if (session->socket_closed.compare_exchange_strong(expected, true)) {
         close_socket(session->socket);
+        session->socket = INVALID_SOCKET_HANDLE;
     }
 }
 
