@@ -16,9 +16,15 @@ jobs:
     env:
       BUILD_DIR: build
       CMAKE_GENERATOR: Ninja
+      CRASH_DUMPS: ${{ runner.temp }}\crash-dumps
+      CTEST_OUTPUT_ON_FAILURE: 1
+      CTEST_PARALLEL_LEVEL: 1
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: Install ProcDump
+        run: choco install procdump -y
 
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
@@ -32,19 +38,42 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cmake-
 
+      - name: Enable crash dumps
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:CRASH_DUMPS | Out-Null
+          procdump -accepteula -ma -i $env:CRASH_DUMPS
+
       - name: Configure CMake
         run: cmake -S . -B $env:BUILD_DIR -G $env:CMAKE_GENERATOR -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
       - name: Build
         run: cmake --build $env:BUILD_DIR --parallel
 
-      - name: Run tests
-        run: ctest --test-dir $env:BUILD_DIR --output-on-failure
+      - name: Run tests (verbose)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ctest --test-dir $env:BUILD_DIR --output-on-failure --verbose
 
       - name: Upload CTest log (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: ctest-log
-          path: ${{ env.BUILD_DIR }}\\Testing\\Temporary\\LastTest.log
+          name: ctest-artifacts
+          path: |
+            ${{ env.BUILD_DIR }}\Testing\Temporary\LastTest.log
+            ${{ env.BUILD_DIR }}\Testing\Temporary\LastTestsFailed.log
+            ${{ env.BUILD_DIR }}\Testing\Temporary\CTestCostData.txt
+            ${{ env.BUILD_DIR }}\Testing\**\*.xml
+          if-no-files-found: warn
+
+      - name: Upload crash dumps (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-dumps
+          path: ${{ env.CRASH_DUMPS }}\*.dmp
           if-no-files-found: ignore
+
+      - name: Disable crash dumps
+        if: always()
+        run: procdump -accepteula -ma -i
