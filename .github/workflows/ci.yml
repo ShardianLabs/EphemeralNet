@@ -22,8 +22,14 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Install ProcDump
-        run: choco install procdump -y
+      - name: Download ProcDump
+        shell: pwsh
+        run: |
+          $ProcDumpDir = Join-Path $env:RUNNER_TEMP 'procdump'
+          New-Item -ItemType Directory -Force -Path $ProcDumpDir | Out-Null
+          Invoke-WebRequest -Uri 'https://download.sysinternals.com/files/Procdump.zip' -OutFile (Join-Path $ProcDumpDir 'procdump.zip')
+          Expand-Archive -Force -LiteralPath (Join-Path $ProcDumpDir 'procdump.zip') -DestinationPath $ProcDumpDir
+          "$ProcDumpDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
