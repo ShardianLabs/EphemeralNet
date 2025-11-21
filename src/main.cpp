@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <fstream>
 #include <filesystem>
@@ -80,6 +81,21 @@ namespace {
 
 constexpr std::string_view kEphemeralNetVersion = EPHEMERALNET_VERSION;
 constexpr std::uint16_t kDefaultTransportPort = 45000;
+
+bool parse_floating_token(const char* begin, const char* end, double& value) {
+    // libc++ on macOS still lacks std::from_chars for floating point; fall back to strtod.
+    std::string buffer(begin, end);
+    if (buffer.empty()) {
+        return false;
+    }
+    char* parsed_end = nullptr;
+    errno = 0;
+    value = std::strtod(buffer.c_str(), &parsed_end);
+    if (parsed_end != buffer.c_str() + buffer.size()) {
+        return false;
+    }
+    return errno != ERANGE;
+}
 
 struct BootstrapSeedConfig {
     const char* host;
@@ -1537,8 +1553,7 @@ private:
         const char* token_end = token_begin + token.size();
         if (is_fractional) {
             double value{};
-            auto result = std::from_chars(token_begin, token_end, value);
-            if (result.ec != std::errc{}) {
+            if (!parse_floating_token(token_begin, token_end, value)) {
                 throw ConfigError("E_CONFIG_PARSE", "Invalid floating point number in JSON");
             }
             return Value(value);
@@ -1639,8 +1654,7 @@ Value parse_yaml_scalar(const std::string& text) {
     if (is_number) {
         if (fractional) {
             double value{};
-            auto result = std::from_chars(trimmed.data(), trimmed.data() + trimmed.size(), value);
-            if (result.ec == std::errc{} && result.ptr == trimmed.data() + trimmed.size()) {
+            if (parse_floating_token(trimmed.data(), trimmed.data() + trimmed.size(), value)) {
                 return Value(value);
             }
         } else {
