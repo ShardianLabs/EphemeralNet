@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - master
+    tags:
+      - 'v*'
   pull_request:
     branches:
       - master
@@ -25,6 +27,7 @@ jobs:
       CMAKE_GENERATOR: Ninja
       CTEST_OUTPUT_ON_FAILURE: 1
       CTEST_PARALLEL_LEVEL: 1
+      RELEASE_VERSION: ${{ github.ref_name }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -91,6 +94,51 @@ jobs:
           set -euo pipefail
           ctest --test-dir "$BUILD_DIR" --output-on-failure --verbose
 
+      - name: Package CLI (Linux)
+        if: matrix.os == 'ubuntu-latest' && startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGE_DIR="$BUILD_DIR/artifacts"
+          mkdir -p "$PACKAGE_DIR"
+          BIN_PATH="$BUILD_DIR/eph"
+          chmod +x "$BIN_PATH"
+          ARCHIVE="$PACKAGE_DIR/eph-${RELEASE_VERSION}-linux-x64.tar.gz"
+          tar -C "$BUILD_DIR" -czf "$ARCHIVE" "$(basename "$BIN_PATH")"
+
+      - name: Package CLI (macOS)
+        if: matrix.os == 'macos-latest' && startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGE_DIR="$BUILD_DIR/artifacts"
+          mkdir -p "$PACKAGE_DIR"
+          BIN_PATH="$BUILD_DIR/eph"
+          chmod +x "$BIN_PATH"
+          ARCHIVE="$PACKAGE_DIR/eph-${RELEASE_VERSION}-macos-universal.tar.gz"
+          tar -C "$BUILD_DIR" -czf "$ARCHIVE" "$(basename "$BIN_PATH")"
+
+      - name: Package CLI (Windows)
+        if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $packageDir = Join-Path $env:BUILD_DIR 'artifacts'
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+          $binPath = Join-Path $env:BUILD_DIR 'eph.exe'
+          if (-not (Test-Path $binPath)) {
+            throw "Binary not found at $binPath"
+          }
+          $archive = Join-Path $packageDir "eph-$($env:RELEASE_VERSION)-windows-x64.zip"
+          Compress-Archive -Path $binPath -DestinationPath $archive -Force
+
+      - name: Upload packaged CLI
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: eph-${{ matrix.os }}
+          path: ${{ env.BUILD_DIR }}/artifacts/*
+          if-no-files-found: error
+
       - name: Upload CTest log (on failure)
         if: failure() && matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
@@ -127,3 +175,25 @@ jobs:
         if: always() && matrix.os == 'windows-latest'
         shell: pwsh
         run: procdump -accepteula -ma -i
+
+  publish-release:
+    name: Publish Release
+    needs: build-and-test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release-assets/**/*.tar.gz
+            release-assets/**/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
