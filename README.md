@@ -1,132 +1,105 @@
+<p align="center">
+  <img src="docs/shardian.png" alt="Shardian Labs" width="160" />
+</p>
+
 # EphemeralNet
 
-EphemeralNet is an ephemeral P2P filesystem written in C++ that focuses on sharing data with a limited lifetime. Instead of replicating files indefinitely, as BitTorrent or IPFS typically do, each node enforces a TTL (time to live) that requires chunks to be deleted automatically once they expire.
+**A secure P2P network with custom Relay for hostile NATs, built in C++20.**
 
-## Core capabilities
+> Programmable forgetting for high-assurance peer-to-peer storage.
 
-- **Modular node kernel**: clearly separated storage, networking, and DHT table components.
-- **Configurable TTL**: default and per-chunk expiration windows.
-- **Expiring Kademlia table**: announcements carry explicit expiration metadata.
-- **Ephemeral in-memory storage**: chunks are removed as soon as they expire.
-- **Symmetric encryption**: chunks are encrypted at rest with ChaCha20 and ephemeral keys.
-- **Kademlia buckets**: XOR distance, LRU management, and nearest-neighbour queries.
-- **Message integrity**: protocol messages are signed with HMAC-SHA256.
-- **Session key rotation**: a session manager refreshes derived keys via HMAC-SHA256.
-- **Handshake and reputation**: simplified Diffie-Hellman handshake with per-peer reputation tracking.
-- **Control-plane proof-of-work**: handshake and store operations enforce configurable PoW to discourage spam and Sybil abuse.
-- **Bootstrap gossip hints**: manifest broadcasts share the ordered set of advertised control endpoints so hint-only (`--direct-only`) peers immediately learn multiple routable contacts.
-- **Auto-inferred public endpoints**: binding the control plane to `0.0.0.0` automatically promotes STUN/relay discoveries so peers learn a routable control endpoint without extra flags.
-- **Shardian bootstrap defaults**: `eph start` pins the transport listener to TCP 45000, seeds the DHT with `bootstrap1.shardian.com`/`bootstrap2.shardian.com`, and reuses the shared STUN/TURN relays so zero-config peers join the public mesh while the control plane stays on loopback.
-- **TTL auditing**: consistent reports that surface expirations pending in local storage and the DHT.
-- **Cleanup coordination**: synchronises local expirations with automatic announcement withdrawal and emits notifications.
-- **Secure transport**: ChaCha20-encrypted TCP sessions replace the simulated manager and unlock peer-to-peer messaging.
-- **Smoke test**: baseline verification of post-TTL deletion.
-- **Swarm coordination**: manifest/shard replication across multiple simulated providers.
-- **Optional persistent layer**: disk backend with secure wiping when the TTL elapses.
-- **Node CLI**: `serve`, `store`, `fetch`, and `list` commands to operate a node with no additional code.
+[![CI - Linux / macOS / Windows](https://github.com/ShardianLabs/EphemeralNet/actions/workflows/ci.yml/badge.svg)](https://github.com/ShardianLabs/EphemeralNet/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/ShardianLabs/EphemeralNet?display_name=tag)](https://github.com/ShardianLabs/EphemeralNet/releases)
+![Status](https://img.shields.io/badge/status-Stable-green)
 
-## Requirements
+## Why EphemeralNet?
 
-- CMake ≥ 3.20
-- C++20-capable compiler (MSVC 19.3+, Clang 13+, GCC 11+)
-- Windows with MinGW-w64 or an equivalent toolchain (current prototype)
+Shardian Labs designs infrastructure for teams that take deletion guarantees as seriously as confidentiality. EphemeralNet is our C++20 research daemon for data that **must** disappear: a P2P protocol that uses enforced time-to-live (TTL) semantics as a first-class constraint. Instead of mutating BitTorrent-style swarms into ad-hoc retention policies, EphemeralNet treats each manifest, chunk, and routing hint as expendable material whose lifetime is negotiated at the edge and cryptographically enforced.
 
-## Build
+Every node runs `eph`, a compact daemon that exposes a gRPC-inspired control socket and a remote-style CLI. The kernel pairs a TTL-aware Kademlia DHT with ChaCha20/HMAC sessions, Shamir's Secret Sharing for key pulverization, and deterministic cleanup hooks so expired state evaporates across storage tiers, routing tables, and manifests simultaneously. The outcome is a mesh that can gossip, store, and fetch like a modern CDN overlay—while guaranteeing the data falls out of existence on schedule.
+
+Unlike archival systems, EphemeralNet optimizes for *temporal correctness*: it verifies that a chunk **cannot** outlive its deadline, even if peers go offline. That makes it ideal for incident data rooms, temporary collaborative edits, and any workload that needs Zero Trust guardrails for deletion.
+
+## High-Level Architecture
+
+```mermaid
+flowchart LR
+    subgraph "Operator Workstation"
+        CLI["eph CLI<br/>(remote shell)"]
+    end
+    subgraph "Local Host"
+        Demon["eph daemon<br/>(control+data kernel)"]
+    end
+    subgraph Mesh
+        DHT["Kademlia DHT<br/>(TTL-indexed)"]
+        Relays["STUN/TURN + Relay"]
+        Peers["Peer Swarm"]
+    end
+
+    CLI -->|gRPC-style control| Demon
+    Demon -->|announce/store/fetch| DHT
+    Demon -->|NAT traversal| Relays
+    Demon <-->|ChaCha20 sessions| Peers
+```
+
+## Feature Highlights
+
+- **TTL-native Kademlia**: XOR distance routing with per-entry expiry metadata so announcements self-destruct without operator intervention.
+- **E2EE everywhere**: ChaCha20-Poly1305 for transport, HMAC-SHA256 for protocol integrity, and rolling session key derivation per peer.
+- **Shamir-backed key expiry**: decryption keys are sharded across the DHT; when shards expire, the data becomes irrecoverable even if chunks linger in caches.
+- **Control-plane proof-of-work**: adaptive PoW envelopes handshake, store, and manifest operations to blunt Sybil abuse while keeping honest peers fast.
+- **NAT traversal + relay fallback**: built-in STUN/TURN learning, auto-promoted public endpoints, and an event-driven relay server for high-fanout bursts.
+- **Deterministic storage hygiene**: in-memory and optional disk tiers, secure wiping, TTL audits, and notification hooks that synchronize cleanup with manifest withdrawal.
+- **Observability first**: Prometheus exporters for TTL drift, PoW pressure, DHT saturation, and per-peer health to keep SREs ahead of runaway swarms.
+- **CLI/daemon parity**: the same `eph` binary exposes both the background service and a remote control surface for automation-friendly operations.
+
+## Quick Start Installation
+
+| Platform | Command |
+| -------- | ------- |
+| Linux & macOS | `curl -sSf https://eph.shardian.com/install.sh \| sh` |
+| Windows (PowerShell) | `iwr https://eph.shardian.com/install.ps1 -useb \| iex` |
+
+> The install scripts download the latest release artifact from GitHub, place `eph` on your PATH, and print follow-up instructions.
+
+## Usage
 
 ```powershell
-cmake -S . -B build
-cmake --build build
+# Start the daemon with loopback control plane, TCP transport on 45000
+PS> eph start --storage-dir C:\temp\ephemeral --control-host 127.0.0.1
+
+# Store a file with a 15-minute TTL; PoW is negotiated automatically
+PS> eph store secrets.bin --ttl 900
+
+# Fetch via manifest; direct-only keeps traffic on explicitly advertised peers
+PS> eph fetch eph://6c5f... --direct-only --out C:\downloads
+
+# Inspect node health, DHT saturation, and relay status
+PS> eph status --verbose
 ```
 
-Run smoke tests:
+## Building from Source
 
 ```powershell
-ctest --test-dir build
+# Configure (creates build/ and toolchain files)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+# Compile all targets (daemon, CLI, relay, tests)
+cmake --build build --parallel
+
+# Optional: execute the full test suite
+ctest --test-dir build --output-on-failure
 ```
 
-> **Note:** The first `cmake` configure step generates the project files and the `build/` directory. Add `-DEPHEMERALNET_BUILD_TESTS=OFF` if you want to skip test targets.
-
-## Continuous Integration
-
-GitHub Actions runs the same configure/build/test stack on every push and pull request targeting `master`. The workflow lives in `.github/workflows/ci.yml` and mirrors the local steps:
-
-1. Configure with `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo`.
-2. Build via `cmake --build build --parallel`.
-3. Execute `ctest --test-dir build --output-on-failure`.
-
-The workflow relies only on the built-in `GITHUB_TOKEN`, so no external secrets are required until deployment artifacts are introduced. Use the local commands above before pushing to keep CI green.
-
-## CLI
-
-The `eph` binary acts as a lightweight client for the daemon and exposes the most common control commands. Typical usage:
-
-```powershell
-# Display global help
-eph --help
-
-# Show the CLI version
-eph --version
-
-# Run the daemon in the foreground until Ctrl+C
-eph --storage-dir .\data serve
-
-# Launch the daemon in the background (detached)
-eph --storage-dir .\data start
-
-# Query the status of the running daemon
-eph status
-
-# Store a file with a 3600-second TTL (computes PoW automatically when required)
-eph store secrets.bin --ttl 3600
-
-# Retrieve a file using an eph:// manifest (auto-names when targeting a directory)
-eph fetch eph://<manifest> ./downloads/
-
-# Force manifest-only mode (skip daemon/DHT fallback) when you have routable discovery hints
-eph fetch eph://<manifest> --direct-only --out ./downloads/
-
-# List locally stored chunks and remaining TTL
-eph list
-
-# Display daemon defaults (TTL window, control host, announce throttling, etc.)
-eph defaults
-
-# Read the integrated manual
-eph man
-
-# Shut the daemon down gracefully
-eph stop
-```
-
-Global switches control persistence (`--no-persistent`), storage path (`--storage-dir`), secure wipe passes (`--wipe-passes`), deterministic identity (`--identity-seed`), control-plane endpoints (`--control-host`, `--control-port`), the transport/data-plane listener (`--transport-port`, default 45000), TTL bounds (`--min-ttl`, `--max-ttl`), session key rotation cadence (`--key-rotation`), announce throttling (`--announce-interval`, `--announce-burst`, `--announce-window`, `--announce-pow`), concurrency (`--fetch-parallel`, `--upload-parallel`), fetch defaults (`--fetch-default-dir`, `--fetch-ignore-manifest-name`), and version/manual discovery (`--version`, `eph man`).
-Fetch now attempts manifest discovery hints first and automatically falls back to the local daemon/DHT—use `--direct-only` when you want to skip that fallback or when operating entirely over routable advertised endpoints.
-
-> The `start` command reuses the same options as `serve` to configure the daemon before backgrounding it.
-
-## Relay Server
-
-`eph-relay-server` is a minimal relay daemon that implements the REGISTER/CONNECT flow expected by `RelayClient`. It ships with a tiny epoll/kqueue-driven event loop so it can multiplex thousands of long-lived relay sockets without depending on libuv or Boost.Asio.
-
-Build it along with the rest of the workspace:
-
-```bash
-cmake --build build --target eph-relay-server
-```
-
-Start the daemon (binds to `0.0.0.0:9750` by default):
-
-```bash
-./build/eph-relay-server --listen 0.0.0.0:9750
-```
-
-Attach EphemeralNet nodes by enabling relay endpoints in their config; the server keeps track of `REGISTER`ed peers and forwards `CONNECT` requests by piping the sockets together as soon as the caller streams its identity bytes.
+Use `-DEPHEMERALNET_BUILD_TESTS=OFF` to skip test binaries or `-GNinja` if you prefer Ninja builds.
 
 ## Documentation
 
-- [Architecture](docs/architecture.md): component map and concurrency model.
-- [Control & Data Protocol](docs/protocol.md): control socket semantics and TTL lifecycle.
-- [Deployment Guide](docs/deployment-guide.md): build, configuration, and runtime operations.
-- [Troubleshooting](docs/troubleshooting.md): common failures and remediation steps.
-- [Performance Tuning Runbook](ops/performance-tuning.md): sizing guidance and announce throttling playbooks for operators.
-- [Governance & AUP](docs/governance-and-aaup.md): policies for operating public bootstrap/STUN infrastructure and handling abuse reports.
-- [Handbook](docs/handbook/README.md): aggregated chapters covering the CLI reference, usage scenarios, feature catalog, and developer walkthrough for eph.shardian.com.
+The full operations handbook, protocol reference, and observability guides live at **[eph.shardian.com](https://eph.shardian.com)**. Offline copies are mirrored under `docs/` for air-gapped review.
+
+## Contributing & License
+
+Pull requests are welcome—start with a proposal in `docs/todo.md` or open a GitHub Discussion so we can align on scope. New modules should include design notes, telemetry hooks, and deterministic tests under `tests/`.
+
+EphemeralNet is released under the [MIT License](LICENSE). By contributing you agree that your work will be licensed under MIT and that you have the right to do so.

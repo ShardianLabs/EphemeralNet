@@ -72,10 +72,11 @@
 - Anti-Sybil defences enforce PoW across handshake/store/announce paths with CLI/daemon helpers, abuse heuristics, metrics, and bundled Prometheus/Grafana alerting assets.
 - Manifest-only fetch bootstrapper shipped (schema extensions, CLI bootstrap flow, and cross-platform docs/tests) together with `--control-expose`/`--control-loopback` safeguards for daemon binding on VPS deployments.
 - Introduced a `scheme`/`transport` pair on `protocol::DiscoveryHint`, updated manifest encode/decode, and taught the CLI/docs/tests to use it.
+- Prepare deployment scripts and CI/CD pipelines for Windows/Linux/macOS (Docker, PPA/Copr, Homebrew).
+
 
 ## Next milestones
 - **OPS & OBSERVABILITY**
-	- Prepare deployment scripts and CI/CD pipelines for Windows/Linux/macOS (Docker, PPA/Copr, Homebrew).
 	- Manage reproducible packaging and binary signing.
 	- Review governance and abuse policy effectiveness quarterly; feed incident learnings back into the runbook.
 	- Configure Apple notarization workflow and Windows Authenticode signing inside CI.
