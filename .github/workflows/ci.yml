@@ -68,7 +68,7 @@ jobs:
         with:
           path: |
             build/_deps
-          key: ${{ runner.os }}-cmake-${{ hashFiles("**/CMakeLists.txt", "**/*.cmake") }}
+          key: ${{ runner.os }}-cmake-${{ hashFiles('**/CMakeLists.txt') }}-${{ hashFiles('**/*.cmake') }}
           restore-keys: |
             ${{ runner.os }}-cmake-
 
