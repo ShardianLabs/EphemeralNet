@@ -94,6 +94,8 @@ def build_docs(output_dir: Path) -> None:
 # -----------------------------------------------------------------------------
 """
 
+    output_dir = output_dir.resolve()
+
     readme_text = README_PATH.read_text(encoding="utf-8")
     sections = parse_sections(readme_text)
 
@@ -105,7 +107,11 @@ def build_docs(output_dir: Path) -> None:
         content = WARNING_HEADER + "\n" + spec["frontmatter"].strip() + "\n\n" + body
         target = output_dir / spec["filename"]
         target.write_text(content, encoding="utf-8")
-        print(f"Wrote {target.relative_to(ROOT)}")
+        try:
+            display_path = target.relative_to(ROOT)
+        except ValueError:
+            display_path = target
+        print(f"Wrote {display_path}")
 
 
 def main() -> None:
