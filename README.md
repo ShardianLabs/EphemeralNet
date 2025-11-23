@@ -102,4 +102,4 @@ The full operations handbook, protocol reference, and observability guides live 
 
 Pull requests are welcome—start with a proposal in `docs/todo.md` or open a GitHub Discussion so we can align on scope. New modules should include design notes, telemetry hooks, and deterministic tests under `tests/`.
 
-EphemeralNet is released under the [MIT License](https://github.com/shardianlabs/ephemeralnet/blob/main/LICENSE). By contributing you agree that your work will be licensed under MIT and that you have the right to do so.
+EphemeralNet is released under the [MIT License](https://github.com/ShardianLabs/EphemeralNet/blob/master/LICENSE). By contributing you agree that your work will be licensed under MIT and that you have the right to do so.
