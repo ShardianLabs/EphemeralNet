@@ -45,8 +45,8 @@ Always reuse the same global options (`--control-host`, `--control-port`, etc.) 
 
 ## Configuration essentials
 
-- `--storage-dir <path>` + `--persistent`: Choose where encrypted chunks live. Default TTL (6h) can be overridden per command (`--ttl`) or globally (`--default-ttl`).
-- Secure wipe knobs: `--wipe-passes <n>` and `--no-wipe` for non-sensitive workloads.
+- `--storage-dir &lt;path&gt;` + `--persistent`: Choose where encrypted chunks live. Default TTL (6h) can be overridden per command (`--ttl`) or globally (`--default-ttl`).
+- Secure wipe knobs: `--wipe-passes &lt;n&gt;` and `--no-wipe` for non-sensitive workloads.
 - Control endpoint: `--control-host`, `--control-port`, `--control-loopback`, `--control-expose`, and `--control-token`. Expose the control plane only when necessary and always pair it with a token.
 - Transport tuning: `--transport-port`, `--advertise-control`, `--advertise-auto`, relay toggles, and NAT diagnostics from `eph defaults`.
 - Concurrency caps: `--fetch-parallel`, `--upload-parallel`, `--max-store-bytes`.
@@ -64,7 +64,7 @@ Refer to `03-operations/01-configuration.md` for the full option matrix.
 
 ## Network exposure & privacy
 
-- Forward TCP 47777 (control) and 45000 (transport) when you expect inbound peers. Validate from outside the LAN using `nc -vz <ip> <port>` or `Test-NetConnection`.
+- Forward TCP 47777 (control) and 45000 (transport) when you expect inbound peers. Validate from outside the LAN using `nc -vz &lt;ip&gt; &lt;port&gt;` or `Test-NetConnection`.
 - When stuck behind CGNAT, rely on relay hints by enabling relays and advertising their hostnames via `--advertise-control`.
 - Use `--advertise-auto warn` or `off` to avoid leaking WAN IPs when privacy is paramount; publish relay endpoints instead.
 - Document NAT diagnostics and relay usage so governance teams know what metadata is exposed.

@@ -10,7 +10,7 @@ cmake --build build
 ctest --test-dir build
 ```
 
-Filter by regex with `ctest -R <pattern>` to narrow focus (e.g., `ctest -R cli_control_flow`).
+Filter by regex with `ctest -R &lt;pattern&gt;` to narrow focus (e.g., `ctest -R cli_control_flow`).
 
 ## Test categories
 

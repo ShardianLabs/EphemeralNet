@@ -49,8 +49,8 @@ Guidance:
 
 1. Forecast peak manifest ingest rate (manifests/minute) and multiply by 1.5 for retries.
 2. Choose announce throttles (`burst / window`) that exceed the projected ingest rate by ~20%.
-3. Simulate the peak with looped `eph store` commands while tailing daemon logs; confirm rejects stay <5%.
-4. Scale vertically when ANNOUNCE PoW exceeds ~10 bits or CPU >70%; scale horizontally by adding control nodes behind DNS.
+3. Simulate the peak with looped `eph store` commands while tailing daemon logs; confirm rejects stay &lt;5%.
+4. Scale vertically when ANNOUNCE PoW exceeds ~10 bits or CPU &gt;70%; scale horizontally by adding control nodes behind DNS.
 5. Revisit sizing quarterly or after major workload shifts.
 
 ## Proof-of-work monitoring workflow

@@ -19,7 +19,7 @@ TTL:3600
 STORE-POW:2489940991873529775
 PAYLOAD-LENGTH:4096
 
-<binary payload bytes>
+&lt;binary payload bytes&gt;
 ```
 
 Matching success response:

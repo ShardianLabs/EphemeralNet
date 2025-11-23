@@ -39,7 +39,7 @@ Manifests are base64-encoded and prefixed with `eph://`, forming the shareable U
 ## Persistent vs. in-memory mode
 
 - In-memory storage is always active; it guarantees data disappears as soon as TTL expires or the daemon restarts.
-- Persistent mode mirrors encrypted bytes onto disk under `<storage_dir>/<chunk>.chunk`. Upon restart, the daemon sweeps expired entries immediately using the stored TTL metadata.
+- Persistent mode mirrors encrypted bytes onto disk under `&lt;storage_dir&gt;/&lt;chunk&gt;.chunk`. Upon restart, the daemon sweeps expired entries immediately using the stored TTL metadata.
 - Operators toggle persistence per profile or CLI flag (`--persistent`).
 
 ## Shard management

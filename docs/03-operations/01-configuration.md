@@ -11,10 +11,10 @@ EphemeralNet applies settings in this order: built-in defaults (`ephemeralnet::C
 | `max_manifest_ttl` | 6h | `--max-ttl` | Requests above this drop to the max.
 | `cleanup_interval` | 5m | profile/env only | Drives `Node::tick()` cadence.
 | `storage_persistent_enabled` | false | `--persistent` / `--no-persistent` | Mirrors chunks to disk when true.
-| `storage_directory` | `storage` | `--storage-dir <path>` | Base path for persisted chunks.
+| `storage_directory` | `storage` | `--storage-dir &lt;path&gt;` | Base path for persisted chunks.
 | `storage_wipe_on_expiry` | true | `--no-wipe` disables | Overwrites expired files `storage_wipe_passes` times.
-| `storage_wipe_passes` | 1 | `--wipe-passes <1-255>` | Number of overwrite passes.
-| `key_rotation_interval` | 5m | `--key-rotation <seconds>` | Session key refresh cadence.
+| `storage_wipe_passes` | 1 | `--wipe-passes &lt;1-255&gt;` | Number of overwrite passes.
+| `key_rotation_interval` | 5m | `--key-rotation &lt;seconds&gt;` | Session key refresh cadence.
 
 ## Control plane & CLI interaction
 
@@ -22,7 +22,7 @@ EphemeralNet applies settings in this order: built-in defaults (`ephemeralnet::C
 |-------|---------|----------------|-------------|
 | `control_host` | `127.0.0.1` | `--control-host`, `--control-loopback`, `--control-expose` | Bind address for daemon. `--control-expose` binds `0.0.0.0` with a confirmation prompt unless `--yes`.
 | `control_port` | 47777 | `--control-port` | TCP port for the control socket.
-| `control_token` | unset | `--control-token <secret>` | Shared secret validated per connection.
+| `control_token` | unset | `--control-token &lt;secret&gt;` | Shared secret validated per connection.
 | `control_stream_max_bytes` | 32 MiB | `--max-store-bytes` | Upper bound for `PAYLOAD-LENGTH`.
 | `max_entries_per_list` | impl-defined | config only | Cap the number of rows returned by `LIST` to keep automation snappy.
 
@@ -43,7 +43,7 @@ EphemeralNet applies settings in this order: built-in defaults (`ephemeralnet::C
 
 | Field | Default | CLI flag / key | Description |
 |-------|---------|----------------|-------------|
-| `announce_pow_difficulty` | 6 | `--announce-pow <0-24>` | Bits required for ANNOUNCE messages.
+| `announce_pow_difficulty` | 6 | `--announce-pow &lt;0-24&gt;` | Bits required for ANNOUNCE messages.
 | `handshake_pow_difficulty` | 4 | config only | Bits required for transport handshakes.
 | `store_pow_difficulty` | 6 | config / `DEFAULTS` | Bits required for uploads; CLI auto-solves.
 | `swarm_target_replicas` | 3 | config only | Desired replicas per chunk.
