@@ -11,10 +11,15 @@ if (-not $PSVersionTable.PSVersion) {
 }
 
 if (-not $InstallDir) {
-    if ($env:ProgramFiles -and (Test-Path $env:ProgramFiles)) {
+    $currentPrincipal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+    $isAdmin = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+    if ($isAdmin) {
         $InstallDir = Join-Path $env:ProgramFiles 'EphemeralNet'
+        Write-Verbose 'Admin privileges detected. Installing to Program Files.'
     } else {
         $InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\EphemeralNet'
+        Write-Verbose 'Non-admin rights detected. Installing to user local profile.'
     }
 }
 
@@ -36,9 +41,13 @@ if (-not $tag) {
     exit 1
 }
 
-$arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+$arch = $env:PROCESSOR_ARCHITECTURE
+if ($env:PROCESSOR_ARCHITEW6432) {
+    $arch = $env:PROCESSOR_ARCHITEW6432
+}
+
 switch ($arch) {
-    'X64' { $assetName = "eph-$tag-windows-x64.zip" }
+    'AMD64' { $assetName = "eph-$tag-windows-x64.zip" }
     default {
         Write-Error "Unsupported Windows architecture: $arch"
         exit 1
@@ -81,7 +90,14 @@ if ($pathEntries -notcontains $InstallDir) {
         $newUserPath = "$userPath;$InstallDir"
     }
     [Environment]::SetEnvironmentVariable('Path', $newUserPath, 'User')
-    Write-Host "Added $InstallDir to your user PATH. Open a new PowerShell session to use 'eph' globally."
+    if ($pathEntries -notcontains $InstallDir) {
+        if ([string]::IsNullOrWhiteSpace($env:Path)) {
+            $env:Path = $InstallDir
+        } else {
+            $env:Path = "$env:Path;$InstallDir"
+        }
+    }
+    Write-Host "Added $InstallDir to your user PATH."
 }
 
 Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue

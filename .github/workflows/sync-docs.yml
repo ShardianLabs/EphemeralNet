@@ -7,6 +7,8 @@ on:
     paths:
       - 'docs/**'
       - 'README.md'
+      - 'scripts/install.sh'
+      - 'scripts/install.ps1'
 
 jobs:
   sync-docs:
@@ -40,14 +42,21 @@ jobs:
         run: |
           rsync -av --delete combined-docs/ eph-web/docs/
 
+      - name: Copy installer scripts into static assets
+        run: |
+          install_static_dir="eph-web/static"
+          mkdir -p "$install_static_dir"
+          cp scripts/install.sh "$install_static_dir/install.sh"
+          cp scripts/install.ps1 "$install_static_dir/install.ps1"
+
       - name: Commit and push changes
         run: |
           cd eph-web
-          if git status --porcelain docs; then
+          if git status --porcelain docs static; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add docs
-            git commit -m "Sync docs from EphemeralNet ${GITHUB_SHA}"
+            git add docs static/install.sh static/install.ps1
+            git commit -m "Sync docs + installers from EphemeralNet ${GITHUB_SHA}"
             git push
           else
             echo "No documentation changes to sync."

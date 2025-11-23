@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import argparse
 import re
-import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 README_PATH = ROOT / "README.md"
+DEFAULT_OUTPUT = ROOT / "docs" / "01-getting-started"
 
 DOC_SPECS = [
     {
@@ -97,8 +97,6 @@ def build_docs(output_dir: Path) -> None:
     readme_text = README_PATH.read_text(encoding="utf-8")
     sections = parse_sections(readme_text)
 
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for spec in DOC_SPECS:
@@ -112,7 +110,11 @@ def build_docs(output_dir: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", default=str(ROOT / "docs-generated"), help="Destination directory for generated docs")
+    parser.add_argument(
+        "--output",
+        default=str(DEFAULT_OUTPUT),
+        help="Destination directory for generated docs",
+    )
     args = parser.parse_args()
     build_docs(Path(args.output))
 

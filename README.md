@@ -15,7 +15,7 @@
 
 ## Why EphemeralNet?
 
-Shardian Labs designs infrastructure for teams that take deletion guarantees as seriously as confidentiality. EphemeralNet is our C++20 research daemon for data that **must** disappear: a P2P protocol that uses enforced time-to-live (TTL) semantics as a first-class constraint. Instead of mutating BitTorrent-style swarms into ad-hoc retention policies, EphemeralNet treats each manifest, chunk, and routing hint as expendable material whose lifetime is negotiated at the edge and cryptographically enforced.
+Shardian designs infrastructure for teams that take deletion guarantees as seriously as confidentiality. EphemeralNet is our C++20 research daemon for data that **must** disappear: a P2P protocol that uses enforced time-to-live (TTL) semantics as a first-class constraint. Instead of mutating BitTorrent-style swarms into ad-hoc retention policies, EphemeralNet treats each manifest, chunk, and routing hint as expendable material whose lifetime is negotiated at the edge and cryptographically enforced.
 
 Every node runs `eph`, a compact daemon that exposes a gRPC-inspired control socket and a remote-style CLI. The kernel pairs a TTL-aware Kademlia DHT with ChaCha20/HMAC sessions, Shamir's Secret Sharing for key pulverization, and deterministic cleanup hooks so expired state evaporates across storage tiers, routing tables, and manifests simultaneously. The outcome is a mesh that can gossip, store, and fetch like a modern CDN overlay—while guaranteeing the data falls out of existence on schedule.
 
