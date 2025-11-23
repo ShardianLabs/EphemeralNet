@@ -32,6 +32,33 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
+      - name: Compute CMake dependency hash
+        id: cmake-hash
+        shell: bash
+        run: |
+          set -euo pipefail
+          HASH=$(python - <<'PY'
+import hashlib
+import pathlib
+
+patterns = ["CMakeLists.txt", "cmake/**/*.cmake"]
+files = []
+for pattern in patterns:
+    files.extend(pathlib.Path(".").glob(pattern))
+
+files = sorted(set(path for path in files if path.is_file()))
+
+if not files:
+    print("none")
+else:
+    digest = hashlib.sha256()
+    for path in files:
+        digest.update(path.read_bytes())
+    print(digest.hexdigest())
+PY
+      )
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+
       - name: Download ProcDump
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -68,7 +95,7 @@ jobs:
         with:
           path: |
             build/_deps
-          key: ${{ runner.os }}-cmake-${{ hashFiles('**/CMakeLists.txt', '**/cmake/**/*.cmake') }}
+          key: ${{ runner.os }}-cmake-${{ steps.cmake-hash.outputs.hash }}
           restore-keys: |
             ${{ runner.os }}-cmake-
 

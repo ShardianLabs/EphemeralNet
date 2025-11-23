@@ -16,7 +16,6 @@ DOC_SPECS = [
         "filename": "01-intro.md",
         "frontmatter": """---
 sidebar_position: 1
-slug: /
 title: Introduction
 sidebar_label: Overview
 ---
