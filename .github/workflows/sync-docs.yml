@@ -1,0 +1,54 @@
+name: Sync Docs
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'docs/**'
+      - 'README.md'
+
+jobs:
+  sync-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout EphemeralNet
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Generate Docusaurus docs from README
+        run: python scripts/generate_docs.py --output docs-generated
+
+      - name: Checkout eph-web repo
+        uses: actions/checkout@v4
+        with:
+          repository: ShardianLabs/eph-web
+          token: ${{ secrets.DOCS_SYNC_TOKEN }}
+          path: eph-web
+
+      - name: Prepare combined documentation bundle
+        run: |
+          mkdir -p combined-docs
+          rsync -av docs/ combined-docs/
+          rsync -av docs-generated/ combined-docs/
+
+      - name: Sync docs folder
+        run: |
+          rsync -av --delete combined-docs/ eph-web/docs/
+
+      - name: Commit and push changes
+        run: |
+          cd eph-web
+          if git status --porcelain docs; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add docs
+            git commit -m "Sync docs from EphemeralNet ${GITHUB_SHA}"
+            git push
+          else
+            echo "No documentation changes to sync."
+          fi
