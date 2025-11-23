@@ -8,7 +8,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 README_PATH = ROOT / "README.md"
-DEFAULT_OUTPUT = ROOT / "docs" / "01-getting-started"
+DEFAULT_OUTPUT_ROOT = ROOT / "docs"
+DEFAULT_SECTION_SUBDIR = "01-getting-started"
 
 DOC_SPECS = [
     {
@@ -81,6 +82,15 @@ def section_text(sections: dict[str, list[str]], title: str) -> str:
     return text
 
 
+def resolve_output_dir(base_dir: Path, section_subdir: str | None) -> Path:
+    base_dir = base_dir.resolve()
+    if not section_subdir:
+        return base_dir
+    if base_dir.name == section_subdir:
+        return base_dir
+    return base_dir / section_subdir
+
+
 def build_docs(output_dir: Path) -> None:
     WARNING_HEADER = """---
 # -----------------------------------------------------------------------------
@@ -93,8 +103,6 @@ def build_docs(output_dir: Path) -> None:
 # the generation script: scripts/generate_docs.py
 # -----------------------------------------------------------------------------
 """
-
-    output_dir = output_dir.resolve()
 
     readme_text = README_PATH.read_text(encoding="utf-8")
     sections = parse_sections(readme_text)
@@ -118,11 +126,24 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--output",
-        default=str(DEFAULT_OUTPUT),
-        help="Destination directory for generated docs",
+        default=str(DEFAULT_OUTPUT_ROOT),
+        help=(
+            "Base directory that will contain the generated docs bundle. "
+            "The section subdirectory is appended automatically unless disabled."
+        ),
+    )
+    parser.add_argument(
+        "--section-subdir",
+        default=DEFAULT_SECTION_SUBDIR,
+        help=(
+            "Folder name under --output where files are written. Set to '' to "
+            "write directly into --output."
+        ),
     )
     args = parser.parse_args()
-    build_docs(Path(args.output))
+    section_subdir = args.section_subdir.strip()
+    target_dir = resolve_output_dir(Path(args.output), section_subdir or None)
+    build_docs(target_dir)
 
 
 if __name__ == "__main__":
