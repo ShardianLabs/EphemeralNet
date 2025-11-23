@@ -112,4 +112,3 @@ Common success/failure codes:
 - **Deterministic uploads**: Supply `--identity-seed`, `--default-ttl`, and `--max-store-bytes` for reproducible CI pipelines.
 - **Unattended scripts**: Use `--yes` to bypass prompts, but still monitor `STATUS/CODE` pairs to catch failures.
 - **Local manual page**: `eph man` bundles the same content as this file for offline environments.
-
