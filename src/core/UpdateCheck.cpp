@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cerrno>
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
@@ -432,8 +433,11 @@ private:
             }
         }
         const std::string_view slice = input_.substr(start, pos_ - start);
-        double parsed = 0.0;
-        if (const auto result = std::from_chars(slice.data(), slice.data() + slice.size(), parsed); result.ec != std::errc{}) {
+        const std::string buffer(slice);
+        char* end = nullptr;
+        errno = 0;
+        const double parsed = std::strtod(buffer.c_str(), &end);
+        if (errno == ERANGE || end != buffer.c_str() + buffer.size()) {
             throw std::runtime_error("Unable to parse number literal");
         }
         JsonValue value;

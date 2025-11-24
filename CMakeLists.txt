@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(EphemeralNet VERSION 1.0.0 LANGUAGES CXX)
+project(EphemeralNet VERSION 1.0.1 LANGUAGES CXX)
 
 option(EPHEMERALNET_BUILD_TESTS "Build EphemeralNet unit tests" ON)
 option(EPHEMERALNET_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
@@ -67,6 +67,13 @@ if(WIN32)
     target_link_libraries(ephemeralnet_core
         PUBLIC
             ws2_32
+            winhttp
+    )
+else()
+    find_package(CURL REQUIRED)
+    target_link_libraries(ephemeralnet_core
+        PUBLIC
+            CURL::libcurl
     )
 endif()
 
@@ -92,21 +99,6 @@ target_link_libraries(ephemeralnet
     PRIVATE
         ephemeralnet::core
 )
-
-if(NOT WIN32)
-    find_package(CURL REQUIRED)
-    target_link_libraries(ephemeralnet
-        PRIVATE
-            CURL::libcurl
-    )
-endif()
-
-if(WIN32)
-    target_link_libraries(ephemeralnet
-        PRIVATE
-            winhttp
-    )
-endif()
 
 target_include_directories(ephemeralnet
     PRIVATE
@@ -412,13 +404,6 @@ if(EPHEMERALNET_BUILD_TESTS)
         PRIVATE
             ephemeralnet::core
     )
-
-    if(WIN32)
-        target_link_libraries(ephemeralnet_update_check_tests
-            PRIVATE
-                winhttp
-        )
-    endif()
 
     if(EPHEMERALNET_WARNINGS_AS_ERRORS)
         ephemeralnet_enable_warnings(ephemeralnet_update_check_tests TREAT_AS_ERRORS)

@@ -119,7 +119,9 @@ std::uint64_t unique_suffix() {
 }
 
 int main() {
+#if defined(_WIN32)
     WinsockRuntime winsock_runtime;
+#endif
 
     const char* executable_env = std::getenv("EPH_CLI_EXECUTABLE");
     if (!executable_env) {
