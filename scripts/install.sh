@@ -90,4 +90,15 @@ if ! printf '%s' "$PATH" | tr ':' '\n' | grep -Fx "$INSTALL_DIR" >/dev/null 2>&1
   echo "warning: ${INSTALL_DIR} is not on your PATH. Add it to use 'eph' without a full path." >&2
 fi
 
+if command -v eph >/dev/null 2>&1; then
+  current_eph=$(command -v eph)
+  if [ "$current_eph" != "$install_path" ]; then
+    cat >&2 <<EOF
+warning: another 'eph' was found earlier in PATH at ${current_eph}
+         Run '${install_path} --version' explicitly or adjust PATH to prefer the new install.
+EOF
+  fi
+fi
+
+"$install_path" --version || true
 echo "Run 'eph --help' to get started."

@@ -104,3 +104,35 @@ Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host "EphemeralNet $tag installed at $destination"
 Write-Host "Run 'eph --help' to explore the CLI."
+
+try {
+    $installedPath = (Resolve-Path -Path $destination).Path
+} catch {
+    $installedPath = $destination
+}
+
+$currentCommand = $null
+try {
+    $currentCommand = Get-Command eph -ErrorAction Stop | Select-Object -First 1
+} catch {
+    $currentCommand = $null
+}
+
+if ($currentCommand) {
+    try {
+        $currentPath = (Resolve-Path -Path $currentCommand.Source).Path
+    } catch {
+        $currentPath = $currentCommand.Source
+    }
+
+    if ($currentPath -ne $installedPath) {
+        Write-Warning "Another eph.exe was found earlier on PATH: $currentPath"
+        Write-Warning "Use '$installedPath --version' or remove the older copy to pick up v$tag"
+    }
+}
+
+try {
+    & "$destination" --version | Write-Host
+} catch {
+    Write-Warning "Unable to run '$destination --version'."
+}

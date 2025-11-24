@@ -84,6 +84,11 @@ Each command surfaces `STATUS`, `CODE`, and optional `HINT` fields. Success code
 ### `man` / `help`
 - `man` prints the built-in manual (short narrative). `help` is an alias for `--help`.
 
+### `update-check`
+- Fetches `https://eph.shardian.com/latest.json` (or an override from `--url`/`EPH_UPDATE_URL`) and compares it with the running CLI version.
+- Prints whether you are up to date, highlights the latest tag/channel, and surfaces release notes plus the download URL for the current platform.
+- Returns success regardless of version mismatch; network/parse failures raise `E_UPDATE_*` errors so automation can retry.
+
 ## Response codes & hints
 
 Common success/failure codes:

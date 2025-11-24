@@ -73,6 +73,7 @@
 - Manifest-only fetch bootstrapper shipped (schema extensions, CLI bootstrap flow, and cross-platform docs/tests) together with `--control-expose`/`--control-loopback` safeguards for daemon binding on VPS deployments.
 - Introduced a `scheme`/`transport` pair on `protocol::DiscoveryHint`, updated manifest encode/decode, and taught the CLI/docs/tests to use it.
 - Prepare deployment scripts and CI/CD pipelines for Windows/Linux/macOS (Docker, PPA/Copr, Homebrew).
+- CLI now ships an `update-check` command plus hosted `latest.json` metadata so operators can detect new releases programmatically.
 
 
 ## Next milestones
@@ -84,7 +85,6 @@
 	- Complete the public `libephemeralnet` API (versioning, documentation, usage examples).
 	- Finalise `ephemeralnet-cli` with diagnostics commands and scripting support.
 	- Prototype an initial `ephemeralnet-GUI` or lightweight admin panel.
-	- Implement a version-check endpoint (JSON hosted on GitHub Pages) and wire an `eph update-check` command.
 - **DOCS**
 	- Publish a versioned API reference for developers embedding `libephemeralnet`.
 	- Expand operator runbooks with performance tuning and capacity planning guidance.

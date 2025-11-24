@@ -77,6 +77,9 @@ PS> eph fetch eph://6c5f... --direct-only --out C:\downloads
 
 # Inspect node health, DHT saturation, and relay status
 PS> eph status --verbose
+
+# Check whether a newer CLI release is available
+PS> eph update-check
 ```
 
 ## Building from Source

@@ -25,6 +25,9 @@ jobs:
       - name: Generate Docusaurus docs from README
         run: python scripts/generate_docs.py --output docs-generated
 
+      - name: Generate version metadata
+        run: python scripts/generate_version_metadata.py --output latest.json
+
       - name: Checkout eph-web repo
         uses: actions/checkout@v4
         with:
@@ -48,6 +51,7 @@ jobs:
           mkdir -p "$install_static_dir"
           cp scripts/install.sh "$install_static_dir/install.sh"
           cp scripts/install.ps1 "$install_static_dir/install.ps1"
+          cp latest.json "$install_static_dir/latest.json"
 
       - name: Commit and push changes
         run: |
@@ -55,7 +59,7 @@ jobs:
           if git status --porcelain docs static; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add docs static/install.sh static/install.ps1
+            git add docs static/install.sh static/install.ps1 static/latest.json
             git commit -m "Sync docs + installers from EphemeralNet ${GITHUB_SHA}"
             git push
           else

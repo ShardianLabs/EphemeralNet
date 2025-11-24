@@ -1,6 +1,7 @@
 #include "ephemeralnet/Config.hpp"
 #include "ephemeralnet/Types.hpp"
 #include "ephemeralnet/core/Node.hpp"
+#include "ephemeralnet/core/UpdateCheck.hpp"
 #include "ephemeralnet/crypto/CryptoManager.hpp"
 #include "ephemeralnet/crypto/Sha256.hpp"
 #include "ephemeralnet/crypto/Shamir.hpp"
@@ -57,6 +58,7 @@
 #include <ws2tcpip.h>
 #include <io.h>
 #include <windows.h>
+#include <winhttp.h>
 #else
 #include <unistd.h>
 #include <fcntl.h>
@@ -81,6 +83,17 @@ namespace {
 
 constexpr std::string_view kEphemeralNetVersion = EPHEMERALNET_VERSION;
 constexpr std::uint16_t kDefaultTransportPort = 45000;
+constexpr std::string_view kUpdateMetadataUrl = "https://eph.shardian.com/latest.json";
+
+std::string_view current_platform_slug() {
+#if defined(_WIN32)
+    return "windows";
+#elif defined(__APPLE__)
+    return "macos";
+#else
+    return "linux";
+#endif
+}
 
 bool parse_floating_token(const char* begin, const char* end, double& value) {
     // libc++ on macOS still lacks std::from_chars for floating point; fall back to strtod.
@@ -2475,6 +2488,7 @@ void print_usage() {
               << "                           Retrieve a file (defaults to current directory)\n"
               << "  list                      List chunks stored locally\n"
               << "  defaults                  Show daemon default limits and timers\n"
+              << "  update-check              Query eph.shardian.com for the latest release\n"
               << "  man                       Display the integrated manual\n"
               << "  serve                     Start the daemon in the foreground (Ctrl+C to exit)\n"
               << "  help                      Alias for --help\n";
@@ -2530,6 +2544,11 @@ void print_serve_usage() {
 void print_defaults_usage() {
     std::cout << "Usage: eph defaults\n"
               << "Display the daemon's current default TTL, bounds, and control endpoint." << std::endl;
+}
+
+void print_update_check_usage() {
+    std::cout << "Usage: eph update-check [--url <endpoint>]\n"
+              << "Check eph.shardian.com/latest.json (or a custom --url / EPH_UPDATE_URL) for newer releases." << std::endl;
 }
 
 void print_manual() {
@@ -2594,6 +2613,7 @@ void print_manual() {
               << "    fetch <manifest> [--out] <path>\n"
               << "                          Retrieve payload into a file or directory.\n"
               << "    defaults               Display daemon TTL bounds and concurrency limits.\n"
+              << "    update-check          Check eph.shardian.com for new releases.\n"
               << "    man                    Display this manual.\n"
               << "    help                   Alias for --help.\n\n";
     std::cout << "FILES\n"

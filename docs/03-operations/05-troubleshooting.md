@@ -30,6 +30,7 @@ Use this matrix to triage common issues before escalating. Pair it with `eph dia
 | How are abuse reports processed? | Use `eph announce abuse` (when available) plus governance workflows in `06-governance.md`. Structured logs capture outcomes for auditors. |
 | PoW solver never finishes. | Check CPU headroom and time sync; inspect `pow_metrics_proxy.py`. Lower difficulty or allocate more CPU. |
 | Relay logs show fairness penalties. | Consult upload choking tests and adjust `ReputationManager` weights or block abusive peers. |
+| Unsure if a newer CLI exists. | Run `eph update-check` (or set `EPH_UPDATE_URL` for air-gapped mirrors) to compare against `eph.shardian.com/latest.json`. |
 
 ## Diagnostic tips
 

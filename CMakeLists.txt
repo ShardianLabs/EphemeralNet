@@ -17,6 +17,7 @@ add_library(ephemeralnet_core
     src/core/Node.cpp
     src/core/ChunkStore.cpp
     src/core/Types.cpp
+    src/core/UpdateCheck.cpp
     src/dht/KademliaTable.cpp
     src/network/SessionManager.cpp
     src/network/KeyManager.cpp
@@ -91,6 +92,21 @@ target_link_libraries(ephemeralnet
     PRIVATE
         ephemeralnet::core
 )
+
+if(NOT WIN32)
+    find_package(CURL REQUIRED)
+    target_link_libraries(ephemeralnet
+        PRIVATE
+            CURL::libcurl
+    )
+endif()
+
+if(WIN32)
+    target_link_libraries(ephemeralnet
+        PRIVATE
+            winhttp
+    )
+endif()
 
 target_include_directories(ephemeralnet
     PRIVATE
@@ -387,6 +403,30 @@ if(EPHEMERALNET_BUILD_TESTS)
     endif()
 
     add_test(NAME EphemeralNet.Shamir COMMAND ephemeralnet_shamir_tests)
+
+    add_executable(ephemeralnet_update_check_tests
+        tests/update_check.cpp
+    )
+
+    target_link_libraries(ephemeralnet_update_check_tests
+        PRIVATE
+            ephemeralnet::core
+    )
+
+    if(WIN32)
+        target_link_libraries(ephemeralnet_update_check_tests
+            PRIVATE
+                winhttp
+        )
+    endif()
+
+    if(EPHEMERALNET_WARNINGS_AS_ERRORS)
+        ephemeralnet_enable_warnings(ephemeralnet_update_check_tests TREAT_AS_ERRORS)
+    else()
+        ephemeralnet_enable_warnings(ephemeralnet_update_check_tests)
+    endif()
+
+    add_test(NAME EphemeralNet.UpdateCheck COMMAND ephemeralnet_update_check_tests)
 
     add_executable(ephemeralnet_cli_config_tests
         tests/cli_config.cpp
