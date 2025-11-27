@@ -76,7 +76,7 @@
 #endif
 
 #ifndef EPHEMERALNET_VERSION
-#define EPHEMERALNET_VERSION "v1.0.2"
+#define EPHEMERALNET_VERSION "v1.0.3"
 #endif
 
 namespace {
