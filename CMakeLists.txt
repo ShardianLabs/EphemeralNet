@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(EphemeralNet VERSION 1.0.3 LANGUAGES CXX)
+project(EphemeralNet VERSION 1.0.4 LANGUAGES CXX)
 
 option(EPHEMERALNET_BUILD_TESTS "Build EphemeralNet unit tests" ON)
 option(EPHEMERALNET_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)

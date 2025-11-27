@@ -209,7 +209,7 @@ jobs:
       - name: Disable crash dumps
         if: always() && matrix.os == 'windows-latest'
         shell: pwsh
-        run: procdump -accepteula -ma -u
+        run: procdump -accepteula -u
 
   publish-release:
     name: Publish Release
