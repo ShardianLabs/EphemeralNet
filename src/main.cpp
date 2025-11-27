@@ -76,7 +76,7 @@
 #endif
 
 #ifndef EPHEMERALNET_VERSION
-#define EPHEMERALNET_VERSION "v1.0.1"
+#define EPHEMERALNET_VERSION "v1.0.2"
 #endif
 
 namespace {
@@ -2482,7 +2482,7 @@ void print_usage() {
               << "  start                     Launch the daemon in the background\n"
               << "  stop                      Ask the daemon to shut down\n"
               << "  status                    Query daemon status\n"
-              << "  store <file> [--ttl <sec>]\n"
+              << "  store <file> [--ttl <duration>]\n"
               << "                           Ask the daemon to store a file and return eph://\n"
               << "  fetch <eph://...> [--out] <path>\n"
               << "                           Retrieve a file (defaults to current directory)\n"
@@ -2519,7 +2519,7 @@ void print_list_usage() {
 }
 
 void print_store_usage() {
-    std::cout << "Usage: eph store <file> [--ttl <seconds>]\n"
+    std::cout << "Usage: eph store <file> [--ttl <duration>]\n"
               << "Stream a local file to the daemon and receive an eph:// manifest (TTL defaults to daemon configuration)." << std::endl;
 }
 
@@ -2609,7 +2609,7 @@ void print_manual() {
               << "    stop                   Stop the running daemon.\n"
               << "    status                 Show peer counts, chunks, and transport port.\n"
               << "    list                   List local chunks with TTL and encryption status.\n"
-              << "    store <file> [--ttl]   Upload a file and receive an eph:// manifest.\n"
+              << "    store <file> [--ttl <duration>]   Upload a file and receive an eph:// manifest.\n"
               << "    fetch <manifest> [--out] <path>\n"
               << "                          Retrieve payload into a file or directory.\n"
               << "    defaults               Display daemon TTL bounds and concurrency limits.\n"
@@ -2622,6 +2622,7 @@ void print_manual() {
     std::cout << "EXAMPLES\n"
               << "    eph --storage-dir ./data serve\n"
               << "    eph store secret.bin --ttl 3600\n"
+              << "    eph store secret.bin --ttl 30m\n"
               << "    eph fetch eph://... --out ./file.bin\n"
               << "    eph defaults\n"
               << "    eph --version\n\n";
@@ -2652,6 +2653,49 @@ bool parse_uint16(std::string_view text, std::uint16_t& value) {
         return false;
     }
     value = static_cast<std::uint16_t>(temp);
+    return true;
+}
+
+bool parse_duration_seconds(std::string_view text, std::uint64_t& seconds) {
+    if (text.empty()) {
+        return false;
+    }
+    char suffix = '\0';
+    if (!std::isdigit(static_cast<unsigned char>(text.back()))) {
+        suffix = static_cast<char>(std::tolower(static_cast<unsigned char>(text.back())));
+        text.remove_suffix(1);
+    }
+    if (text.empty()) {
+        return false;
+    }
+
+    if (!parse_uint64(text, seconds)) {
+        return false;
+    }
+    std::uint64_t multiplier = 1;
+    switch (suffix) {
+    case '\0':
+    case 's':
+        multiplier = 1;
+        break;
+    case 'm':
+        multiplier = 60;
+        break;
+    case 'h':
+        multiplier = 60 * 60;
+        break;
+    case 'd':
+        multiplier = 60 * 60 * 24;
+        break;
+    default:
+        return false;
+    }
+    if (multiplier != 1) {
+        if (seconds > std::numeric_limits<std::uint64_t>::max() / multiplier) {
+            return false;
+        }
+        seconds *= multiplier;
+    }
     return true;
 }
 
@@ -3663,10 +3707,10 @@ int main(int argc, char** argv) {
             if (opt == "--default-ttl") {
                 const auto value = require_value(opt);
                 std::uint64_t ttl{};
-                if (!parse_uint64(value, ttl) || ttl == 0) {
+                if (!parse_duration_seconds(value, ttl) || ttl == 0) {
                     throw_cli_error("E_INVALID_DEFAULT_TTL",
-                                    "--default-ttl must be a positive integer",
-                                    "Provide the TTL in seconds, for example --default-ttl 3600");
+                                    "--default-ttl must be a positive duration (accepts s/m/h/d suffixes)",
+                                    "Examples: --default-ttl 3600, --default-ttl 30m, --default-ttl 2h");
                 }
                 options.default_ttl_seconds = ttl;
                 continue;
@@ -3674,10 +3718,10 @@ int main(int argc, char** argv) {
             if (opt == "--min-ttl") {
                 const auto value = require_value(opt);
                 std::uint64_t ttl{};
-                if (!parse_uint64(value, ttl) || ttl == 0) {
+                if (!parse_duration_seconds(value, ttl) || ttl == 0) {
                     throw_cli_error("E_INVALID_MIN_TTL",
-                                    "--min-ttl must be a positive integer",
-                                    "Provide the minimum TTL in seconds, e.g. --min-ttl 30");
+                                    "--min-ttl must be a positive duration (accepts s/m/h/d suffixes)",
+                                    "Examples: --min-ttl 30s, --min-ttl 30m");
                 }
                 options.min_ttl_seconds = ttl;
                 continue;
@@ -3685,10 +3729,10 @@ int main(int argc, char** argv) {
             if (opt == "--max-ttl") {
                 const auto value = require_value(opt);
                 std::uint64_t ttl{};
-                if (!parse_uint64(value, ttl) || ttl == 0) {
+                if (!parse_duration_seconds(value, ttl) || ttl == 0) {
                     throw_cli_error("E_INVALID_MAX_TTL",
-                                    "--max-ttl must be a positive integer",
-                                    "Provide the maximum TTL in seconds, e.g. --max-ttl 86400");
+                                    "--max-ttl must be a positive duration (accepts s/m/h/d suffixes)",
+                                    "Examples: --max-ttl 86400, --max-ttl 24h");
                 }
                 options.max_ttl_seconds = ttl;
                 continue;
@@ -3696,10 +3740,10 @@ int main(int argc, char** argv) {
             if (opt == "--key-rotation") {
                 const auto value = require_value(opt);
                 std::uint64_t interval{};
-                if (!parse_uint64(value, interval) || interval == 0) {
+                if (!parse_duration_seconds(value, interval) || interval == 0) {
                     throw_cli_error("E_INVALID_KEY_ROTATION",
-                                    "--key-rotation must be a positive integer",
-                                    "Provide the interval in seconds, e.g. --key-rotation 300");
+                                    "--key-rotation must be a positive duration (accepts s/m/h/d suffixes)",
+                                    "Examples: --key-rotation 300, --key-rotation 5m");
                 }
                 options.key_rotation_seconds = interval;
                 continue;
@@ -3707,10 +3751,10 @@ int main(int argc, char** argv) {
             if (opt == "--announce-interval") {
                 const auto value = require_value(opt);
                 std::uint64_t interval{};
-                if (!parse_uint64(value, interval) || interval == 0) {
+                if (!parse_duration_seconds(value, interval) || interval == 0) {
                     throw_cli_error("E_INVALID_ANNOUNCE_INTERVAL",
-                                    "--announce-interval must be a positive integer",
-                                    "Provide the minimum spacing between announces in seconds, e.g. --announce-interval 15");
+                                    "--announce-interval must be a positive duration (accepts s/m/h/d suffixes)",
+                                    "Examples: --announce-interval 15, --announce-interval 2m");
                 }
                 options.announce_interval_seconds = interval;
                 continue;
@@ -3729,10 +3773,10 @@ int main(int argc, char** argv) {
             if (opt == "--announce-window") {
                 const auto value = require_value(opt);
                 std::uint64_t window{};
-                if (!parse_uint64(value, window) || window == 0) {
+                if (!parse_duration_seconds(value, window) || window == 0) {
                     throw_cli_error("E_INVALID_ANNOUNCE_WINDOW",
-                                    "--announce-window must be a positive integer",
-                                    "Provide the rolling window length in seconds, e.g. --announce-window 120");
+                                    "--announce-window must be a positive duration (accepts s/m/h/d suffixes)",
+                                    "Examples: --announce-window 120, --announce-window 5m");
                 }
                 options.announce_window_seconds = window;
                 continue;
@@ -4351,13 +4395,13 @@ int main(int argc, char** argv) {
                     if (index >= args.size()) {
                         throw_cli_error("E_STORE_MISSING_TTL",
                                         "--ttl requires a value",
-                                        "Example: --ttl 3600 for one hour");
+                                        "Examples: --ttl 3600, --ttl 30m, --ttl 2h");
                     }
                     std::uint64_t ttl{};
-                    if (!parse_uint64(args[index++], ttl)) {
+                    if (!parse_duration_seconds(args[index++], ttl) || ttl == 0) {
                         throw_cli_error("E_STORE_INVALID_TTL",
-                                        "--ttl must be a positive integer",
-                                        "Use a positive number of seconds, e.g. 3600");
+                                        "--ttl must be a positive duration (accepts s/m/h/d suffixes)",
+                                        "Examples: --ttl 1800, --ttl 30m, --ttl 2h");
                     }
                     ttl_override = ttl;
                     continue;

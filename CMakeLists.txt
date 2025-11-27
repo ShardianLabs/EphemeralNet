@@ -1,9 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(EphemeralNet VERSION 1.0.1 LANGUAGES CXX)
+project(EphemeralNet VERSION 1.0.2 LANGUAGES CXX)
 
 option(EPHEMERALNET_BUILD_TESTS "Build EphemeralNet unit tests" ON)
 option(EPHEMERALNET_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+option(EPHEMERALNET_BUILD_SHARED "Build EphemeralNet core as a shared library" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,9 +12,15 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+include(GNUInstallDirs)
 include(cmake/CompilerWarnings.cmake)
 
-add_library(ephemeralnet_core
+set(EPHEMERALNET_LIB_TYPE STATIC)
+if(EPHEMERALNET_BUILD_SHARED)
+    set(EPHEMERALNET_LIB_TYPE SHARED)
+endif()
+
+add_library(ephemeralnet_core ${EPHEMERALNET_LIB_TYPE}
     src/core/Node.cpp
     src/core/ChunkStore.cpp
     src/core/Types.cpp
@@ -36,6 +43,7 @@ add_library(ephemeralnet_core
     src/protocol/Manifest.cpp
     src/protocol/Message.cpp
     src/bootstrap/TokenChallenge.cpp
+    src/libephemeralnet.cpp
 )
 
 add_library(ephemeralnet::core ALIAS ephemeralnet_core)
@@ -62,6 +70,17 @@ target_link_libraries(ephemeralnet_core
     PUBLIC
         Threads::Threads
 )
+
+if(EPHEMERALNET_BUILD_SHARED)
+    target_compile_definitions(ephemeralnet_core PUBLIC EPHEMERALNET_BUILD_SHARED)
+endif()
+
+if(NOT WIN32)
+    set_target_properties(ephemeralnet_core PROPERTIES
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN YES
+    )
+endif()
 
 if(WIN32)
     target_link_libraries(ephemeralnet_core
@@ -940,3 +959,36 @@ if(EPHEMERALNET_BUILD_TESTS)
         ENVIRONMENT "EPH_CLI_EXECUTABLE=$<TARGET_FILE:ephemeralnet>"
     )
 endif()
+
+install(TARGETS ephemeralnet_core
+    EXPORT EphemeralNetTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(TARGETS ephemeralnet
+    EXPORT EphemeralNetTargets
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+if(NOT WIN32)
+    install(TARGETS ephemeralnet_relay
+        EXPORT EphemeralNetTargets
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+endif()
+
+install(DIRECTORY include/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
+install(FILES README.md LICENSE
+    DESTINATION ${CMAKE_INSTALL_DOCDIR}
+)
+
+install(EXPORT EphemeralNetTargets
+    FILE EphemeralNetTargets.cmake
+    NAMESPACE ephemeralnet::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/EphemeralNet
+)

@@ -1,0 +1,59 @@
+name: Feature Request
+description: Suggest an idea or improvement for EphemeralNet.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        We use feature requests to plan EphemeralNet's roadmap. Please explain the user impact and, if possible, proposed implementation details.
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      description: Where does this feature live?
+      options:
+        - CLI / user experience
+        - Daemon behavior
+        - libephemeralnet API
+        - Documentation
+        - Tooling / CI
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Problem statement
+      description: What problem are you trying to solve? Why is it important?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the change, API shape, UX flow, or docs you would like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Mention any workarounds or other designs you evaluated.
+  - type: textarea
+    id: rollout
+    attributes:
+      label: Rollout / migration notes
+      description: Call out compatibility concerns, config flags, or doc updates needed.
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues and discussions for similar requests.
+          required: true
+        - label: This request aligns with the MIT-licensed nature of the project.
+          required: true
+        - label: I agree to follow the Contributor Covenant Code of Conduct.
+          required: true

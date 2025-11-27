@@ -127,19 +127,19 @@ int main() {
         }
 
         const auto invalid_default_ttl = run_cli(executable, "--default-ttl 0 status");
-        if (invalid_default_ttl.exit_code == 0 || !expect_contains(invalid_default_ttl.output, "--default-ttl must be a positive integer")) {
+        if (invalid_default_ttl.exit_code == 0 || !expect_contains(invalid_default_ttl.output, "--default-ttl must be a positive duration")) {
             std::cerr << "Failure on invalid --default-ttl. exit=" << invalid_default_ttl.exit_code << "\n" << invalid_default_ttl.output << std::endl;
             return 1;
         }
 
         const auto invalid_key_rotation = run_cli(executable, "--key-rotation 0 status");
-        if (invalid_key_rotation.exit_code == 0 || !expect_contains(invalid_key_rotation.output, "--key-rotation must be a positive integer")) {
+        if (invalid_key_rotation.exit_code == 0 || !expect_contains(invalid_key_rotation.output, "--key-rotation must be a positive duration")) {
             std::cerr << "Failure on invalid --key-rotation. exit=" << invalid_key_rotation.exit_code << "\n" << invalid_key_rotation.output << std::endl;
             return 1;
         }
 
         const auto invalid_announce_interval = run_cli(executable, "--announce-interval 0 status");
-        if (invalid_announce_interval.exit_code == 0 || !expect_contains(invalid_announce_interval.output, "--announce-interval must be a positive integer")) {
+        if (invalid_announce_interval.exit_code == 0 || !expect_contains(invalid_announce_interval.output, "--announce-interval must be a positive duration")) {
             std::cerr << "Failure on invalid --announce-interval. exit=" << invalid_announce_interval.exit_code << "\n" << invalid_announce_interval.output << std::endl;
             return 1;
         }

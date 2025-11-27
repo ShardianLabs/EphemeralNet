@@ -102,6 +102,33 @@ jobs:
           set -euo pipefail
           ctest --test-dir "$BUILD_DIR" --output-on-failure --verbose
 
+      - name: Submit binary for code signing
+        if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          if (-not $env:SIGNPATH_API_TOKEN) {
+            throw 'SIGNPATH_API_TOKEN secret is not configured.'
+          }
+          if (-not (Get-Module -ListAvailable -Name SignPath)) {
+            Install-Module -Name SignPath -Scope CurrentUser -Force -AllowClobber | Out-Null
+          }
+          $inputArtifact = Join-Path $env:BUILD_DIR 'eph.exe'
+          if (-not (Test-Path $inputArtifact)) {
+            throw "Binary not found at $inputArtifact"
+          }
+          $outputArtifact = Join-Path $env:BUILD_DIR 'eph-signed.exe'
+          Submit-SigningRequest `
+            -InputArtifactPath $inputArtifact `
+            -ApiToken $env:SIGNPATH_API_TOKEN `
+            -OrganizationId '7b148f80-d4a2-4158-a9d7-7d9ce8210b01' `
+            -ProjectSlug 'EphemeralNet' `
+            -SigningPolicySlug 'EphemeralNet_CI_Policy' `
+            -OutputArtifactPath $outputArtifact `
+            -WaitForCompletion
+          Move-Item -Force -Path $outputArtifact -Destination $inputArtifact
+
       - name: Package CLI (Linux)
         if: matrix.os == 'ubuntu-latest' && startsWith(github.ref, 'refs/tags/v')
         shell: bash
@@ -182,7 +209,7 @@ jobs:
       - name: Disable crash dumps
         if: always() && matrix.os == 'windows-latest'
         shell: pwsh
-        run: procdump -accepteula -ma -i
+        run: procdump -accepteula -ma -u
 
   publish-release:
     name: Publish Release

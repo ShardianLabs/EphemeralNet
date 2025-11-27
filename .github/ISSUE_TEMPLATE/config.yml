@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/ShardianLabs/EphemeralNet/security/advisories/new
+    about: Please submit potential vulnerabilities via GitHub Security Advisories.
+  - name: Report abuse or content policy violations
+    url: https://github.com/contact/report-abuse
+    about: Use GitHub's abuse report form so repository administrators can triage sensitive content.
