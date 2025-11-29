@@ -211,9 +211,65 @@ jobs:
         shell: pwsh
         run: procdump -accepteula -u
 
+  build-and-test-linux-32:
+    name: Build & Test (linux-32)
+    runs-on: ubuntu-latest
+    container:
+      image: i386/ubuntu:22.04
+    env:
+      BUILD_DIR: build
+      CMAKE_GENERATOR: Ninja
+      CTEST_OUTPUT_ON_FAILURE: 1
+      CTEST_PARALLEL_LEVEL: 1
+      RELEASE_VERSION: ${{ github.ref_name }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y build-essential ninja-build cmake pkg-config libcurl4-openssl-dev python3 git ca-certificates
+
+      - name: Compute CMake dependency hash
+        id: cmake-hash
+        shell: bash
+        run: |
+          set -euo pipefail
+          HASH=$(python3 .github/scripts/cmake_hash.py)
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+
+      - name: Cache CMake dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/_deps
+          key: linux32-cmake-${{ steps.cmake-hash.outputs.hash }}
+          restore-keys: |
+            linux32-cmake-
+
+      - name: Configure CMake
+        shell: bash
+        run: cmake -S . -B "$BUILD_DIR" -G "$CMAKE_GENERATOR" -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+      - name: Build
+        shell: bash
+        run: cmake --build "$BUILD_DIR" --parallel
+
+      - name: Run tests (verbose)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir "$BUILD_DIR" --output-on-failure --verbose
+
   publish-release:
     name: Publish Release
-    needs: build-and-test
+    needs:
+      - build-and-test
+      - build-and-test-linux-32
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

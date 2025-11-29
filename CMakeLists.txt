@@ -6,6 +6,8 @@ option(EPHEMERALNET_BUILD_TESTS "Build EphemeralNet unit tests" ON)
 option(EPHEMERALNET_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(EPHEMERALNET_BUILD_SHARED "Build EphemeralNet core as a shared library" OFF)
 
+add_compile_definitions(_FILE_OFFSET_BITS=64)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -13,7 +15,25 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 include(GNUInstallDirs)
+include(CheckCXXSourceCompiles)
 include(cmake/CompilerWarnings.cmake)
+
+set(_ephemeralnet_atomic_test "#include <atomic>\n#include <cstdint>\nint main() {\n    std::atomic<unsigned long long> value{0};\n    value.fetch_add(1, std::memory_order_relaxed);\n    return static_cast<int>(value.load());\n}\n")
+
+check_cxx_source_compiles("${_ephemeralnet_atomic_test}" EPHEMERALNET_HAS_NATIVE_64BIT_ATOMICS)
+
+if(NOT EPHEMERALNET_HAS_NATIVE_64BIT_ATOMICS)
+    set(_ephemeralnet_prev_required_libs "${CMAKE_REQUIRED_LIBRARIES}")
+    set(CMAKE_REQUIRED_LIBRARIES atomic)
+    check_cxx_source_compiles("${_ephemeralnet_atomic_test}" EPHEMERALNET_HAS_LIBATOMIC_64BIT_ATOMICS)
+    set(CMAKE_REQUIRED_LIBRARIES "${_ephemeralnet_prev_required_libs}")
+
+    if(EPHEMERALNET_HAS_LIBATOMIC_64BIT_ATOMICS)
+        set(EPHEMERALNET_ATOMIC_LIB atomic)
+    else()
+        message(FATAL_ERROR "This platform lacks native 64-bit atomic support and libatomic could not be linked.")
+    endif()
+endif()
 
 set(EPHEMERALNET_LIB_TYPE STATIC)
 if(EPHEMERALNET_BUILD_SHARED)
@@ -70,6 +90,13 @@ target_link_libraries(ephemeralnet_core
     PUBLIC
         Threads::Threads
 )
+
+if(EPHEMERALNET_ATOMIC_LIB)
+    target_link_libraries(ephemeralnet_core
+        PUBLIC
+            ${EPHEMERALNET_ATOMIC_LIB}
+    )
+endif()
 
 if(EPHEMERALNET_BUILD_SHARED)
     target_compile_definitions(ephemeralnet_core PUBLIC EPHEMERALNET_BUILD_SHARED)
