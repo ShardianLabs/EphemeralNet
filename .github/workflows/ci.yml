@@ -214,25 +214,24 @@ jobs:
   build-and-test-linux-32:
     name: Build & Test (linux-32)
     runs-on: ubuntu-latest
-    container:
-      image: i386/ubuntu:22.04
     env:
       BUILD_DIR: build
       CMAKE_GENERATOR: Ninja
       CTEST_OUTPUT_ON_FAILURE: 1
       CTEST_PARALLEL_LEVEL: 1
       RELEASE_VERSION: ${{ github.ref_name }}
+      PKG_CONFIG_PATH: /usr/lib/i386-linux-gnu/pkgconfig:/usr/share/pkgconfig
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: Install 32-bit toolchain
         shell: bash
         run: |
           set -euo pipefail
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update
-          apt-get install -y build-essential ninja-build cmake pkg-config libcurl4-openssl-dev python3 git ca-certificates
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y build-essential gcc-multilib g++-multilib ninja-build cmake pkg-config python3 git ca-certificates libcurl4-openssl-dev:i386
 
       - name: Compute CMake dependency hash
         id: cmake-hash
@@ -253,7 +252,14 @@ jobs:
 
       - name: Configure CMake
         shell: bash
-        run: cmake -S . -B "$BUILD_DIR" -G "$CMAKE_GENERATOR" -DCMAKE_BUILD_TYPE=RelWithDebInfo
+        run: |
+          cmake -S . -B "$BUILD_DIR" \
+            -G "$CMAKE_GENERATOR" \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_FLAGS="-m32" \
+            -DCMAKE_CXX_FLAGS="-m32" \
+            -DCMAKE_EXE_LINKER_FLAGS="-m32" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-m32"
 
       - name: Build
         shell: bash
